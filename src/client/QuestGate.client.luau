@@ -1,0 +1,504 @@
+--[[
+	QuestGate.client.luau  (StarterPlayerScripts -> DinosaurRealmClient)
+
+	When the player tries to collect an egg before talking to the miner ("the
+	Researcher"), the server fires ReplicatedStorage.NestingNook.QuestGate to this
+	client. We then:
+	  * flash a top-middle banner: "Talk To The Researcher First To Claim Your Quest"
+	  * show a green guide arrow above the player's head that points the way to the
+	    miner, so they know where to go.
+]]
+
+print("[QuestGate] script loaded")
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local HatchBurst = require(ReplicatedStorage:WaitForChild("DinosaurRealm"):WaitForChild("HatchBurst")) -- shared cool hatch FX
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+local folder = ReplicatedStorage:WaitForChild("NestingNook")
+local questGate = folder:WaitForChild("QuestGate")
+
+local BANNER_TIME = 4 -- seconds the banner stays up
+local GUIDE_TIME = 7  -- seconds the guide arrow points the way
+local ARROW_COLOR = Color3.fromRGB(50, 220, 80)
+
+-- Find the miner NPC so we can point at it.
+local island = workspace:WaitForChild("island1", 90)
+local miner = island and island:WaitForChild("miner", 90)
+
+----------------------------------------------------------------------
+-- Top-middle banner
+----------------------------------------------------------------------
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "QuestBanner"
+screenGui.ResetOnSpawn = false
+screenGui.IgnoreGuiInset = true
+screenGui.DisplayOrder = 50
+screenGui.Parent = playerGui
+
+local banner = Instance.new("TextLabel")
+banner.AnchorPoint = Vector2.new(0.5, 0.5)
+banner.Position = UDim2.new(0.5, 0, 0.5, 0) -- dead center of the screen
+banner.Size = UDim2.fromOffset(580, 52)
+banner.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+banner.BackgroundTransparency = 0.3
+banner.TextColor3 = Color3.fromRGB(255, 255, 255)
+banner.Font = Enum.Font.FredokaOne
+banner.TextScaled = true
+banner.Text = "Talk To The Researcher First To Claim Your Quest"
+banner.Visible = false
+banner.Parent = screenGui
+
+local bCorner = Instance.new("UICorner")
+bCorner.CornerRadius = UDim.new(0, 10)
+bCorner.Parent = banner
+
+local bStroke = Instance.new("UIStroke")
+bStroke.Color = ARROW_COLOR
+bStroke.Thickness = 2
+bStroke.Parent = banner
+
+local bPad = Instance.new("UIPadding")
+bPad.PaddingLeft = UDim.new(0, 14)
+bPad.PaddingRight = UDim.new(0, 14)
+bPad.Parent = banner
+
+local bSizer = Instance.new("UITextSizeConstraint")
+bSizer.MaxTextSize = 28
+bSizer.Parent = banner
+
+local bannerToken = 0
+local function showBanner()
+	banner.Visible = true
+	bannerToken += 1
+	local mine = bannerToken
+	task.delay(BANNER_TIME, function()
+		if mine == bannerToken then
+			banner.Visible = false
+		end
+	end)
+end
+
+----------------------------------------------------------------------
+-- Guide arrow above the player's head, pointing toward the miner
+----------------------------------------------------------------------
+
+local arrowGui: BillboardGui? = nil
+local arrowLabel: TextLabel? = nil
+local guideUntil = 0
+
+local function ensureArrow(): BillboardGui?
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not hrp then
+		return nil
+	end
+	if arrowGui and arrowGui.Adornee == hrp and arrowGui.Parent then
+		return arrowGui
+	end
+	if arrowGui then
+		arrowGui:Destroy()
+	end
+	arrowGui = Instance.new("BillboardGui")
+	arrowGui.Name = "QuestGuideArrow"
+	arrowGui.Adornee = hrp
+	arrowGui.Size = UDim2.fromOffset(70, 70) -- constant on-screen size
+	arrowGui.StudsOffset = Vector3.new(0, 3.5, 0) -- above the head
+	arrowGui.AlwaysOnTop = true
+	arrowGui.LightInfluence = 0
+	arrowGui.Parent = playerGui
+
+	arrowLabel = Instance.new("TextLabel")
+	arrowLabel.Size = UDim2.fromScale(1, 1)
+	arrowLabel.BackgroundTransparency = 1
+	arrowLabel.Font = Enum.Font.SourceSansBold
+	arrowLabel.TextScaled = true
+	arrowLabel.TextColor3 = ARROW_COLOR
+	arrowLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
+	arrowLabel.TextStrokeTransparency = 0.3
+	arrowLabel.Text = "▲" -- points "ahead"; rotated toward the miner each frame
+	arrowLabel.Parent = arrowGui
+	return arrowGui
+end
+
+RunService.RenderStepped:Connect(function()
+	if os.clock() > guideUntil or not miner then
+		if arrowGui then
+			arrowGui.Enabled = false
+		end
+		return
+	end
+
+	local gui = ensureArrow()
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	local cam = workspace.CurrentCamera
+	if not (gui and hrp and cam and arrowLabel) then
+		return
+	end
+	gui.Enabled = true
+
+	-- Camera-relative bearing to the miner: up = ahead, rotates toward it.
+	local dir = miner:GetPivot().Position - hrp.Position
+	dir = Vector3.new(dir.X, 0, dir.Z)
+	if dir.Magnitude < 0.5 then
+		return
+	end
+	local camCF = cam.CFrame
+	local relX = dir.X * camCF.RightVector.X + dir.Z * camCF.RightVector.Z
+	local relZ = dir.X * camCF.LookVector.X + dir.Z * camCF.LookVector.Z
+	arrowLabel.Rotation = math.deg(math.atan2(relX, relZ))
+end)
+
+----------------------------------------------------------------------
+-- Server tells us the player tried to grab an egg too early
+----------------------------------------------------------------------
+
+questGate.OnClientEvent:Connect(function()
+	showBanner()
+	guideUntil = os.clock() + GUIDE_TIME
+end)
+
+----------------------------------------------------------------------
+-- QUEST REWARD: when all eggs are returned (5/5), a glowing reward egg
+-- appears beside the Mama Dino (dino1). An arrow + bottom-edge hint guide
+-- the player to her; near her they can press E to hatch it into a pet.
+-- (Adapted from EggSystem_AllInOne: nest + ovoid shell + speckles + glow +
+-- shake/crack/pet-pop hatch.) Client-side reward visual.
+----------------------------------------------------------------------
+do
+	local TweenService = game:GetService("TweenService")
+	local SoundService = game:GetService("SoundService")
+	local ContentProvider = game:GetService("ContentProvider")
+	local Debris = game:GetService("Debris")
+
+	local crackS = Instance.new("Sound"); crackS.SoundId = "rbxassetid://126450028713974"; crackS.Volume = 3; crackS.Parent = SoundService
+	local unlockS = Instance.new("Sound"); unlockS.SoundId = "rbxassetid://92880640988467"; unlockS.Volume = 3; unlockS.Parent = SoundService
+	task.spawn(function() pcall(function() ContentProvider:PreloadAsync({ crackS, unlockS }) end) end)
+
+	local EGG_SHELL = Color3.fromRGB(208, 232, 178)
+	local EGG_SPOT  = Color3.fromRGB(70, 150, 70)
+	local PET_COLOR = Color3.fromRGB(120, 210, 70)
+
+	local function newPart(parent, name, shape, size, color, cf, material)
+		local p = Instance.new("Part")
+		p.Name = name; p.Shape = shape; p.Size = size; p.Color = color
+		p.Material = material or Enum.Material.SmoothPlastic
+		p.Anchored = true; p.CanCollide = false; p.CanQuery = false; p.CastShadow = false
+		p.TopSurface = Enum.SurfaceType.Smooth; p.BottomSurface = Enum.SurfaceType.Smooth
+		if cf then p.CFrame = cf end
+		p.Parent = parent
+		return p
+	end
+
+	local st = { hatching = false, owns = false }
+
+	-- ===== STEGOSAURUS PET =====
+	-- (No local build here anymore. The ONE source of truth is ReplicatedStorage.StegosaurusTemplate,
+	-- published by src/server/Stegosaurus.server.luau. The hatch spawns via the server, and the local
+	-- fallback below CLONES that same template -- so the in-game pet can never drift from the Hub.)
+	local petAnims = setmetatable({}, { __mode = "k" })
+
+	local function pivotRotate(pivot, rot) return CFrame.new(pivot) * rot * CFrame.new(-pivot) end
+	local function animatePet(model, dt)
+		local A = petAnims[model]; if not A then return end
+		local root = model.PrimaryPart; if not (root and root.Parent) then return end
+		local rootCF = root.CFrame; local s = A.s
+		A.t = A.t + dt; local t = A.t
+		local pos = rootCF.Position
+		if A.lastPos then
+			local d = pos - A.lastPos
+			local sp = Vector3.new(d.X, 0, d.Z).Magnitude / math.max(dt, 1e-3)
+			A.move = A.move + (math.clamp(sp / (26 * s), 0, 1) - A.move) * math.clamp(dt * 5, 0, 1)
+		end
+		A.lastPos = pos; local mv = A.move
+		local bobY = math.sin(t * 1.5) * 0.06 * s + math.sin(t * (3.0 + 1.5 * mv)) * 0.09 * s * mv
+		local globalT = CFrame.new(0, bobY, 0) * pivotRotate(Vector3.zero, CFrame.Angles(0, math.rad(3) * math.sin(t * 0.8), -math.rad(13) * mv + math.rad(2) * math.sin(t * 1.1)))
+		local headBob = math.sin(t * 1.7 + 0.5) * 0.05 * s
+		local headRot = CFrame.Angles(0, math.rad(8) * math.sin(t * 0.6), 0) * CFrame.Angles(0, 0, math.rad(5) * math.sin(t * 1.1) - math.rad(7) * mv)
+		local headT = CFrame.new(0, headBob, 0) * pivotRotate(Vector3.new(1.2 * s, 0.6 * s, 0), headRot)
+		local tailRot = pivotRotate(Vector3.new(-1.5 * s, 0, 0), CFrame.Angles(0, math.sin(t * (2.2 + 3 * mv)) * (math.rad(14) + math.rad(16) * mv), 0))
+		A.blink = A.blink - dt; local eyeY = 1
+		if A.blink <= 0 then
+			local since = -A.blink
+			if since < 0.16 then eyeY = 1 - 0.85 * (1 - math.abs((since / 0.16) * 2 - 1)) else A.blink = 1.8 + math.random() * 3.4 end
+		end
+		for _, e in ipairs(A.parts) do
+			local localCF
+			if e.role == "head" then localCF = globalT * headT * e.base
+			elseif e.role == "tail" then localCF = globalT * tailRot * e.base
+			elseif e.role == "leg" then
+				local bx, bz = e.base.Position.X, e.base.Position.Z
+				local phase = ((bx >= 0) == (bz >= 0)) and 0 or math.pi
+				localCF = globalT * pivotRotate(Vector3.new(bx, -0.7 * s, bz), CFrame.Angles(0, 0, math.rad(18) * mv * math.sin(t * (9 + 3 * mv) + phase))) * e.base
+			else localCF = globalT * e.base end
+			e.part.CFrame = rootCF * localCF
+			if e.eye then e.part.Size = Vector3.new(e.baseSize.X, e.baseSize.Y * eyeY, e.baseSize.Z) end
+		end
+	end
+	RunService.RenderStepped:Connect(function(dt)
+		if st.owns and st.pet and st.pet.Parent then pcall(function() animatePet(st.pet, dt) end) end
+	end)
+
+	local function setGlow()
+		if st.glow or not st.egg then return end
+		local hl = Instance.new("Highlight"); hl.FillColor = Color3.fromRGB(120,255,120); hl.FillTransparency = 0.45
+		hl.OutlineColor = Color3.fromRGB(230,255,180); hl.OutlineTransparency = 0; hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+		hl.Adornee = st.visual or st.egg; hl.Parent = st.egg; st.glow = hl
+		local shell = st.egg:FindFirstChild("Shell", true)
+		if shell then
+			local pl = Instance.new("PointLight"); pl.Name = "EggGlowLight"; pl.Color = Color3.fromRGB(150,255,150); pl.Brightness = 4; pl.Range = 26; pl.Parent = shell
+			local em = Instance.new("ParticleEmitter"); em.Name = "EggGlowSparkle"; em.Texture = "rbxasset://textures/particles/sparkles_main.dds"; em.Color = ColorSequence.new(Color3.fromRGB(210,255,180)); em.Rate = 16; em.Lifetime = NumberRange.new(0.6,1.1); em.Speed = NumberRange.new(2,6); em.Size = NumberSequence.new(0.9); em.LightEmission = 0.85; em.Parent = shell
+		end
+	end
+
+	local function buildPet(base)
+		local m = Instance.new("Model"); m.Name = "HatchedPet"
+		local body = newPart(m, "Body", Enum.PartType.Ball, Vector3.new(2.4,2.4,2.4), PET_COLOR, nil)
+		newPart(m, "EyeL", Enum.PartType.Ball, Vector3.new(0.5,0.5,0.5), Color3.new(1,1,1), body.CFrame * CFrame.new(0.55,0.4,1.0))
+		newPart(m, "EyeR", Enum.PartType.Ball, Vector3.new(0.5,0.5,0.5), Color3.new(1,1,1), body.CFrame * CFrame.new(-0.55,0.4,1.0))
+		m.PrimaryPart = body
+		return m
+	end
+
+	local function hatch()
+		if st.hatching or st.owns then return end
+		st.hatching = true
+		pcall(function() crackS.TimePosition = 0; crackS:Play() end)
+		local pr = st.egg and st.egg:FindFirstChildWhichIsA("ProximityPrompt", true); if pr then pr.Enabled = false end
+		if st.glow then st.glow:Destroy(); st.glow = nil end
+		local visual, base = st.visual, st.baseCF
+		local SHAKE, t0 = 2.0, os.clock()
+		while os.clock() - t0 < SHAKE do
+			local p = (os.clock() - t0) / SHAKE; local amp = 0.1 + p * p * 0.9
+			if visual and visual.PrimaryPart then
+				pcall(function() visual:PivotTo(base * CFrame.new((math.random()-0.5)*amp*1.4, math.abs(math.sin((os.clock()-t0)*22))*amp*0.5, (math.random()-0.5)*amp*1.4) * CFrame.Angles(math.rad((math.random()-0.5)*amp*55), math.rad((math.random()-0.5)*amp*80), math.rad((math.random()-0.5)*amp*55))) end)
+			end
+			task.wait()
+		end
+		pcall(function() unlockS.TimePosition = 0; unlockS:Play() end)
+		HatchBurst.play(base.Position, EGG_SHELL) -- shared COOL hatch explosion (flash + ring + sparkles + shards)
+		if visual then pcall(function() visual:Destroy() end); st.visual = nil end
+		-- SPAWN THE PET ON THE SERVER. A client-side clone of a server UnionOperation renders in a
+		-- ViewportFrame (the Hub) but NOT reliably in the open world -- so we ask the server to clone
+		-- StegosaurusTemplate into Workspace at `base` and float it. Server-owned unions render for
+		-- everyone, identical to the Hub. (Fallback: local parts blob if the spawner isn't present.)
+		local spawnEvt = ReplicatedStorage:FindFirstChild("HatchStegoSpawn")
+		if _G.SpawnStegoFollower then
+			-- preferred: the client FOLLOWER (emerges here, then follows you) -- PetFollow.client.luau
+			print("[QuestGate] hatch -> spawning Stego follower (clones StegosaurusTemplate, then follows you)")
+			pcall(function() _G.SpawnStegoFollower(base) end)
+		elseif spawnEvt then
+			print("[QuestGate] hatch -> firing HatchStegoSpawn (server floating pet, fallback)")
+			pcall(function() spawnEvt:FireServer(base) end)
+		else
+			-- Fallback (server spawner not present): clone the SAME StegosaurusTemplate locally -- never a
+			-- separate build, so the in-game pet can't drift from the Hub. Rise-pop (no ScaleTo on a union).
+			local tmpl = ReplicatedStorage:FindFirstChild("StegosaurusTemplate") or ReplicatedStorage:WaitForChild("StegosaurusTemplate", 8)
+			if tmpl then
+				local pet = tmpl:Clone(); pet.Parent = workspace; st.pet = pet
+				local n = 0; for _, d in ipairs(pet:GetDescendants()) do if d:IsA("BasePart") then n += 1 end end
+				print(("[QuestGate] fallback in-game pet -> CLONED StegosaurusTemplate (%d parts)"):format(n))
+				pcall(function() pet:PivotTo(base) end)
+				local POP, p0 = 0.45, os.clock()
+				while os.clock() - p0 < POP do
+					local p = (os.clock() - p0) / POP
+					pcall(function() pet:PivotTo(base * CFrame.new(0, math.sin(p * math.pi) * 2.2, 0)) end)
+					task.wait()
+				end
+				task.spawn(function()
+					local t = 0
+					while st.pet and st.pet.Parent do
+						t = t + 0.05
+						pcall(function() st.pet:PivotTo(base * CFrame.new(0, 1.5 + math.sin(t*2)*0.4, 0) * CFrame.Angles(0, t*0.6, 0)) end)
+						task.wait(0.05)
+					end
+				end)
+			else
+				warn("[QuestGate] StegosaurusTemplate not found -> no pet (resync + replay Stegosaurus.server.luau)")
+			end
+		end
+		st.owns = true; st.hatching = false
+		-- send the hatched pet to the Pet Hub (built in PetHub.client.luau)
+		if _G.PetHubAddPet then pcall(function() _G.PetHubAddPet("StegoPet", { petId="StegoPet", displayName="Stegosaurus", level=1, xp=0, xpNeed=100, maxLevel=25, milestone="Newly hatched!" }) end) end
+		-- tell the server to grant + equip the Stego (PetUpgrades.server.luau drives level/XP/evolve)
+		do local sh = ReplicatedStorage:FindFirstChild("StegoHatched"); if sh then pcall(function() sh:FireServer() end) end end
+		-- destroy the brown twig nest / egg shell IMMEDIATELY so it doesn't overlap the new pet
+		if st.egg then pcall(function() st.egg:Destroy() end); st.egg = nil end
+	end
+
+	local function buildEgg(eggPos)
+		local egg = Instance.new("Model"); egg.Name = "MamaDinoEgg"
+		local nest = Instance.new("Model"); nest.Name = "Nest"; nest.Parent = egg
+		local nestCenter = CFrame.new(eggPos + Vector3.new(0, 1.0, 0))
+		for k = 1, 14 do
+			local a = (k-1) * (2*math.pi/14)
+			local twig = newPart(nest, "Twig", Enum.PartType.Cylinder, Vector3.new(2.2, 0.55, 0.55), Color3.fromRGB(105,65,38), nil, Enum.Material.Wood)
+			twig.CFrame = nestCenter * CFrame.Angles(0, a, 0) * CFrame.new(0, 0, 2.7) * CFrame.Angles(0, math.rad(90), math.rad(18))
+		end
+		for k = 1, 10 do
+			local a = (k-1) * (2*math.pi/10) + 0.3
+			local twig = newPart(nest, "Twig", Enum.PartType.Cylinder, Vector3.new(2.0, 0.5, 0.5), Color3.fromRGB(90,55,32), nil, Enum.Material.Wood)
+			twig.CFrame = nestCenter * CFrame.new(0, -0.7, 0) * CFrame.Angles(0, a, 0) * CFrame.new(0, 0, 2.2) * CFrame.Angles(0, math.rad(90), math.rad(30))
+		end
+		local visual = Instance.new("Model"); visual.Name = "Visual"; visual.Parent = egg
+		local shell = newPart(visual, "Shell", Enum.PartType.Ball, Vector3.new(1,1,1), EGG_SHELL, nil); shell.Reflectance = 0.06
+		local mesh = Instance.new("SpecialMesh"); mesh.MeshType = Enum.MeshType.Sphere; mesh.Scale = Vector3.new(3.0, 4.2, 3.0); mesh.Parent = shell
+		visual.PrimaryPart = shell
+		for j = 1, 9 do
+			local a = (j-1) * (2*math.pi/9); local y = math.sin(a*1.8) * 1.05
+			local r = 1.42 * math.sqrt(math.max(0, 1 - (y/2.1)^2)) + 0.04
+			newPart(visual, "Spot", Enum.PartType.Ball, Vector3.new(0.5,0.5,0.5), EGG_SPOT, CFrame.new(math.sin(a)*r, y, math.cos(a)*r))
+		end
+		st.baseCF = CFrame.new(eggPos + Vector3.new(0, 2.6, 0)); st.visual = visual; visual:PivotTo(st.baseCF); st.egg = egg
+		local pr = Instance.new("ProximityPrompt"); pr.ActionText = "Hatch"; pr.ObjectText = "Mama's Egg"; pr.KeyboardKeyCode = Enum.KeyCode.E; pr.HoldDuration = 0; pr.MaxActivationDistance = 14; pr.RequiresLineOfSight = false; pr.Parent = shell
+		pr.Triggered:Connect(function() hatch() end)
+		task.spawn(function()
+			local t = 0
+			while st.egg do
+				t = t + 0.05
+				if st.egg.Parent and st.baseCF and st.visual and not st.hatching then
+					pcall(function() st.visual:PivotTo(st.baseCF * CFrame.new(0, math.sin(t*3)*0.3, 0) * CFrame.Angles(0, math.sin(t*1.5)*0.12, math.rad(math.sin(t*2)*5))) end)
+				end
+				task.wait(0.05)
+			end
+		end)
+		egg.Parent = workspace
+	end
+
+	-- bottom-edge hint message
+	local function showMamaHint()
+		local sg = Instance.new("ScreenGui"); sg.Name = "MamaDinoHint"; sg.ResetOnSpawn = false; sg.IgnoreGuiInset = true; sg.DisplayOrder = 45; sg.Parent = playerGui
+		local lbl = Instance.new("TextLabel"); lbl.AnchorPoint = Vector2.new(0.5, 1); lbl.Position = UDim2.new(0.5, 0, 1, -26); lbl.Size = UDim2.fromOffset(440, 46)
+		lbl.BackgroundColor3 = Color3.fromRGB(20,20,20); lbl.BackgroundTransparency = 0.3; lbl.TextColor3 = Color3.fromRGB(255,255,255); lbl.Font = Enum.Font.FredokaOne; lbl.TextScaled = true; lbl.Text = "Talk to the Mama Dinosaur!"; lbl.Parent = sg
+		local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, 12); c.Parent = lbl
+		local s = Instance.new("UIStroke"); s.Color = Color3.fromRGB(50,200,80); s.Thickness = 2; s.Parent = lbl
+		local szc = Instance.new("UITextSizeConstraint"); szc.MaxTextSize = 26; szc.Parent = lbl
+		return sg
+	end
+
+	-- SLEEK GREEN CHEVRON RUNWAY on the ground -> the Mama Dino (same style as the island4 rod trail), plus the hint.
+	-- Appears once all 5 eggs are returned (completeNow) and clears as you reach her / once the reward egg is hatched.
+	local function guideToDino(dino)
+		local hint = showMamaHint()
+		local BRIGHT = Color3.fromRGB(90, 200, 110)  -- friendly green
+		local EDGE   = Color3.fromRGB(40, 120, 60)   -- darker green outline
+		local SPACING, MAX_ARROWS, STOP_DIST = 6, 18, 12
+		local rayParams = RaycastParams.new(); rayParams.FilterType = Enum.RaycastFilterType.Exclude
+		local function cpart(model, name, sx,sy,sz, color, refl, cf)
+			local p = Instance.new("Part"); p.Name = name; p.Size = Vector3.new(sx,sy,sz); p.Color = color
+			p.Material = Enum.Material.SmoothPlastic; p.Reflectance = refl or 0
+			p.Anchored = true; p.CanCollide = false; p.CanQuery = false; p.CanTouch = false; p.CastShadow = false
+			p.TopSurface = Enum.SurfaceType.Smooth; p.BottomSurface = Enum.SurfaceType.Smooth
+			p.LeftSurface = Enum.SurfaceType.Smooth; p.RightSurface = Enum.SurfaceType.Smooth
+			p.FrontSurface = Enum.SurfaceType.Smooth; p.BackSurface = Enum.SurfaceType.Smooth
+			p.CFrame = cf; p.Parent = model; return p
+		end
+		local function buildChevron()
+			local m = Instance.new("Model"); m.Name = "MamaChevron"
+			local root = cpart(m, "Root", 0.2,0.2,0.2, BRIGHT, 0, CFrame.new()); root.Transparency = 1; m.PrimaryPart = root
+			local L, W, T, ANG = 2.6, 0.72, 0.22, math.rad(42)
+			local front = CFrame.new(0, 0, -0.9)
+			cpart(m, "EdgeR", W+0.20, T*0.65, L+0.20, EDGE, 0,  front * CFrame.Angles(0,  ANG, 0) * CFrame.new(0,-0.03,L/2))
+			cpart(m, "EdgeL", W+0.20, T*0.65, L+0.20, EDGE, 0,  front * CFrame.Angles(0, -ANG, 0) * CFrame.new(0,-0.03,L/2))
+			cpart(m, "ArmR",  W, T, L, BRIGHT, 0.14,           front * CFrame.Angles(0,  ANG, 0) * CFrame.new(0, 0.04,L/2))
+			cpart(m, "ArmL",  W, T, L, BRIGHT, 0.14,           front * CFrame.Angles(0, -ANG, 0) * CFrame.new(0, 0.04,L/2))
+			m.Parent = workspace
+			return m
+		end
+		local pool = {}
+		local function getNode(i) if not pool[i] then pool[i] = buildChevron() end; return pool[i] end
+		local function setShown(nd, on)
+			for _, p in ipairs(nd:GetDescendants()) do
+				if p:IsA("BasePart") and p.Name ~= "Root" then p.Transparency = on and 0 or 1 end
+			end
+		end
+		local function hideFrom(n) for i = n, #pool do if pool[i] then setShown(pool[i], false) end end end
+		local conn
+		conn = RunService.RenderStepped:Connect(function()
+			-- reward egg hatched (st.owns) or the Mama Dino is gone -> tear down for good
+			if st.owns or not (dino and dino.Parent) then
+				for _, nd in ipairs(pool) do pcall(function() nd:Destroy() end) end; pool = {}
+				if hint then hint:Destroy(); hint = nil end
+				if conn then conn:Disconnect() end
+				return
+			end
+			local char = player.Character
+			local hrp = char and char:FindFirstChild("HumanoidRootPart")
+			if not hrp then hideFrom(1); return end
+			local target = dino:GetPivot().Position
+			local d = target - hrp.Position
+			local flat = Vector3.new(d.X, 0, d.Z)
+			local dist = flat.Magnitude
+			if dist <= STOP_DIST then hideFrom(1); return end -- reached the Mama Dino -> hide the trail (hint stays until hatch)
+			local dir = flat.Unit
+			local excl = { char }; for _, nd in ipairs(pool) do excl[#excl+1] = nd end
+			rayParams.FilterDescendantsInstances = excl
+			local maxAlong = dist - STOP_DIST
+			local placed = 0
+			for i = 1, MAX_ARROWS do
+				local along = i * SPACING
+				if along > maxAlong then break end
+				placed += 1
+				local px = hrp.Position.X + dir.X * along
+				local pz = hrp.Position.Z + dir.Z * along
+				local hit = workspace:Raycast(Vector3.new(px, hrp.Position.Y + 14, pz), Vector3.new(0, -240, 0), rayParams)
+				local gy = (hit and hit.Position.Y) or (hrp.Position.Y - 2.5)
+				local nd = getNode(placed)
+				local p0 = Vector3.new(px, gy + 0.12, pz)
+				pcall(function() nd:PivotTo(CFrame.lookAt(p0, p0 + dir)) end)
+				pcall(function() nd:ScaleTo(1 + 0.10 * math.sin(os.clock() * 5 - i * 0.8)) end)
+				setShown(nd, true)
+			end
+			hideFrom(placed + 1)
+		end)
+	end
+
+	-- trigger on quest completion (all eggs returned), or via the /done command
+	task.spawn(function()
+		local nook = ReplicatedStorage:WaitForChild("NestingNook", 60)
+		local total = nook and nook:WaitForChild("TotalEggs", 10)
+		local got = nook and nook:WaitForChild("EggsReturned", 10)
+		local island = workspace:WaitForChild("island1", 60)
+		local dino = island and island:WaitForChild("dino1", 60)
+		local done = false
+		local function completeNow()
+			if done then return end
+			done = true
+			local pos = Vector3.new(0, 5, 0)
+			if dino then
+				local pivot = dino:GetPivot()
+				local cf, size = dino:GetBoundingBox()
+				local bottom = cf.Position.Y - size.Y / 2
+				local off = pivot.Position + pivot.RightVector * 8 -- beside the Mama Dino
+				pos = Vector3.new(off.X, bottom + 7.5, off.Z) -- 7.5 studs up from the dino's surface
+			end
+			buildEgg(pos)
+			setGlow()
+			guideToDino(dino)
+		end
+		local function check()
+			if total and got and total.Value > 0 and got.Value >= total.Value then completeNow() end
+		end
+		if got then got.Changed:Connect(check) end
+		if total then total.Changed:Connect(check) end
+		check()
+
+		-- /done : skip straight to the reward (arrow + hint to the Mama Dino + hatchable egg)
+		local function onMessage(text)
+			if text and string.gsub(string.lower(text), "%s", "") == "/done" then
+				completeNow()
+			end
+		end
+		player.Chatted:Connect(onMessage)
+		pcall(function()
+			local TextChatService = game:GetService("TextChatService")
+			TextChatService.SendingMessage:Connect(function(m) onMessage(m.Text) end)
+		end)
+	end)
+end

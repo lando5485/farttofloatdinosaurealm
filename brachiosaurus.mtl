@@ -1,0 +1,41 @@
+# cute brachiosaurus materials
+newmtl cute_green
+Kd 0.290 0.630 0.310
+Ka 0.000 0.000 0.000
+Ks 0.050 0.050 0.050
+Ns 16.0
+d 1.0
+illum 2
+
+newmtl cute_eyewhite
+Kd 0.970 0.970 0.970
+Ka 0.000 0.000 0.000
+Ks 0.050 0.050 0.050
+Ns 16.0
+d 1.0
+illum 2
+
+newmtl cute_eyeblack
+Kd 0.050 0.050 0.060
+Ka 0.000 0.000 0.000
+Ks 0.050 0.050 0.050
+Ns 16.0
+d 1.0
+illum 2
+
+newmtl cute_cream
+Kd 0.950 0.920 0.820
+Ka 0.000 0.000 0.000
+Ks 0.050 0.050 0.050
+Ns 16.0
+d 1.0
+illum 2
+
+newmtl cute_mouth
+Kd 0.200 0.100 0.070
+Ka 0.000 0.000 0.000
+Ks 0.050 0.050 0.050
+Ns 16.0
+d 1.0
+illum 2
+

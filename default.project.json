@@ -1,0 +1,27 @@
+{
+  "name": "farttofloatdinosaurrealm",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "DinosaurRealm": {
+        "$path": "src/shared"
+      }
+    },
+    "ServerScriptService": {
+      "$className": "ServerScriptService",
+      "DinosaurRealmServer": {
+        "$path": "src/server"
+      }
+    },
+    "StarterPlayer": {
+      "$className": "StarterPlayer",
+      "StarterPlayerScripts": {
+        "$className": "StarterPlayerScripts",
+        "DinosaurRealmClient": {
+          "$path": "src/client"
+        }
+      }
+    }
+  }
+}
