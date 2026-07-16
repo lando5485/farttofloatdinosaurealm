@@ -24,9 +24,11 @@ local UserInputService = game:GetService("UserInputService")
 local player    = Players.LocalPlayer
 local PlayerGui = player:WaitForChild("PlayerGui")
 
--- scale: phones use 0.7, PC 1.0. Text sizes multiply by this.
+-- scale: authored at ONE size (1.0) on every device. Phone/tablet fitting is handled globally by
+-- ResponsiveUI.client.luau (a single UIScale per ScreenGui), so we do NOT bake a mobile shrink here
+-- -- doing so would double-shrink the bottom HUD on phones. (Was: isMobile and 0.7.)
 local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
-local scale    = isMobile and 0.7 or 1.0
+local scale    = 1.0
 
 -- ===== GUI HELPERS =====
 local function mkCorner(p,r) local c=Instance.new("UICorner"); c.CornerRadius=UDim.new(0,r); c.Parent=p; return c end
@@ -62,7 +64,7 @@ do
 	local sl = Instance.new("UIListLayout")
 	sl.FillDirection = Enum.FillDirection.Vertical; sl.SortOrder = Enum.SortOrder.LayoutOrder
 	sl.HorizontalAlignment = Enum.HorizontalAlignment.Center; sl.VerticalAlignment = Enum.VerticalAlignment.Bottom
-	sl.Padding = UDim.new(0, 2); sl.Parent = bottomStack -- TIGHT stack (minimal gaps)
+	sl.Padding = UDim.new(0, 8); sl.Parent = bottomStack -- matches the first realm's bottom-stack spacing (padding 8)
 end
 
 -- ===== JUNGLE CHROME (match the Pet Hub / Shop / Stats panel) =====
@@ -118,7 +120,7 @@ local gui = {} -- holds the built elements
 -- ============================================================================
 -- (1) GUT NAME PILL  (LayoutOrder 1, small compact, centered) -- stone frame + olive fill
 -- ============================================================================
-local gutWrap, gutContent = stoneFrame(230, 40, OLIVE, 18, 1)
+local gutWrap, gutContent = stoneFrame(300, 40, OLIVE, 18, 1)  -- 300x40 to match the first realm's stomach pill
 gutWrap.Name = "StomachHud"; gutWrap.ZIndex = 10
 local stomachHudIcon = mkLabel(gutContent, { Name = "GutIcon", Text = (GUT_EMOJI[stomachName] or ""), Font = Enum.Font.GothamBold, TextScaled = true, Size = UDim2.new(0,22,0,22), Position = UDim2.new(0,6,0.5,0), AnchorPoint = Vector2.new(0,0.5), ZIndex = 6 })
 local stomachHudLabel = mkLabel(gutContent, { Name = "StomachHudLabel", Text = stomachName, Font = Enum.Font.FredokaOne, TextScaled = true, TextColor3 = CREAM, Size = UDim2.new(1,-36,1,-6), Position = UDim2.new(0,32,0.5,0), AnchorPoint = Vector2.new(0,0.5), TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 6 })
@@ -142,12 +144,12 @@ end
 -- ============================================================================
 -- (2) GAS METER  (LayoutOrder 2, compact full-width) -- stone frame + olive fill
 -- ============================================================================
-local gasWrap, gasContent = stoneFrame(480, 60, OLIVE, 16, 2)
+local gasWrap, gasContent = stoneFrame(480, 85, OLIVE, 16, 2)  -- 480x85 to match the first realm's gas meter
 gasWrap.Name = "GasMeterPanel"; gui.gasMeterPanel = gasWrap
-gui.gasTitleLabel = mkLabel(gasContent, { Text = "\xF0\x9F\x90\xBE  GAS METER  \xF0\x9F\x90\xBE", Font = Enum.Font.FredokaOne, TextSize = math.floor(15*scale), TextColor3 = GOLD, Size = UDim2.new(1,0,0,16), Position = UDim2.new(0,0,0,1), TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 6 })
+gui.gasTitleLabel = mkLabel(gasContent, { Text = "\xF0\x9F\x90\xBE  GAS METER  \xF0\x9F\x90\xBE", Font = Enum.Font.FredokaOne, TextSize = math.floor(17*scale), TextColor3 = GOLD, Size = UDim2.new(1,0,0,28), Position = UDim2.new(0,0,0,6), TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 6 })
 mkStroke(gui.gasTitleLabel, DARKTXT, 2)
 -- dark rounded STONE track
-gui.gasBg = mkFrame(gasContent, { Name = "Track", Size = UDim2.new(1,-6,0,20), Position = UDim2.new(0.5,0,0,20), AnchorPoint = Vector2.new(0.5,0), BackgroundColor3 = Color3.fromRGB(28,34,26), ZIndex = 6, BorderSizePixel = 0 })
+gui.gasBg = mkFrame(gasContent, { Name = "Track", Size = UDim2.new(1,-6,0,40), Position = UDim2.new(0.5,0,0,34), AnchorPoint = Vector2.new(0.5,0), BackgroundColor3 = Color3.fromRGB(28,34,26), ZIndex = 6, BorderSizePixel = 0 })  -- track h40 @ y34 to match the first realm
 mkCorner(gui.gasBg, 11); mkStroke(gui.gasBg, Color3.fromRGB(16,20,14), 2)
 -- bright green GRADIENT fill -- fills left-to-right to the gas %
 gui.gasFill = mkFrame(gui.gasBg, { Name = "Fill", Size = UDim2.new(0,0,1,0), BackgroundColor3 = Color3.fromRGB(70,210,95), ZIndex = 7, BorderSizePixel = 0 })
@@ -167,7 +169,7 @@ setGas(0)
 -- ============================================================================
 -- (3) HOLD TO FART BUTTON  (LayoutOrder 3, full width) -- stone frame + brighter green
 -- ============================================================================
-local fartWrap, fartContent = stoneFrame(480, 56, Color3.fromRGB(64,202,74), 16, 3)
+local fartWrap, fartContent = stoneFrame(480, 62, Color3.fromRGB(64,202,74), 16, 3)  -- 480x62 to match the first realm's fart button
 fartWrap.Name = "FartBtnFrame"
 gui.fartBtnFrame = fartContent -- the GREEN fill (setFartLook recolors this)
 gui.fartBtnGradient = fartContent:FindFirstChildOfClass("UIGradient")
@@ -319,7 +321,9 @@ RunService.Heartbeat:Connect(function(dt)
 	if isFlying and gasMeter > 0 then
 		gasMeter = math.max(0, gasMeter - DRAIN_RATE * dt)          -- DRAIN
 		currentPower = (gasMeter / maxGasMeter) * stomachMax        -- power scaled by REMAINING gas
-		local speed = getFlightSpeed(currentPower)
+		-- Base ascent speed, scaled by any active flight modifier (e.g. Monsoon Rain's
+		-- "wet conditions" sets _G.flightDistanceMultiplier = 0.9 for -10% flight distance).
+		local speed = getFlightSpeed(currentPower) * (_G.flightDistanceMultiplier or 1)
 		local move = hum.MoveDirection                             -- camera-relative steer
 		if not bodyVel or not bodyVel.Parent then
 			bodyVel = Instance.new("BodyVelocity"); bodyVel.Name = "FartVelocity"; bodyVel.Parent = hrp

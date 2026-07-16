@@ -31,7 +31,10 @@ local player    = Players.LocalPlayer
 local PlayerGui = player:WaitForChild("PlayerGui")
 
 local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
-local scale    = isMobile and 0.7 or 1.0
+-- HUD is authored at ONE size (scale = 1.0) on every device. Phone/tablet fitting is handled
+-- globally by ResponsiveUI.client.luau (a single UIScale per ScreenGui), so we do NOT bake a
+-- mobile shrink in here -- doing so would double-shrink the HUD on phones. (Was: isMobile and 0.7.)
+local scale    = 1.0
 
 -- ===== GUI HELPERS (copied from CoreClient) =====
 local function mkCorner(p,r) local c=Instance.new("UICorner"); c.CornerRadius=UDim.new(0,r); c.Parent=p; return c end
@@ -316,7 +319,7 @@ local moreOpenState = false
 local coinGui = Instance.new("ScreenGui")
 coinGui.Name = "CoinGui"; coinGui.ResetOnSpawn = false; coinGui.IgnoreGuiInset = true; coinGui.Parent = PlayerGui
 
-local coinPill = mkFrame(coinGui,{Position=UDim2.new(1,-10,0,10),Size=UDim2.new(0,180*scale,0,46*scale),BackgroundColor3=Color3.fromRGB(220,160,0),AnchorPoint=Vector2.new(1,0),ClipsDescendants=false,ZIndex=4})
+local coinPill = mkFrame(coinGui,{Position=UDim2.new(1,-10,0,10),Size=UDim2.new(0,200,0,52),BackgroundColor3=Color3.fromRGB(220,160,0),AnchorPoint=Vector2.new(1,0),ClipsDescendants=false,ZIndex=4})
 mkCorner(coinPill,25); mkStroke(coinPill,Color3.fromRGB(180,120,0),3)
 addShadow(coinPill,25)
 addInnerHighlight(coinPill,25)
@@ -551,7 +554,7 @@ islandLabel.Font = Enum.Font.GothamBold; islandLabel.TextSize = 22; islandLabel.
 islandLabel.TextScaled = true; islandLabel.RichText = false
 islandLabel.TextXAlignment = Enum.TextXAlignment.Left; islandLabel.Parent = statsSection
 
--- live: STATS island number = the island the player is standing on (XZ footprint -> nearest), island1..island14
+-- live: STATS island number = the island the player is standing on (XZ footprint -> nearest), island1..island13
 do
 	local WorkspaceSvc = game:GetService("Workspace")
 	local function curIsland()
@@ -560,7 +563,7 @@ do
 		if not hrp then return 1 end
 		local pos = hrp.Position
 		local best, bestD = nil, math.huge
-		for i = 1, 14 do
+		for i = 1, 13 do
 			local isl = WorkspaceSvc:FindFirstChild("island" .. i)
 			if isl then
 				local ok, cf, size = pcall(function() return isl:GetBoundingBox() end)
@@ -590,7 +593,7 @@ heightLabel.TextScaled = true; heightLabel.RichText = false
 heightLabel.TextXAlignment = Enum.TextXAlignment.Left; heightLabel.Parent = statsSection
 
 -- Space Realm progress bar
-local SPACE_TOTAL_ISLANDS = 14
+local SPACE_TOTAL_ISLANDS = 13
 local spaceRealmTitle = Instance.new("TextLabel")
 spaceRealmTitle.Size = UDim2.new(1,0,0,22); spaceRealmTitle.Position = UDim2.new(0,0,0,116)
 spaceRealmTitle.BackgroundTransparency = 1; spaceRealmTitle.Text = "\xF0\x9F\x9A\x80 TO NEXT REALM"
@@ -738,12 +741,12 @@ styleActionBtn(meteorBtn, meteorIcon, Color3.fromRGB(232,108,40))
 local sidebarGui = Instance.new("ScreenGui")
 sidebarGui.Name = "SidebarGui"; sidebarGui.ResetOnSpawn = false; sidebarGui.Parent = PlayerGui
 
-local function mkSideBtn(yOff,bgCol,iconTxt,labelTxt)
+local function mkSideBtn(yTop,bgCol,iconTxt,labelTxt)
 	-- Wooden-plaque cartoon button: glossy saturated fill, thick dark rounded
-	-- border, leafy corner accents, cream icon badge, outlined label. Same size
-	-- and position as before (layout unchanged).
-	-- Chunky wooden-plaque button matching the right-side panel/buttons.
-	local btn=mkFrame(sidebarGui,{Size=UDim2.new(0,92*scale,0,96*scale),Position=UDim2.new(0,10,0.5,yOff),BackgroundColor3=bgCol})
+	-- border, leafy corner accents, cream icon badge, outlined label.
+	-- Layout matches the main Fart-to-Float HUD: 95x95, pinned TOP-LEFT (anchor 0,0) at
+	-- X=12 on a fixed top-down Y grid (yTop = 96/203/310/417, 107px pitch) -- NOT centre-anchored.
+	local btn=mkFrame(sidebarGui,{Size=UDim2.new(0,95,0,95),Position=UDim2.new(0,12,0,yTop),AnchorPoint=Vector2.new(0,0),BackgroundColor3=bgCol})
 	btn.ZIndex = 3
 	addShadow(btn, 18)
 	mkCorner(btn,18)
@@ -768,10 +771,20 @@ local function mkSideBtn(yOff,bgCol,iconTxt,labelTxt)
 	return btn,clickBtn
 end
 
-local shopSideFrame,shopSideClick     = mkSideBtn(-228*scale,Color3.fromRGB(50,180,50),"\xF0\x9F\x9b\x92","SHOP")
-local inviteSideFrame,inviteSideClick = mkSideBtn(-116*scale,Color3.fromRGB(70,160,235),"\xF0\x9F\x91\xa5","INVITE")
-local dailySideFrame,dailySideClick   = mkSideBtn(-4*scale,Color3.fromRGB(80,170,70),"\xF0\x9F\x90\xBE","Pets") -- paw icon
-local stomachSideFrame,stomachSideClick = mkSideBtn(108*scale,Color3.fromRGB(225,70,170),"+","MORE")
+local shopSideFrame,shopSideClick     = mkSideBtn(96,Color3.fromRGB(50,180,50),"\xF0\x9F\x9b\x92","SHOP")
+local inviteSideFrame,inviteSideClick = mkSideBtn(203,Color3.fromRGB(70,160,235),"\xF0\x9F\x91\xa5","INVITE")
+-- STOMACH (was the "Pets" paw button).
+-- The Pet Hub is NOT orphaned by this: PetHub.client.luau builds its own paw button in
+-- the bottom-left corner, which is the real way in -- this sidebar slot was a duplicate.
+-- The Stomach Shop, meanwhile, was buried inside the MORE+ popup, so the gut upgrade -- a
+-- core progression purchase -- had no button of its own. Now it does.
+--
+-- Note this slot was ALWAYS meant to be Stomach: the "gut upgrade affordable" wiggle
+-- further down still targets this frame and still calls it the Stomach button. While it
+-- held the paw icon, that wiggle was shaking the PETS button whenever you could afford a
+-- gut. Swapping it back makes that animation correct again.
+local gutSideFrame,gutSideClick       = mkSideBtn(310,Color3.fromRGB(235,140,60),"\xF0\x9F\xA6\x95","STOMACH")
+local stomachSideFrame,stomachSideClick = mkSideBtn(417,Color3.fromRGB(225,70,170),"+","MORE")
 -- (the "!" badge on the MORE+ button is the toggling crate dot added later via mkCrateDot(stomachSideFrame);
 --  it only shows when something is actually claimable, so no permanent badge here.)
 
@@ -783,11 +796,11 @@ inviteSideClick.MouseButton1Click:Connect(function()
 	playUIClick()
 	pcall(function() SocialService:PromptGameInvite(game.Players.LocalPlayer) end)
 end)
-dailySideClick.MouseButton1Click:Connect(function()
+gutSideClick.MouseButton1Click:Connect(function()
 	playUIClick()
-	-- open the full Pet Hub (built in PetHub.client.luau) via its toggle BindableEvent
-	local ev = PlayerGui:FindFirstChild("PetInvToggle")
-	if ev then ev:Fire() end
+	-- open the STOMACH SHOP (gut tiers). Same call the MORE+ menu's "Stomachs" entry
+	-- makes, so both routes go through MainMenuManager and can't end up double-open.
+	toggleMainMenu("Stomach", "StomachShopGui")
 end)
 stomachSideClick.MouseButton1Click:Connect(function()
 	playUIClick()
@@ -1052,8 +1065,11 @@ task.spawn(function()
 	local BuyStomachEvent=RS:WaitForChild("BuyStomachEvent",30)
 	local StomachUpdateEvent=RS:WaitForChild("StomachUpdateEvent",30)
 
-	-- gut-upgrade-affordable wiggle on the LEFT "Stomach" side button (dailySideFrame)
-	local gutSideIcon = dailySideFrame
+	-- gut-upgrade-affordable wiggle on the LEFT "STOMACH" side button.
+	-- This always pointed at this frame -- it just used to be the Pets/paw button, so the
+	-- wiggle was shaking PETS when you could afford a gut upgrade. Now it shakes the
+	-- button it was always describing.
+	local gutSideIcon = gutSideFrame
 	local gutWiggling = false
 	local gutWiggleTween = nil
 	local function stopGutWiggle()
@@ -1257,7 +1273,22 @@ do
 			if not ev then ev = Instance.new("BindableEvent"); ev.Name = "OpenMeteorCrate"; ev.Parent = RSx end
 			ev:Fire()
 		end },
-		{ label = "Pets", emoji = "\xF0\x9F\x90\xBE", action = function() local ev = PlayerGui:FindFirstChild("PetInvToggle"); if ev then ev:Fire() end end },
+		-- PETS. This is now the MAIN way into the Pet Hub from the HUD -- the LEFT sidebar
+		-- slot that used to hold the paw button is the STOMACH button now.
+		--
+		-- PetInvToggle is a BindableEvent that PetHub.client.luau creates under PlayerGui.
+		-- FindFirstChild would return nil if PetHub hasn't finished loading, and the old
+		-- code then did NOTHING -- a dead click with no feedback and nothing in the log.
+		-- WaitForChild with a short timeout closes that hole, and a warn makes a genuine
+		-- failure visible instead of silent.
+		{ label = "Pets", emoji = "\xF0\x9F\x90\xBE", action = function()
+			local ev = PlayerGui:FindFirstChild("PetInvToggle") or PlayerGui:WaitForChild("PetInvToggle", 5)
+			if ev then
+				ev:Fire()
+			else
+				warn("[Bootstrap] MORE+ -> Pets: PetInvToggle not found (is PetHub.client.luau running?)")
+			end
+		end },
 		{ label = "Seasonal Pets",  emoji = "\xF0\x9F\x90\xBE", action = function() if openLocker then openLocker() end end },
 	}
 	for i, e in ipairs(MORE_ENTRIES) do
@@ -1312,8 +1343,10 @@ do
 	moreX.MouseButton1Click:Connect(function() playUIClick(); setMoreOpen(false) end)
 end
 
--- (Pets inventory is now the full Pet Hub built in PetHub.client.luau; the Pets
---  side button fires its PetInvToggle BindableEvent. See dailySideClick above.)
+-- (Pets inventory is the full Pet Hub built in PetHub.client.luau. The LEFT sidebar's
+--  Pets button was replaced by STOMACH, so the Pet Hub is now reached via its OWN paw
+--  button -- bottom-left, built in PetHub.client.luau -- or via MORE+ -> Pets. Both fire
+--  the same PetInvToggle BindableEvent, so nothing was orphaned by the swap.)
 
 --======================================================================
 -- TOP-MIDDLE: current island name + current task (stacked)
@@ -1321,24 +1354,39 @@ end
 do
 	local RSvc = game:GetService("ReplicatedStorage")
 	local Workspace = game:GetService("Workspace")
+	-- THE 13 ISLANDS. Islands 1-8 have quests; 9-13 are blank (scenery only, no
+	-- NPC / no quest), so their `task` is "" and the task banner hides itself.
+	-- Island NUMBER is the model name in Workspace ("island8"), NOT the tower slot
+	-- -- IslandLayout.server.luau maps number -> slot (quest / no-quest alternating).
 	local ISLANDS = {
-		[1] = { name = "Nesting Nook",     task = "Bring the lost eggs to the nest" },
-		[2] = { name = "Fern Frontier",    task = "Find and hatch the Triceratops egg" },
-		[3] = { name = "Fossil Frontier",  task = "Dig up the ancient fossils to find the egg" },
-		[4] = { name = "Coastal Crossing", task = "Fish the ButterLake to hatch a Megalodon" },
-		[5] = { name = "Misty Mire",       task = "Swat the mosquitos, then feed the egg!" },
-		[6] = { name = "Redwood Ridge",    task = "Explore Redwood Ridge" },
-		[7] = { name = "Raptor Ridge",     task = "Carry meat to the nest -- feed it 5 pieces!" },
-		[8] = { name = "Volcanic Vista",   task = "Plug all 6 geysers before the volcano erupts!" },
+		-- QUEST islands
+		[1]  = { name = "Nesting Nook",     task = "Bring the lost eggs to the nest" },
+		[2]  = { name = "Fern Frontier",    task = "Find and hatch the Triceratops egg" },
+		[3]  = { name = "Fossil Frontier",  task = "Dig up the ancient fossils to find the egg" },
+		[4]  = { name = "Coastal Crossing", task = "Fish the ButterLake to hatch a Megalodon" },
+		[5]  = { name = "Misty Mire",       task = "Swat the mosquitos, then feed the egg!" },
+		[6]  = { name = "Redwood Ridge",    task = "Explore Redwood Ridge" },
+		[7]  = { name = "Raptor Ridge",     task = "Carry meat to the nest -- feed it 5 pieces!" },
+		-- VOLCANIC VISTA (island11) = THE ENDING ISLAND, pinned to the TOP tower slot
+		-- (slot 13, see IslandLayout.server.luau). It owns the volcano / geyser FINALE
+		-- quest and grants the T-Rex. The geyser quest USED to live on island8 -- it
+		-- moved here, so island8 is now a BLANK island named "Inferno Isle".
+		[11] = { name = "Volcanic Vista",   task = "Plug all 6 geysers before the volcano erupts!" },
+		-- BLANK islands (no code, no quest) -- name only, empty task
+		[8]  = { name = "Inferno Isle",     task = "" },  -- volcanic (NO quest -- it moved to island11)
+		[9]  = { name = "Jungle Junction",  task = "" },  -- jungle
+		[10] = { name = "Petrified Pass",   task = "" },  -- desert
+		[12] = { name = "Sunscorch Sands",  task = "" },  -- desert
+		[13] = { name = "Glacier Gulch",    task = "" },  -- snow / glacier
 	}
-	-- which island the player is standing on: XZ footprint match -> else nearest (islands are island1..island14)
+	-- which island the player is standing on: XZ footprint match -> else nearest (islands are island1..island13)
 	local function currentIslandNum()
 		local char = player.Character
 		local hrp = char and char:FindFirstChild("HumanoidRootPart")
 		if not hrp then return 1 end
 		local pos = hrp.Position
 		local best, bestD = nil, math.huge
-		for i = 1, 14 do
+		for i = 1, 13 do
 			local isl = Workspace:FindFirstChild("island" .. i)
 			if isl then
 				local ok, cf, size = pcall(function() return isl:GetBoundingBox() end)
@@ -1402,8 +1450,10 @@ do
 				else
 					txt = "Dig up the ancient fossils to find the egg!"
 				end
-			elseif n == 2 or n == 4 or n == 5 or n == 6 or n == 7 or n == 8 then
-				-- other islands: direct the player to the Researcher until they accept (Island<N>QuestAccepted)
+			elseif n == 2 or n == 4 or n == 5 or n == 6 or n == 7 or n == 11 then
+				-- other QUEST islands (11 = Volcanic Vista, the geyser finale -- it used
+				-- to be 8, but that quest moved and island8 is a blank island now):
+				-- direct the player to the Researcher until they accept (Island<N>QuestAccepted)
 				if not player:GetAttribute("Island" .. n .. "QuestAccepted") then
 					txt = "Go Talk To The Researcher To Accept The Quest"
 				else
@@ -1411,11 +1461,14 @@ do
 				end
 			end
 			taskLbl.Text = txt
+			-- blank islands (9-13) have no quest -> hide the task banner entirely
+			-- rather than show an empty parchment bar under the island name.
+			taskBar.Visible = (txt ~= "")
 		end
 		refresh()
 		player:GetAttributeChangedSignal("NestingNookQuestClaimed"):Connect(refresh)
 		player:GetAttributeChangedSignal("DigQuestAccepted"):Connect(refresh)
-		for _, i in ipairs({2,4,5,6,7,8}) do
+		for _, i in ipairs({2,4,5,6,7,11}) do
 			player:GetAttributeChangedSignal("Island" .. i .. "QuestAccepted"):Connect(refresh)
 		end
 		player:GetAttributeChangedSignal("CurrentIsland"):Connect(refresh)
