@@ -13,7 +13,7 @@ local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local MAX_ISLAND = 14        -- islands island1 .. island14
+local MAX_ISLAND = 13        -- islands island1 .. island13
 local LANDING_OFFSET = 8     -- studs above the island top to drop the player
 
 -- RemoteEvent the client fires to request a teleport.

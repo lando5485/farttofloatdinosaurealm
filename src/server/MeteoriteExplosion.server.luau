@@ -90,7 +90,8 @@ local function spawnMeteor(targetPos)
 		flash.Color = Color3.fromRGB(255,200,90); flash.Material = Enum.Material.Neon
 		flash.Anchored = true; flash.CanCollide = false; flash.CanQuery = false; flash.CFrame = CFrame.new(targetPos); flash.Parent = Workspace
 		TS:Create(flash, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Size = Vector3.new(48,48,48), Transparency = 1 }):Play()
-		local snd = Instance.new("Sound"); snd.SoundId = "rbxassetid://92880640988467"; snd.Volume = 1; snd.RollOffMaxDistance = 500; snd.Parent = flash; snd:Play()
+		-- (the impact SOUND is played CLIENT-SIDE in MeteoriteExplosion.client.luau -- 2D so it's always
+		-- audible; server-created positional sounds don't reliably reach/play on clients.)
 		Debris:AddItem(flash, 0.5); Debris:AddItem(rock, 0.12)
 	end)
 end
@@ -147,7 +148,7 @@ local function onChar(plr, char)
 		task.spawn(function()
 			local hrp = char:WaitForChild("HumanoidRootPart", 10); if not hrp then return end
 			task.wait(0.1)
-			local hi = math.clamp(math.floor(tonumber(plr:GetAttribute("HighestIsland")) or 1), 1, 14)
+			local hi = math.clamp(math.floor(tonumber(plr:GetAttribute("HighestIsland")) or 1), 1, 13)
 			local pos = islandSpawnPos(hi)
 			if pos then pcall(function() char:PivotTo(CFrame.new(pos + Vector3.new(0, 3, 0))) end) end
 			restoreSnapshot(plr) -- give back the coins + fart power they launched with

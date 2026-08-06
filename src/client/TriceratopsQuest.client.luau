@@ -12,7 +12,8 @@ local Players   = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local RS        = game:GetService("ReplicatedStorage")
 local TS        = game:GetService("TweenService")
-local HatchBurst = require(RS:WaitForChild("DinosaurRealm"):WaitForChild("HatchBurst")) -- shared cool hatch FX
+local HatchBurst   = require(RS:WaitForChild("DinosaurRealm"):WaitForChild("HatchBurst"))   -- shared cool hatch FX
+local ChevronTrail = require(RS:WaitForChild("DinosaurRealm"):WaitForChild("ChevronTrail")) -- shared ground chevron guide
 local player    = Players.LocalPlayer
 
 local st = { owns = false, hatching = false }
@@ -51,13 +52,100 @@ end)
 task.spawn(function()
 	local isl = Workspace:FindFirstChild("island2") or Workspace:WaitForChild("island2", 60)
 	if not isl then warn("[Trike] island2 not found -> no egg placed (use /trike or _G.GrantTriceratops)"); return end
+
+	-- QUEST GATE -- CURRENTLY OFF. Set REQUIRE_QUEST = true to put it back. That is the
+	-- whole switch; nothing else needs touching.
+	--
+	-- WHEN ON: the egg stays hidden until the FrillRancher gives the quest (talking sets
+	-- Island2QuestAccepted, the same handshake every island NPC uses). It exists because the
+	-- egg otherwise sits there from join onward next to an NPC still saying "come talk to
+	-- me", which reads as a leftover mystery egg.
+	--
+	-- WHY IT IS OFF: to check the EggPlacement marker without running the quest first. The
+	-- FrillRancher is untouched -- he still stands on island2 and still sets the attribute
+	-- when talked to; the egg just no longer waits for him before placing itself.
+	--
+	-- The prints below stay useful either way: this block used to wait SILENTLY, so an egg
+	-- that was merely locked looked exactly like an egg that was broken -- no [Trike] line
+	-- appeared at all, and the obvious reading was that placement had failed.
+	local REQUIRE_QUEST = false
+	if REQUIRE_QUEST and player:GetAttribute("Island2QuestAccepted") ~= true then
+		print("[Trike] island2: egg is quest-gated -- waiting for Island2QuestAccepted (talk to the FrillRancher)")
+		player:GetAttributeChangedSignal("Island2QuestAccepted"):Wait()
+		print("[Trike] island2: quest accepted -> placing the egg")
+	end
+	if not REQUIRE_QUEST then
+		print("[Trike] island2: quest gate OFF -- placing the egg immediately (REQUIRE_QUEST = false)")
+	end
+
+	-- StreamingEnabled: island2's Model replicates at join, its PARTS do not. This
+	-- script used to raycast immediately: with no parts streamed the ray hit nothing
+	-- and the fallback pinned the egg to the (partial) bounding-box top -- the
+	-- floating egg. Wait for real geometry first (same guard MosquitoQuest uses).
+	local function islandHasStreamedIn()
+		local ok, _, size = pcall(function() return isl:GetBoundingBox() end)
+		return ok and size ~= nil and size.Magnitude > 1
+	end
+	if not islandHasStreamedIn() then
+		print("[Trike] island2 has not streamed in yet -- waiting before placing the egg...")
+		while not islandHasStreamedIn() do task.wait(1) end
+	end
+
 	local bcf, bsize = isl:GetBoundingBox()
-	local rp = RaycastParams.new(); rp.FilterType = Enum.RaycastFilterType.Exclude
-	rp.FilterDescendantsInstances = { player.Character }
-	local topY = bcf.Position.Y + bsize.Y/2
-	local hit = Workspace:Raycast(Vector3.new(bcf.Position.X, topY + 60, bcf.Position.Z), Vector3.new(0,-400,0), rp)
-	local y = (hit and hit.Position.Y or topY) + 2.0
-	local center = Vector3.new(bcf.Position.X, y, bcf.Position.Z)
+	local center = nil
+
+	-- A HAND-PLACED "EggPlacement" PART WINS. Everything below this is the script GUESSING
+	-- where an egg looks right, and a guess is what put it somewhere odd to begin with. Drop
+	-- a part named EggPlacement anywhere on island2 and the egg goes exactly there.
+	--
+	-- Same marker name island1's Lost Eggs already use (see NestingNook_Setup), so this is
+	-- the established way to pin an egg by hand rather than a second convention.
+	--
+	-- MATCHED THE SAME LOOSE WAY NestingNook_Setup MATCHES ITS OWN MARKERS: the name must
+	-- merely contain "egg" and "plac". An exact-prefix test was used here first and missed
+	-- a part actually named "egg placement" -- the space broke it -- which is precisely the
+	-- kind of near-miss a hand-typed marker name produces. Both spellings now work, and both
+	-- scripts agree on what a marker is called.
+	do
+		local marker
+		for _, d in ipairs(isl:GetDescendants()) do
+			local n = d.Name:lower()
+			if d:IsA("BasePart") and n:find("egg", 1, true) and n:find("plac", 1, true) then
+				marker = d; break
+			end
+		end
+		if marker then
+			-- sit the egg ON the marker's top face. The shell is 4 studs tall and centred on
+			-- `center`, so +2 puts its bottom exactly on that surface -- the same offset the
+			-- raycast path uses against the ground it hits.
+			center = marker.Position + Vector3.new(0, marker.Size.Y * 0.5 + 2.0, 0)
+			-- GHOST THE MARKER: it is a position anchor, not scenery. Left visible it is a
+			-- block sitting under the egg; left query-able it can swallow the Hatch prompt's
+			-- ray. Exactly the treatment the 'Dig' and 'putdino' markers get.
+			marker.Transparency = 1; marker.CanCollide = false; marker.CanQuery = false
+			print(("[Trike] island2: egg pinned to marker '%s' at (%.0f, %.0f, %.0f)")
+				:format(marker.Name, center.X, center.Y, center.Z))
+		end
+	end
+
+	-- FALLBACK, only when no marker exists. Include-filter the raycast to the ISLAND's own
+	-- geometry so it can't land on a pet, an NPC or another player, and try a small ring of
+	-- spots -- the bbox centre of an island can be over a hole or open air.
+	if not center then
+		local rp = RaycastParams.new(); rp.FilterType = Enum.RaycastFilterType.Include
+		rp.FilterDescendantsInstances = { isl }
+		local topY = bcf.Position.Y + bsize.Y/2
+		for _, off in ipairs({ Vector3.zero, Vector3.new(14,0,0), Vector3.new(-14,0,0), Vector3.new(0,0,14), Vector3.new(0,0,-14), Vector3.new(20,0,20) }) do
+			local from = Vector3.new(bcf.Position.X + off.X, topY + 60, bcf.Position.Z + off.Z)
+			local hit = Workspace:Raycast(from, Vector3.new(0, -(bsize.Y + 120), 0), rp)
+			if hit then center = hit.Position + Vector3.new(0, 2.0, 0); break end
+		end
+		if not center then
+			warn("[Trike] island2: no ground found under any probe -> egg at bbox top (check the island's collision)")
+			center = Vector3.new(bcf.Position.X, topY + 2.0, bcf.Position.Z)
+		end
+		print("[Trike] island2: no 'EggPlacement' part found -> egg positioned by ground probe")
+	end
 
 	-- cute egg (cream shell + a few earthy spots)
 	local egg = Instance.new("Model"); egg.Name = "TriceratopsEgg"
@@ -71,13 +159,48 @@ task.spawn(function()
 		part("Spot", Enum.PartType.Ball, Vector3.new(0.7,0.7,0.7), Color3.fromRGB(150,160,110), CFrame.new(center + Vector3.new(sp[1],sp[2],sp[3])))
 	end
 	egg.Parent = Workspace
-	local hl = Instance.new("Highlight"); hl.FillColor = Color3.fromRGB(190,200,150); hl.FillTransparency = 0.55; hl.OutlineColor = Color3.fromRGB(120,128,86); hl.Adornee = egg; hl.Parent = egg
+
+	-- Same green chevron runway island1 / island11 use -> leads the player to the egg.
+	-- ChevronTrail.start (not .guideToEgg) on purpose: .guideToEgg also puts a bottom-edge
+	-- hint banner on screen, and this island wants the ARROWS ONLY -- no text.
+	ChevronTrail.start(
+		function() return center end,
+		function() return st.owns end -- hatched -> the trail clears itself
+	)
+
+	-- NO HIGHLIGHT. There used to be a Highlight adorned to the egg (pale fill + outline),
+	-- which is what read as a glowing outline through the scenery. Removed by request -- the
+	-- egg is a physical prop sitting on its marker, and the chevron trail below is already
+	-- the thing that tells players where it is.
 	-- gentle bob
 	task.spawn(function() local t = 0 while egg.Parent and not st.owns do t += 0.05; pcall(function() egg:PivotTo(CFrame.new(center + Vector3.new(0, math.sin(t*2)*0.25, 0)) * CFrame.Angles(0, math.sin(t)*0.12, 0)) end); task.wait(0.05) end end)
 
 	local pp = Instance.new("ProximityPrompt"); pp.ActionText = "Hatch"; pp.ObjectText = "Triceratops Egg"
 	pp.KeyboardKeyCode = Enum.KeyCode.E; pp.HoldDuration = 0.4; pp.MaxActivationDistance = 12; pp.RequiresLineOfSight = false; pp.Parent = shell
+
+	-- LOCKED UNTIL THE FRILLRANCHER HANDS THE QUEST OVER.
+	--
+	-- This is the gate now -- NOT the placement gate above. The two are deliberately split:
+	-- the egg is PLACED on its marker the moment you arrive (so it is visible, and so its
+	-- position can be checked without running the quest), but it cannot be HATCHED until
+	-- Island2QuestAccepted is set. Gating placement instead meant no egg existed at all
+	-- until you talked to him, which is what made the marker impossible to verify.
+	--
+	-- The prompt stays ENABLED while locked and ANSWERS the press, rather than vanishing.
+	-- A missing "E" tells the player nothing -- they cannot tell locked from broken, which
+	-- is exactly the confusion this quest already caused once. Same rule the geysers use.
+	local function questAccepted()
+		return player:GetAttribute("Island2QuestAccepted") == true
+	end
+	player:GetAttributeChangedSignal("Island2QuestAccepted"):Connect(function()
+		if questAccepted() then print("[Trike] island2: quest accepted -> egg can now be hatched") end
+	end)
+
 	pp.Triggered:Connect(function()
+		if not questAccepted() then
+			floatText(center + Vector3.new(0, 3, 0), "Talk to the FrillRancher first!", Color3.fromRGB(255, 210, 120))
+			return
+		end
 		if st.owns or st.hatching then return end
 		st.hatching = true
 		local base = egg:GetPivot()

@@ -29,6 +29,26 @@ if shakeEvent then
 		if shaking then return end
 		shaking = true
 		duration = tonumber(duration) or 6
+
+		-- meteor impact BOOMS: play the sound CLIENT-SIDE (2D, on SoundService) so it's ALWAYS audible --
+		-- server-created positional sounds don't reliably reach/play on clients. Repeat over the storm's
+		-- duration so it sounds like a rain of impacts.
+		task.spawn(function()
+			local SoundService = game:GetService("SoundService")
+			local Debris = game:GetService("Debris")
+			local tStart = os.clock()
+			while os.clock() - tStart < duration do
+				local s = Instance.new("Sound")
+				s.SoundId = "rbxassetid://114095353806681"
+				s.Volume = 0.9
+				s.PlaybackSpeed = 0.9 + math.random() * 0.2 -- slight pitch variation per boom
+				s.Parent = SoundService
+				pcall(function() s:Play() end)
+				Debris:AddItem(s, 4)
+				task.wait(0.4 + math.random() * 0.35)
+			end
+		end)
+
 		local pgui = player:WaitForChild("PlayerGui")
 		local gui = Instance.new("ScreenGui"); gui.Name = "MeteorVignette"; gui.IgnoreGuiInset = true; gui.ResetOnSpawn = false; gui.DisplayOrder = 60; gui.Parent = pgui
 		local red = Instance.new("Frame"); red.Size = UDim2.fromScale(1,1); red.BackgroundColor3 = Color3.fromRGB(180,40,20); red.BackgroundTransparency = 0.8; red.BorderSizePixel = 0; red.Active = false; red.Parent = gui

@@ -43,6 +43,49 @@ local THEME = {
 	accs  = { {3,"bowtie"},{7,"glasses"},{10,"tophat"},{13,"scarf"},{17,"flower"},{20,"sparklecluster"},{23,"cane"} },
 }
 
+-- Per-pet accessory schedules (levels 3/7/10/13/17/20/23) so each dino wears its own set.
+local PET_ACCS = {
+	StegoPet         = { {3,"bowtie"},{7,"glasses"},{10,"tophat"},{13,"scarf"},{17,"flower"},{20,"sparklecluster"},{23,"cane"} },
+	RaptorPet        = { {3,"bowtie"},{7,"glasses"},{10,"crown"},{13,"backpack"},{17,"sword"},{20,"gemcluster"},{23,"staff"} },
+	SharkPet         = { {3,"bowtie"},{7,"glasses"},{10,"piratehat"},{13,"scarf"},{17,"anchor"},{20,"gemcluster"},{23,"sword"} },
+	TriceratopsPet   = { {3,"bowtie"},{7,"glasses"},{10,"crown"},{13,"backpack"},{17,"flower"},{20,"gemstuds"},{23,"staff"} },
+	SpinosaurusPet   = { {3,"bell"},{7,"glasses"},{10,"safari"},{13,"scarf"},{17,"sword"},{20,"lantern"},{23,"pickaxe"} },
+	TyrannosaurusPet = { {3,"bowtie"},{7,"glasses"},{10,"crown"},{13,"backpack"},{17,"gemstuds"},{20,"sparklecluster"},{23,"cane"} },
+}
+local PET_DISPLAY = { StegoPet="Stegosaurus", RaptorPet="Velociraptor", SharkPet="Megalodon", TriceratopsPet="Triceratops", SpinosaurusPet="Spinosaurus", TyrannosaurusPet="T-Rex" }
+local RARE_NAME   = { StegoPet="Cosmic Stegosaurus", RaptorPet="Alpha Velociraptor", SharkPet="Ancient Megalodon", TriceratopsPet="Elder Triceratops", SpinosaurusPet="Swamp King Spinosaurus", TyrannosaurusPet="Volcano Tyrant Rex" }
+-- RARE variant body looks (glass/metal/cosmic). T-Rex = Mythical cosmic; the rest = Exotic.
+local RARE_LOOK = {
+	StegoPet         = { body=Color3.fromRGB(20,150,80),   mat=Enum.Material.Glass,   refl=0.25, fx=Color3.fromRGB(70,255,150) },
+	RaptorPet        = { body=Color3.fromRGB(150,80,210),  mat=Enum.Material.Glass,   refl=0.25, fx=Color3.fromRGB(195,125,255) },
+	SharkPet         = { body=Color3.fromRGB(200,232,255), mat=Enum.Material.Plastic, refl=0.1,  fx=Color3.fromRGB(225,242,255), light=true },
+	TriceratopsPet   = { body=Color3.fromRGB(255,200,40),  mat=Enum.Material.Metal,   refl=0.35, fx=Color3.fromRGB(255,225,90) },
+	SpinosaurusPet   = { body=Color3.fromRGB(80,210,200),  mat=Enum.Material.Glass,   refl=0.25, fx=Color3.fromRGB(150,255,240) },
+	TyrannosaurusPet = { body=Color3.fromRGB(30,24,66),    mat=Enum.Material.Plastic, refl=0.1,  fx=Color3.fromRGB(180,140,255), cosmic=true, light=true },
+}
+local function petIdFromName(name)
+	name = tostring(name)
+	if name:find("Stego") then return "StegoPet"
+	elseif name:find("Raptor") or name:find("Veloci") then return "RaptorPet"
+	elseif name:find("Shark") or name:find("Megalo") then return "SharkPet"
+	elseif name:find("Trice") then return "TriceratopsPet"
+	elseif name:find("Spino") then return "SpinosaurusPet"
+	elseif name:find("Tyranno") or name:find("Rex") then return "TyrannosaurusPet" end
+	return "StegoPet"
+end
+local function petTier(level, isRare, petId)
+	if isRare then
+		if petId == "TyrannosaurusPet" then return "Mythical", Color3.fromRGB(255,70,230), true, true
+		else return "Exotic", Color3.fromRGB(40,235,225), true, true end
+	end
+	if level <= 5      then return "Common",    Color3.fromRGB(175,180,190), false, false
+	elseif level <= 10 then return "Uncommon",  Color3.fromRGB(90,210,90),   false, false
+	elseif level <= 15 then return "Rare",      Color3.fromRGB(70,140,255),  false, false
+	elseif level <= 20 then return "Epic",      Color3.fromRGB(180,90,235),  false, false
+	else                    return "Legendary", Color3.fromRGB(255,170,40),  false, false end
+end
+local function petDisplayName(petId, isRare) return (isRare and RARE_NAME[petId]) or PET_DISPLAY[petId] or petId end
+
 -- per-pet state
 local petFX    = {}   -- pet -> animated effect state (orbs/ring/pulse/burst/shimmer)
 local petScale = {}   -- pet -> current sizeMul (for FX orbit radius)
@@ -67,35 +110,85 @@ local function fxPart(pet, name, shape, sx, sy, sz, color, neon)
 	p.Parent = pet; return p
 end
 
--- ===== accessory builders (subset used by the stego schedule) =====
+-- ===== accessory builders (full set -- each pet's schedule picks 7 of these) =====
 local function buildAccessoryByKey(pet, root, theme, key, gold)
+	local function A(shape, sx,sy,sz, color, cf) return accPart(pet, root, shape, sx,sy,sz, color, cf) end
 	if key == "bowtie" then
 		local n = theme.neck; local c = gold and PRESTIGE_GOLD or Color3.fromRGB(175,45,55)
-		for _,sgn in ipairs({1,-1}) do accPart(pet,root, BLK_, 0.16,0.36,0.4, c, n * CFrame.new(0,0,0.3*sgn) * CFrame.Angles(math.rad(22*sgn),0,0)) end
-		accPart(pet,root, BLK_, 0.2,0.22,0.22, gold and Color3.fromRGB(225,180,60) or Color3.fromRGB(120,30,40), n)
+		for _,sgn in ipairs({1,-1}) do A(BLK_, 0.16,0.36,0.4, c, n * CFrame.new(0,0,0.3*sgn) * CFrame.Angles(math.rad(22*sgn),0,0)) end
+		A(BLK_, 0.2,0.22,0.22, gold and Color3.fromRGB(225,180,60) or Color3.fromRGB(120,30,40), n)
 	elseif key == "glasses" then
 		local f = theme.face; local w = theme.glassW or 0.48; local c = gold and PRESTIGE_GOLD or Color3.fromRGB(30,30,36)
-		for _,sgn in ipairs({1,-1}) do accPart(pet,root, CYL_, 0.1,0.42,0.42, c, f * CFrame.new(0,0,w*sgn)) end
+		for _,sgn in ipairs({1,-1}) do A(CYL_, 0.1,0.42,0.42, c, f * CFrame.new(0,0,w*sgn)) end
 	elseif key == "tophat" then
 		local h = theme.head; local c = gold and PRESTIGE_GOLD or Color3.fromRGB(35,35,40)
-		accPart(pet,root, CYL_, 0.12,1.2,1.2, c, h * CFrame.new(0,-0.05,0) * CFrame.Angles(0,0,math.rad(90)))
-		accPart(pet,root, CYL_, 0.78,0.74,0.74, c, h * CFrame.new(0,0.42,0) * CFrame.Angles(0,0,math.rad(90)))
-		accPart(pet,root, CYL_, 0.2,0.78,0.78, gold and Color3.fromRGB(225,180,60) or Color3.fromRGB(170,40,50), h * CFrame.new(0,0.16,0) * CFrame.Angles(0,0,math.rad(90)))
+		A(CYL_, 0.12,1.2,1.2, c, h * CFrame.new(0,-0.05,0) * CFrame.Angles(0,0,math.rad(90)))
+		A(CYL_, 0.78,0.74,0.74, c, h * CFrame.new(0,0.42,0) * CFrame.Angles(0,0,math.rad(90)))
+		A(CYL_, 0.2,0.78,0.78, gold and Color3.fromRGB(225,180,60) or Color3.fromRGB(170,40,50), h * CFrame.new(0,0.16,0) * CFrame.Angles(0,0,math.rad(90)))
 	elseif key == "scarf" then
 		local n = theme.neck; local c = gold and PRESTIGE_GOLD or Color3.fromRGB(70,120,180)
-		accPart(pet,root, CYL_, 1.4,0.26,0.26, c, n * CFrame.Angles(0,math.rad(90),0))
-		accPart(pet,root, BLK_, 0.5,0.16,0.3, c, n * CFrame.new(-0.18,-0.42,0.32))
+		A(CYL_, 1.4,0.26,0.26, c, n * CFrame.Angles(0,math.rad(90),0))
+		A(BLK_, 0.5,0.16,0.3, c, n * CFrame.new(-0.18,-0.42,0.32))
 	elseif key == "flower" then
 		local e = theme.head; local petal = gold and PRESTIGE_GOLD or Color3.fromRGB(240,120,160); local center = gold and PRESTIGE_GOLD or Color3.fromRGB(250,210,90)
-		for k=0,4 do local ang=math.rad(k*72); accPart(pet,root, BAL_, 0.22,0.22,0.22, petal, e * CFrame.new(math.sin(ang)*0.24, math.cos(ang)*0.24, 0)) end
-		accPart(pet,root, BAL_, 0.18,0.18,0.18, center, e)
+		for k=0,4 do local ang=math.rad(k*72); A(BAL_, 0.22,0.22,0.22, petal, e * CFrame.new(math.sin(ang)*0.24, math.cos(ang)*0.24, 0)) end
+		A(BAL_, 0.18,0.18,0.18, center, e)
 	elseif key == "sparklecluster" then
 		local h = theme.head; local c = gold and PRESTIGE_GOLD or Color3.fromRGB(255,225,110)
-		for k=0,3 do local ang=math.rad(k*90); local p=accPart(pet,root, BAL_, 0.26,0.26,0.26, c, h * CFrame.new(math.sin(ang)*0.7, 0.45, math.cos(ang)*0.7)); p.Material=Enum.Material.Neon end
+		for k=0,3 do local ang=math.rad(k*90); local p=A(BAL_, 0.26,0.26,0.26, c, h * CFrame.new(math.sin(ang)*0.7, 0.45, math.cos(ang)*0.7)); p.Material=Enum.Material.Neon end
 	elseif key == "cane" then
 		local s = theme.side; local c = gold and PRESTIGE_GOLD or Color3.fromRGB(40,30,26)
-		accPart(pet,root, CYL_, 1.7,0.13,0.13, c, s * CFrame.new(0,0.35,0) * CFrame.Angles(0,0,math.rad(90)))
-		accPart(pet,root, CYL_, 0.45,0.13,0.13, c, s * CFrame.new(-0.16,1.25,0) * CFrame.Angles(0,0,math.rad(55)))
+		A(CYL_, 1.7,0.13,0.13, c, s * CFrame.new(0,0.35,0) * CFrame.Angles(0,0,math.rad(90)))
+		A(CYL_, 0.45,0.13,0.13, c, s * CFrame.new(-0.16,1.25,0) * CFrame.Angles(0,0,math.rad(55)))
+	elseif key == "bell" then
+		A(CYL_, 1.5,0.22,0.22, gold and PRESTIGE_GOLD or Color3.fromRGB(170,45,55), theme.neck * CFrame.Angles(0,math.rad(90),0))
+		A(BAL_, 0.42,0.46,0.42, gold and PRESTIGE_GOLD or Color3.fromRGB(212,176,80), theme.neck * CFrame.new(0.05,-0.34,0))
+	elseif key == "backpack" then
+		local b = theme.back; local c = gold and PRESTIGE_GOLD or Color3.fromRGB(120,90,58)
+		A(BLK_, 0.65,0.8,0.9, c, b)
+		for _,sgn in ipairs({1,-1}) do A(BLK_, 0.55,0.12,0.16, gold and Color3.fromRGB(225,185,70) or Color3.fromRGB(88,64,40), b * CFrame.new(0.5,0.12,0.42*sgn)) end
+	elseif key == "crown" then
+		local h = theme.head; local c = gold and PRESTIGE_GOLD or Color3.fromRGB(212,182,66)
+		A(CYL_, 0.16,1.05,1.05, c, h * CFrame.Angles(0,0,math.rad(90)))
+		for i=0,4 do local ang=math.rad(i*72); A(CYL_, 0.5,0.16,0.16, c, h * CFrame.new(math.sin(ang)*0.42, 0.3, math.cos(ang)*0.42) * CFrame.Angles(0,0,math.rad(90))) end
+	elseif key == "piratehat" then
+		local h = theme.head; local c = gold and PRESTIGE_GOLD or Color3.fromRGB(34,34,40)
+		A(BAL_, 1.5,0.45,1.15, c, h)
+		A(BAL_, 0.95,0.78,0.85, c, h * CFrame.new(-0.05,0.45,0))
+		A(CYL_, 1.0,0.2,0.2, gold and Color3.fromRGB(255,225,90) or Color3.fromRGB(225,185,70), h * CFrame.new(0.45,0.05,0) * CFrame.Angles(0,math.rad(90),0))
+	elseif key == "safari" then
+		local h = theme.head; local c = gold and PRESTIGE_GOLD or Color3.fromRGB(156,138,96)
+		A(CYL_, 0.12,1.5,1.5, c, h * CFrame.Angles(0,0,math.rad(90)))
+		A(BAL_, 0.95,0.66,0.95, c, h * CFrame.new(0,0.34,0))
+		A(CYL_, 0.2,0.92,0.92, gold and Color3.fromRGB(255,225,90) or Color3.fromRGB(110,92,60), h * CFrame.new(0,0.12,0) * CFrame.Angles(0,0,math.rad(90)))
+	elseif key == "staff" then
+		local s = theme.side
+		A(CYL_, 1.7,0.14,0.14, Color3.fromRGB(120,84,46), s * CFrame.new(0,0.4,0) * CFrame.Angles(0,0,math.rad(90)))
+		local p=A(BAL_, 0.42,0.42,0.42, gold and PRESTIGE_GOLD or Color3.fromRGB(150,235,90), s * CFrame.new(0,1.3,0)); p.Material=Enum.Material.Neon
+	elseif key == "sword" then
+		local s = theme.side; local blade = gold and PRESTIGE_GOLD or Color3.fromRGB(200,205,215)
+		A(BLK_, 0.16,0.28,0.16, Color3.fromRGB(90,60,38), s)
+		A(BLK_, 0.34,0.12,0.12, gold and PRESTIGE_GOLD or Color3.fromRGB(205,170,70), s * CFrame.new(0,0.16,0))
+		A(BLK_, 0.14,1.0,0.14, blade, s * CFrame.new(0,0.7,0))
+	elseif key == "anchor" then
+		local s = theme.side2 or theme.side; local c = gold and PRESTIGE_GOLD or Color3.fromRGB(150,154,164)
+		A(CYL_, 1.0,0.14,0.14, c, s * CFrame.new(0,0.2,0) * CFrame.Angles(0,0,math.rad(90)))
+		A(CYL_, 0.6,0.14,0.14, c, s * CFrame.new(0,0.6,0) * CFrame.Angles(math.rad(90),0,0))
+		for _,sgn in ipairs({1,-1}) do A(BLK_, 0.4,0.14,0.14, c, s * CFrame.new(0.18*sgn,-0.2,0) * CFrame.Angles(0,0,math.rad(40*sgn))) end
+	elseif key == "gemcluster" then
+		local cols = { Color3.fromRGB(95,215,205), Color3.fromRGB(120,180,255), Color3.fromRGB(235,225,205) }
+		for k=0,3 do local p=A(BAL_, 0.3,0.3,0.3, gold and PRESTIGE_GOLD or cols[(k%3)+1], theme.head * CFrame.new(-0.35+k*0.28, 0.3, -0.1+(k%2)*0.3)); p.Material=Enum.Material.Neon end
+	elseif key == "gemstuds" then
+		for k=0,3 do local p=A(BAL_, 0.26,0.26,0.26, gold and PRESTIGE_GOLD or Color3.fromRGB(120,200,210), theme.back * CFrame.new(0, 0.25, -0.45+k*0.3)); p.Material=Enum.Material.Neon end
+	elseif key == "lantern" then
+		local s = theme.side; local frame = gold and PRESTIGE_GOLD or Color3.fromRGB(90,72,46)
+		A(CYL_, 0.16,0.1,0.1, frame, s * CFrame.new(0,0.55,0) * CFrame.Angles(0,0,math.rad(90)))
+		local p=A(BLK_, 0.5,0.6,0.5, Color3.fromRGB(255,225,110), s); p.Material=Enum.Material.Neon
+		A(BLK_, 0.6,0.12,0.6, frame, s * CFrame.new(0,-0.34,0))
+	elseif key == "pickaxe" then
+		local s = theme.side2 or theme.side; local wood = Color3.fromRGB(120,84,46); local head = gold and PRESTIGE_GOLD or Color3.fromRGB(150,154,164)
+		A(CYL_, 1.3,0.13,0.13, wood, s * CFrame.new(0,0.3,0) * CFrame.Angles(0,0,math.rad(90)))
+		A(BLK_, 0.9,0.16,0.16, head, s * CFrame.new(0,0.85,0) * CFrame.Angles(0,0,math.rad(18)))
 	end
 end
 
@@ -105,7 +198,7 @@ local function clearEvo(pet)
 	local root = pet.PrimaryPart
 	if root then for _, c in ipairs(root:GetChildren()) do
 		local n = c.Name
-		if n=="PetSparkle" or n=="PetTrail" or n=="PTrailA0" or n=="PTrailA1" or n=="PetAura" or n=="PetAuraLight" or n=="PetBurst" then c:Destroy() end
+		if n=="PetSparkle" or n=="PetTrail" or n=="PTrailA0" or n=="PTrailA1" or n=="PetAura" or n=="PetAuraLight" or n=="PetBurst" or n=="PetRareFX" or n=="PetRareLight" then c:Destroy() end
 	end end
 	for _, c in ipairs(pet:GetChildren()) do
 		if c.Name=="EvoPart" or c.Name=="PetOrb" or c.Name=="PetRing" or c.Name=="PetPulse" then c:Destroy() end
@@ -128,6 +221,50 @@ local function buildFX(pet, root, theme, level, gold)
 	petFX[pet] = fx
 end
 
+-- ===== RARE variant body recolor + rare particles/light =====
+local function applyRareLook(pet, root, petId)
+	local r = RARE_LOOK[petId]; if not r then return end
+	for _, d in ipairs(pet:GetDescendants()) do
+		if d:IsA("BasePart") and d ~= root then
+			local n = d.Name
+			if n~="whitepartofeye" and n~="blackpartofeye" and n~="Glint" and n~="EvoPart" and n~="PetOrb" and n~="PetRing" and n~="PetPulse" then
+				d.Color = r.body; d.Material = r.mat; d.Reflectance = r.refl
+			end
+		end
+	end
+	local rfx = Instance.new("ParticleEmitter"); rfx.Name="PetRareFX"; rfx.Color=ColorSequence.new(r.fx); rfx.LightEmission=0.85
+	rfx.Rate = r.cosmic and 65 or 32; rfx.Lifetime=NumberRange.new(0.6,1.2); rfx.Rotation=NumberRange.new(0,360)
+	rfx.Speed=NumberRange.new(r.cosmic and 1.4 or 0.5, r.cosmic and 3.2 or 1.4); rfx.Size=NumberSequence.new(r.cosmic and 0.45 or 0.4)
+	rfx.Transparency=NumberSequence.new({ NumberSequenceKeypoint.new(0,0.15), NumberSequenceKeypoint.new(1,1) }); rfx.Parent=root
+	if r.light then local pl=Instance.new("PointLight"); pl.Name="PetRareLight"; pl.Color=r.fx; pl.Brightness=3; pl.Range=12; pl.Parent=root end
+	if petFX[pet] and r.cosmic then petFX[pet].cosmic = true end
+end
+
+-- ===== overhead nameplate: pet name (rare tinted) + tier/level pill =====
+local function updateNameplate(pet, root, petId, level, isRare)
+	local bb = root:FindFirstChild("LevelTag")
+	if not bb then
+		bb = Instance.new("BillboardGui"); bb.Name="LevelTag"; bb.Size=UDim2.new(0,200,0,42)
+		bb.StudsOffset=Vector3.new(0,3.7,0); bb.AlwaysOnTop=true; bb.MaxDistance=160; bb.Parent=root
+		local lbl = Instance.new("TextLabel"); lbl.Name="L"; lbl.Size=UDim2.new(1,0,0,20); lbl.BackgroundTransparency=1
+		lbl.Font=Enum.Font.FredokaOne; lbl.TextSize=16; lbl.Parent=bb; Instance.new("UIStroke").Parent=lbl
+		local tg = Instance.new("TextLabel"); tg.Name="Tag"; tg.AnchorPoint=Vector2.new(0.5,0); tg.Position=UDim2.new(0.5,0,0,22)
+		tg.AutomaticSize=Enum.AutomaticSize.X; tg.Size=UDim2.new(0,0,0,16); tg.Font=Enum.Font.GothamBold; tg.TextSize=11; tg.TextColor3=Color3.new(1,1,1); tg.Parent=bb
+		local pad=Instance.new("UIPadding", tg); pad.PaddingLeft=UDim.new(0,6); pad.PaddingRight=UDim.new(0,6)
+		Instance.new("UICorner", tg).CornerRadius=UDim.new(0,5); Instance.new("UIStroke", tg)
+	end
+	local tierName, tierColor, isVariant, flashy = petTier(level, isRare, petId)
+	bb.L.Text = petDisplayName(petId, isRare)
+	bb.L.TextColor3 = isVariant and tierColor or Color3.new(1,1,1)
+	bb.Tag.Text = isVariant and tierName or (tierName .. "  Lv " .. tostring(level))
+	bb.Tag.BackgroundColor3 = tierColor
+	local stk = bb.Tag:FindFirstChildOfClass("UIStroke")
+	if stk then
+		if flashy then stk.ApplyStrokeMode=Enum.ApplyStrokeMode.Border; stk.Color=Color3.fromRGB(255,255,255); stk.Thickness=1; stk.Transparency=0.2
+		else stk.ApplyStrokeMode=Enum.ApplyStrokeMode.Contextual; stk.Color=Color3.fromRGB(0,0,0); stk.Thickness=1; stk.Transparency=0.35 end
+	end
+end
+
 -- ===== THE UPGRADE FUNCTION =====
 local function applyLevelVisual(pet, level, isRare)
 	if not pet or not pet.PrimaryPart then return end
@@ -135,6 +272,7 @@ local function applyLevelVisual(pet, level, isRare)
 	if isRare then level = 25 end
 	local root  = pet.PrimaryPart
 	local theme = THEME
+	local petId = petIdFromName(pet.Name)
 	local MAXL  = 25
 	local frac  = math.clamp((level - 1) / (MAXL - 1), 0, 1)
 	local atMax = (level >= MAXL)
@@ -191,8 +329,12 @@ local function applyLevelVisual(pet, level, isRare)
 	end
 	-- (5) ANIMATED FX: orbs (11/14/19), ring (15), pulse (18), burst (24)
 	buildFX(pet, root, theme, level, atMax)
-	-- (6) ACCESSORIES: per-level, accumulating; gold trim at MAX
-	for _, e in ipairs(theme.accs) do if level >= e[1] then buildAccessoryByKey(pet, root, theme, e[2], atMax) end end
+	-- (6) ACCESSORIES: this pet's own schedule, accumulating; gold trim at MAX
+	local accs = PET_ACCS[petId] or theme.accs
+	for _, e in ipairs(accs) do if level >= e[1] then buildAccessoryByKey(pet, root, theme, e[2], atMax) end end
+	-- (7) RARE variant body recolor + (8) overhead nameplate (name + tier/level pill)
+	if isRare then applyRareLook(pet, root, petId) end
+	updateNameplate(pet, root, petId, level, isRare)
 	-- LEVEL-UP POP + one-shot burst
 	if prevLevel and level > prevLevel then
 		local burst = Instance.new("ParticleEmitter"); burst.Color=ColorSequence.new(theme.color); burst.LightEmission=0.85
@@ -228,6 +370,11 @@ RunService.Heartbeat:Connect(function(dt)
 				fx.pulse.CFrame = rootCF * CFrame.new(0, 0.2*sm, 0) * CFrame.Angles(0,0,math.rad(90))
 			end
 			if fx.burst then fx.burstClock = fx.burstClock - dt; if fx.burstClock <= 0 then fx.burstClock = 1.3; fx.burst:Emit(18) end end
+			if fx.cosmic then
+				local cc = Color3.fromHSV((t * 0.4) % 1, 0.7, 1)
+				local rl = root:FindFirstChild("PetRareLight"); if rl then rl.Color = cc end
+				local rfx = root:FindFirstChild("PetRareFX"); if rfx then rfx.Color = ColorSequence.new(cc) end
+			end
 			if fx.shimmer then
 				local hue = (t * 0.25) % 1; local c = Color3.fromHSV(hue, 0.45, 0.9)
 				local hl = pet:FindFirstChild("LevelGlow"); if hl then hl.OutlineColor=c; hl.OutlineTransparency=0.25; hl.FillColor=c; hl.FillTransparency=0.88 end
@@ -406,14 +553,33 @@ _G.SpawnTyrannosaurusFollower = function(baseCF) spawnFollowerFromTemplate("Tyra
 task.spawn(function()
 	local pee = RS:WaitForChild("PetEquipEvent", 30)
 	if not pee then return end
-	local EQUIP_TMPL = { StegoPet = "StegosaurusTemplate", RaptorPet = "VelociraptorTemplate", SharkPet = "SharkTemplate", TriceratopsPet = "TriceratopsTemplate" }
+	-- EVERY pet must be in here or equipping it silently does nothing.
+	-- Spinosaurus and Tyrannosaurus were MISSING -- their templates existed and the
+	-- _G.Spawn*Follower functions above used them, but the Pet Hub's equip path looks
+	-- pets up in THIS table, so equipping the Spino or T-Rex just warned
+	-- "has no template mapping" and no follower ever appeared.
+	local EQUIP_TMPL = {
+		StegoPet         = "StegosaurusTemplate",
+		RaptorPet        = "VelociraptorTemplate",
+		SharkPet         = "SharkTemplate",
+		TriceratopsPet   = "TriceratopsTemplate",
+		SpinosaurusPet   = "SpinosaurusTemplate",   -- was missing
+		TyrannosaurusPet = "TyrannosaurusTemplate", -- was missing
+	}
 	pee.OnClientEvent:Connect(function(petId)
 		if not petId or petId == false then -- unequipped -> remove the follower
 			if st.pet then pcall(function() st.pet:Destroy() end); petFX[st.pet]=nil; petScale[st.pet]=nil; petLevel[st.pet]=nil; st.pet = nil end
 			return
 		end
-		local tmpl = EQUIP_TMPL[petId]
-		if not tmpl then warn("[PetFollow] equipped '"..tostring(petId).."' has no template mapping"); return end
+		-- RARE variants are stored under a "#R" storage key (e.g. "StegoPet#R"), which
+		-- would miss this table entirely. Strip the suffix so a rare equips the same
+		-- model as its normal counterpart (applyLevelVisual paints the rare sheen on top).
+		local baseId = tostring(petId):gsub("#R$", "")
+		local tmpl = EQUIP_TMPL[baseId]
+		if not tmpl then
+			warn(("[PetFollow] equipped '%s' has no template mapping -- add it to EQUIP_TMPL"):format(tostring(petId)))
+			return
+		end
 		local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
 		local at = hrp and (hrp.CFrame * CFrame.new(FOLLOW_OFFSET.X, FOLLOW_OFFSET.Y, FOLLOW_OFFSET.Z)) or CFrame.new(0,8,0)
 		spawnFollowerFromTemplate(tmpl, petId .. "Follower", at)  -- swaps st.pet to the equipped pet
@@ -434,6 +600,36 @@ task.spawn(function()
 			st.rare  = d.rare or false
 			applyLevelVisual(st.pet, st.level, st.rare)
 		end
+	end)
+end)
+
+-- ===== RARE HATCH FANFARE: server rolled a rare -> full-screen "RARE!" banner + a burst on the pet =====
+task.spawn(function()
+	local pre = RS:WaitForChild("PetRareEvent", 30)
+	if not pre then return end
+	local TS = game:GetService("TweenService")
+	pre.OnClientEvent:Connect(function(petId, rareName)
+		st.rare = true
+		if st.pet then applyLevelVisual(st.pet, 25, true) end
+		if st.pet and st.pet.PrimaryPart then
+			local b = Instance.new("ParticleEmitter"); b.Color=ColorSequence.new(Color3.fromRGB(255,120,235)); b.LightEmission=0.9
+			b.Lifetime=NumberRange.new(0.5,1.0); b.Speed=NumberRange.new(5,12); b.Rotation=NumberRange.new(0,360)
+			b.Size=NumberSequence.new(0.5); b.Rate=0; b.Parent=st.pet.PrimaryPart; b:Emit(60); Debris:AddItem(b,1.4)
+		end
+		local gui = Instance.new("ScreenGui"); gui.Name="RareFanfare"; gui.IgnoreGuiInset=true; gui.DisplayOrder=200; gui.Parent=pg
+		local lbl = Instance.new("TextLabel"); lbl.Size=UDim2.fromScale(1,0.2); lbl.Position=UDim2.fromScale(0,0.32); lbl.BackgroundTransparency=1
+		lbl.Font=Enum.Font.FredokaOne; lbl.TextScaled=true; lbl.TextColor3=Color3.fromRGB(255,120,235); lbl.TextTransparency=1
+		lbl.Text=("\xE2\x9C\xA8 RARE!  %s  \xE2\x9C\xA8"):format(tostring(rareName or petDisplayName(petId, true)))
+		local stk=Instance.new("UIStroke", lbl); stk.Color=Color3.fromRGB(255,255,255); stk.Thickness=2; stk.Transparency=1
+		lbl.Parent=gui
+		TS:Create(lbl, TweenInfo.new(0.4), { TextTransparency=0 }):Play()
+		TS:Create(stk, TweenInfo.new(0.4), { Transparency=0 }):Play()
+		task.delay(2.4, function()
+			TS:Create(lbl, TweenInfo.new(0.6), { TextTransparency=1 }):Play()
+			TS:Create(stk, TweenInfo.new(0.6), { Transparency=1 }):Play()
+			Debris:AddItem(gui, 1.0)
+		end)
+		print("[PetFollow] RARE fanfare -> "..tostring(rareName))
 	end)
 end)
 

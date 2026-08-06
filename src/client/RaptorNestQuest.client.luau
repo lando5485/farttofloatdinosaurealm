@@ -1,7 +1,9 @@
 --======================================================================
 -- RaptorNestQuest.client.luau  (LocalScript)  -- ISLAND 7: Feed the Raptor Nest
 --======================================================================
--- Meat (markers "Meat1".."Meat5") is scattered around island7. The player carries
+-- Meat (markers "Meat1".."Meat5") is scattered around island7. Each piece is SAWED
+-- free with a drag-the-bone minigame -- a rising ceiling holds that to a flat 15s
+-- (see PickupFloor), so five pieces is 75s of work, not five taps. The player carries
 -- ONE piece at a time back to the nest egg ("EggSpot7") and FEEDS it via a
 -- drag-the-meat-into-the-mouth minigame (NOT a tap game). Deliver 5 -> the egg
 -- shakes, cracks, and hatches a Baby Raptor pet. Gated by Island7QuestAccepted
@@ -21,6 +23,7 @@ local CONFIG = { island = "island7", count = 5, eggSpot = "EggSpot7", accept = "
 
 local okHB, HatchBurst = pcall(function() return require(RS:WaitForChild("DinosaurRealm"):WaitForChild("HatchBurst", 10)) end)
 if not okHB then HatchBurst = nil end
+local PickupFloor = require(RS:WaitForChild("DinosaurRealm"):WaitForChild("PickupFloor")) -- the 15s-per-collectible floor
 
 print("[RaptorNest] script loaded")
 
@@ -44,8 +47,8 @@ local function ghost(inst)
 end
 
 -- ===== state =====
-local st = { delivered = 0, carrying = false, done = false, owns = false, active = false }
-local meat = {}          -- [i] = { model, chunk, prompt, pos, delivered=false, hidden=false }
+local st = { delivered = 0, carrying = false, done = false, owns = false, active = false, carving = false }
+local meat = {}          -- [i] = { model, chunk, prompt, pos, basePos, delivered=false, hidden=false, carving=false }
 local eggPart, eggBob
 local carriedModel
 local eggPrompt
@@ -111,20 +114,21 @@ local function updatePrompts()
 	local accepted = player:GetAttribute(CONFIG.accept) and not st.done
 	for i = 1, CONFIG.count do
 		local m = meat[i]
-		if m and m.prompt then m.prompt.Enabled = accepted and not st.carrying and not m.delivered and not m.hidden end
+		if m and m.prompt then m.prompt.Enabled = accepted and not st.carrying and not st.carving and not m.delivered and not m.hidden end
 	end
-	if eggPrompt then eggPrompt.Enabled = accepted and st.carrying end
+	if eggPrompt then eggPrompt.Enabled = accepted and st.carrying and not st.carving end
 end
 player:GetAttributeChangedSignal(CONFIG.accept):Connect(updatePrompts)
 
 -- ===== drag-the-meat-into-the-mouth feeding minigame (NOT a tap game) =====
 local function openFeedMinigame(onDone)
 	local gui = Instance.new("ScreenGui"); gui.Name = "FeedMinigame"; gui.ResetOnSpawn = false; gui.IgnoreGuiInset = true; gui.DisplayOrder = 90; gui.Parent = PlayerGui
-	local back = Instance.new("TextButton"); back.Size = UDim2.fromScale(1,1); back.BackgroundColor3 = Color3.fromRGB(20,16,12); back.BackgroundTransparency = 0.35; back.Text = ""; back.AutoButtonColor = false; back.Parent = gui
+	-- 0.5 film (matching the carve panel), so the nest is still readable behind it
+	local back = Instance.new("TextButton"); back.Size = UDim2.fromScale(1,1); back.BackgroundColor3 = Color3.fromRGB(20,16,12); back.BackgroundTransparency = 0.5; back.Text = ""; back.AutoButtonColor = false; back.Parent = gui
 	local panel = Instance.new("Frame"); panel.AnchorPoint = Vector2.new(0.5,0.5); panel.Position = UDim2.new(0.5,0,0.5,0); panel.Size = UDim2.fromOffset(420,360)
 	panel.BackgroundColor3 = Color3.fromRGB(122,142,82); panel.Parent = gui; Instance.new("UICorner", panel).CornerRadius = UDim.new(0,16)
 	local ps = Instance.new("UIStroke", panel); ps.Color = Color3.fromRGB(40,52,38); ps.Thickness = 3
-	local title = Instance.new("TextLabel"); title.BackgroundTransparency = 1; title.Size = UDim2.new(1,0,0,40); title.Position = UDim2.new(0,0,0,8)
+	local title = Instance.new("TextLabel"); title.BackgroundTransparency = 1; title.Size = UDim2.new(1,-56,0,40); title.Position = UDim2.new(0,10,0,8)
 	title.Font = Enum.Font.FredokaOne; title.TextScaled = true; title.TextColor3 = Color3.fromRGB(250,242,214); title.Text = "Drag the meat into the mouth!"; title.Parent = panel
 	do local c = Instance.new("UITextSizeConstraint"); c.MaxTextSize = 22; c.Parent = title end
 	-- the hungry baby raptor's open MOUTH (the drop target)
@@ -150,6 +154,10 @@ local function openFeedMinigame(onDone)
 		gui:Destroy()
 		if onDone then onDone(success) end
 	end
+	-- There was no way out of this panel at all: miss the mouth repeatedly and the only
+	-- exit was closing the game. X bails (you keep the meat, nothing is fed); the
+	-- backdrop still never closes it.
+	PickupFloor.addCloseButton(panel, function() finish(false) end)
 	local dragging = false
 	-- screen-space drag (the gui ignores inset, so input.Position maps 1:1)
 	drag.InputBegan:Connect(function(io)
@@ -178,6 +186,130 @@ local function openFeedMinigame(onDone)
 			else
 				TS:Create(drag, TweenInfo.new(0.2, Enum.EasingStyle.Back), { Position = meatHome }):Play() -- snap back, try again
 			end
+		end
+	end)
+end
+
+-- ===== CARVE THE MEAT FREE (the island7 pickup) =====
+--
+-- RISING CEILING (PickupFloor pattern 1), with a verb of its own: sawing.
+--
+-- Picking meat up used to be one E on a ProximityPrompt, which made the whole of
+-- Raptor Ridge a five-stop walk. Each piece is now sawed off the ridge with the
+-- bone: DRAG the saw across the cut and back, and each full traverse bites deeper.
+--
+-- The floor is exact rather than tuned. A ceiling climbs 0 -> 1 over 15s and the
+-- cut is clamped to it on every write, so strokes swung faster than the ceiling are
+-- simply lost -- there is no stroke rate that finishes a piece early. The slow
+-- SAG in the other direction means standing still loses ground, so keeping pace
+-- costs (1/15 + 0.02) / (1/14) = ~1.2 traverses/sec: a steady sawing rhythm, and a
+-- DRAG rather than taps, which is the comfortable input on a phone.
+--
+-- Bail out (X, never the backdrop) and the meat is left exactly as it was.
+local function openCarveMinigame(entry, onDone)
+	local STROKES = 14      -- full traverses of the cut; each one bites 1/14 deeper
+	local SAG     = 0.02    -- the meat settles back into the ridge while you're not sawing
+	-- DONE, not 1.0, for TWO reasons -- either one alone made the cut impossible to finish:
+	--   1. the fill is CLAMPED to the rising ceiling, so a stroke can add at most exactly
+	--      the ceiling's value, and the sag then takes a sliver back out on the very next
+	--      frame -- before the completion test ever runs.
+	--   2. 1/14 is not exact in binary. Fourteen of them sum to 0.9999999999999997, which
+	--      is not >= 1 even with the sag switched off entirely.
+	local DONE    = PickupFloor.DONE
+
+	local gui = Instance.new("ScreenGui"); gui.Name = "CarveMinigame"; gui.ResetOnSpawn = false; gui.IgnoreGuiInset = true; gui.DisplayOrder = 90; gui.Parent = PlayerGui
+	-- 0.5 film, so the real ham-bone is still visible reacting behind the panel.
+	-- Modal + no click handler: a backdrop tap NEVER closes this.
+	local back = Instance.new("TextButton"); back.Size = UDim2.fromScale(1,1); back.BackgroundColor3 = Color3.new(0,0,0); back.BackgroundTransparency = 0.5
+	back.Text = ""; back.AutoButtonColor = false; back.Modal = true; back.Active = true; back.Parent = gui
+	local panel = Instance.new("Frame"); panel.AnchorPoint = Vector2.new(0.5,0.5); panel.Position = UDim2.new(0.5,0,0.5,0); panel.Size = UDim2.fromOffset(420,300)
+	panel.BackgroundColor3 = Color3.fromRGB(122,142,82); panel.Parent = gui; Instance.new("UICorner", panel).CornerRadius = UDim.new(0,16)
+	local ps = Instance.new("UIStroke", panel); ps.Color = Color3.fromRGB(40,52,38); ps.Thickness = 3
+	local title = Instance.new("TextLabel"); title.BackgroundTransparency = 1; title.Size = UDim2.new(1,-56,0,40); title.Position = UDim2.new(0,10,0,8)
+	title.Font = Enum.Font.FredokaOne; title.TextScaled = true; title.TextColor3 = Color3.fromRGB(250,242,214); title.Text = "Saw the meat free!"; title.Parent = panel
+	do local c = Instance.new("UITextSizeConstraint"); c.MaxTextSize = 24; c.Parent = title end
+
+	-- THE CUT: a horizontal track the saw is dragged along, end to end
+	local track = Instance.new("Frame"); track.AnchorPoint = Vector2.new(0.5,0); track.Position = UDim2.new(0.5,0,0,74); track.Size = UDim2.new(1,-48,0,86)
+	track.BackgroundColor3 = Color3.fromRGB(70,40,36); track.Parent = panel; Instance.new("UICorner", track).CornerRadius = UDim.new(0,12)
+	local ts = Instance.new("UIStroke", track); ts.Color = Color3.fromRGB(150,95,60); ts.Thickness = 2
+	for _, x in ipairs({ 0.08, 0.92 }) do -- the two ends you have to reach for a stroke to count
+		local mark = Instance.new("Frame"); mark.AnchorPoint = Vector2.new(0.5,0.5); mark.Position = UDim2.new(x,0,0.5,0); mark.Size = UDim2.new(0,4,1,-16)
+		mark.BackgroundColor3 = Color3.fromRGB(255,210,120); mark.BackgroundTransparency = 0.45; mark.BorderSizePixel = 0; mark.Parent = track
+	end
+	local saw = Instance.new("TextButton"); saw.AnchorPoint = Vector2.new(0.5,0.5); saw.Position = UDim2.new(0.5,0,0.5,0); saw.Size = UDim2.fromOffset(70,70)
+	saw.BackgroundColor3 = Color3.fromRGB(235,230,215); saw.AutoButtonColor = false; saw.Font = Enum.Font.FredokaOne; saw.TextScaled = true
+	saw.Text = "\xF0\x9F\xA6\xB4"; saw.ZIndex = 3; saw.Parent = track
+	Instance.new("UICorner", saw).CornerRadius = UDim.new(1,0); local ss = Instance.new("UIStroke", saw); ss.Color = Color3.fromRGB(120,90,60); ss.Thickness = 2
+
+	local cutBg = Instance.new("Frame"); cutBg.AnchorPoint = Vector2.new(0.5,0); cutBg.Position = UDim2.new(0.5,0,0,182); cutBg.Size = UDim2.new(1,-48,0,20)
+	cutBg.BackgroundColor3 = Color3.fromRGB(40,52,38); cutBg.Parent = panel; Instance.new("UICorner", cutBg).CornerRadius = UDim.new(0,10)
+	local cut = Instance.new("Frame"); cut.Size = UDim2.new(0,0,1,0); cut.BackgroundColor3 = Color3.fromRGB(200,80,70); cut.BorderSizePixel = 0; cut.Parent = cutBg
+	Instance.new("UICorner", cut).CornerRadius = UDim.new(0,10)
+	local hint = Instance.new("TextLabel"); hint.BackgroundTransparency = 1; hint.AnchorPoint = Vector2.new(0.5,0); hint.Position = UDim2.new(0.5,0,0,214); hint.Size = UDim2.new(1,-40,0,26)
+	hint.Font = Enum.Font.GothamBold; hint.TextScaled = true; hint.TextColor3 = Color3.fromRGB(245,236,208); hint.Text = "Drag the bone end to end \xE2\x80\x94 keep sawing"; hint.Parent = panel
+	do local c = Instance.new("UITextSizeConstraint"); c.MaxTextSize = 15; c.Parent = hint end
+
+	local conns = {}
+	local finished, fill = false, 0
+	local ceiling = PickupFloor.newCeiling(0)
+	local function finish(success)
+		if finished then return end
+		finished = true
+		for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
+		gui:Destroy()
+		if onDone then onDone(success) end
+	end
+	PickupFloor.addCloseButton(panel, function() finish(false) end)
+
+	-- drag: the saw follows the pointer's X along the track (mouse and touch alike)
+	local dragging, sawX, edge = false, 0.5, 0
+	saw.InputBegan:Connect(function(io)
+		if io.UserInputType == Enum.UserInputType.MouseButton1 or io.UserInputType == Enum.UserInputType.Touch then dragging = true end
+	end)
+	conns[#conns+1] = UserInputService.InputEnded:Connect(function(io)
+		if io.UserInputType == Enum.UserInputType.MouseButton1 or io.UserInputType == Enum.UserInputType.Touch then dragging = false end
+	end)
+	conns[#conns+1] = UserInputService.InputChanged:Connect(function(io)
+		if not dragging or finished then return end
+		if io.UserInputType ~= Enum.UserInputType.MouseMovement and io.UserInputType ~= Enum.UserInputType.Touch then return end
+		local tp, tsz = track.AbsolutePosition, track.AbsoluteSize
+		if tsz.X <= 0 then return end
+		sawX = math.clamp((io.Position.X - tp.X) / tsz.X, 0.04, 0.96)
+		-- a STROKE is a traverse: reach one end having last touched the other
+		if sawX >= 0.92 and edge ~= 1 then
+			edge = 1
+			fill = ceiling:clamp(fill + 1 / STROKES) -- clamp on the INPUT path, not just per-frame
+		elseif sawX <= 0.08 and edge ~= -1 then
+			edge = -1
+			fill = ceiling:clamp(fill + 1 / STROKES)
+		else
+			return
+		end
+		-- the stroke that severs it pays out HERE, not a frame later in the loop, which
+		-- would charge it a frame of sag off a bar already sitting at the ceiling
+		if fill >= DONE then cut.Size = UDim2.new(1, 0, 1, 0); finish(true) end
+	end)
+
+	task.spawn(function()
+		local last = os.clock()
+		while not finished do
+			local now = os.clock(); local dt = math.min(now - last, 0.1); last = now
+			ceiling:step(dt)
+			fill = ceiling:clamp(math.max(0, fill - SAG * dt))
+			saw.Position = UDim2.new(sawX, 0, 0.5, 0)
+			saw.Rotation = (sawX - 0.5) * 40
+			cut.Size = UDim2.new(fill, 0, 1, 0)
+			-- THE REAL HAM-BONE REACTS behind the 0.5 film: it works loose and lifts a
+			-- believable amount -- just clear of the ground, not launched into the sky.
+			if entry and entry.model and entry.model.Parent and entry.basePos then
+				pcall(function()
+					entry.model:PivotTo(CFrame.new(entry.basePos + Vector3.new(0, fill * 0.8, 0))
+						* CFrame.Angles(0, fill * 2.4, math.rad(math.sin(now * 14) * 4 * (1 - fill))))
+				end)
+			end
+			if fill >= DONE then cut.Size = UDim2.new(1,0,1,0); finish(true); break end
+			task.wait()
 		end
 	end)
 end
@@ -257,6 +389,23 @@ local function pickUp(i)
 	st.carriedIndex = i
 	updateHUD(); updatePrompts()
 	floatText(m.pos + Vector3.new(0,2,0), "Picked up meat!", Color3.fromRGB(255,180,120))
+end
+-- The prompt no longer hands the meat over -- it opens the carve. Only a FINISHED
+-- carve calls pickUp; bailing out puts the ham-bone back exactly where it was.
+local function startCarve(i)
+	if st.carrying or st.done or st.carving then return end
+	local m = meat[i]; if not m or m.delivered or m.hidden then return end
+	st.carving = true; m.carving = true -- m.carving parks the idle bob so the carve owns the pivot
+	updatePrompts()
+	openCarveMinigame(m, function(success)
+		st.carving = false; m.carving = false
+		if success and not st.done then
+			pickUp(i)
+		elseif m.model and m.model.Parent and m.basePos then
+			pcall(function() m.model:PivotTo(CFrame.new(m.basePos)) end) -- reset the prop on abort
+		end
+		updatePrompts()
+	end)
 end
 local function deliver()
 	if not st.carrying or st.done then return end
@@ -339,7 +488,38 @@ end
 -- ===== BOOT: ghost the marker parts now; the quest (meat + egg) only appears AFTER you talk to the NPC =====
 task.spawn(function()
 	local island = Workspace:WaitForChild(CONFIG.island, 60); if not island then warn("[RaptorNest] island7 not found"); return end
-	-- wait for Meat1..5 + EggSpot7 to stream in
+
+	--------------------------------------------------------------------
+	-- WAIT FOR ISLAND 7 TO STREAM IN before hunting for the markers.
+	--------------------------------------------------------------------
+	-- StreamingEnabled: island7's MODEL replicates at join, but its PARTS (Meat1..5 and
+	-- EggSpot7) are only sent once the player is near it -- and island7 sits 11,978 studs
+	-- up the tower (slot 10). At spawn it is an EMPTY SHELL on this client.
+	--
+	-- The old code searched for the markers immediately with a 20s retry, found NOTHING
+	-- (the player was still down on island1), and left meatPos/eggPos EMPTY. Much later,
+	-- when you finally talked to the RaptorScout, activate() ran off those empty tables:
+	--     [RaptorNest] Meat1..5 not found
+	--     [RaptorNest] quest ACTIVATED -- placed 0 ham-bone meat models + egg MISSING
+	-- The markers were on the island the whole time -- they just hadn't been streamed.
+	local function islandHasStreamedIn()
+		local ok, _, size = pcall(function() return island:GetBoundingBox() end)
+		return ok and size ~= nil and size.Magnitude > 1
+	end
+	if not islandHasStreamedIn() then
+		print("[RaptorNest] island7 has not streamed in yet (0 parts on this client) -- waiting until the player reaches it...")
+		local waited = 0
+		while not islandHasStreamedIn() do
+			task.wait(1)
+			waited += 1
+			if waited % 30 == 0 then
+				print(("[RaptorNest]   still waiting for island7 to stream in (%ds)"):format(waited))
+			end
+		end
+		print(("[RaptorNest] island7 streamed in after %ds -> looking for the Meat + EggSpot markers"):format(waited))
+	end
+
+	-- now the island's parts really are here, so a miss is a REAL miss
 	local meatMarkers, eSpot = {}, nil
 	for _ = 1, 40 do
 		for i = 1, CONFIG.count do if not meatMarkers[i] then local mk = findNamed("Meat" .. i); if mk then meatMarkers[i] = mk end end end
@@ -347,6 +527,25 @@ task.spawn(function()
 		local n = 0; for i = 1, CONFIG.count do if meatMarkers[i] then n += 1 end end
 		if n >= CONFIG.count and eSpot then break end
 		task.wait(0.5)
+	end
+
+	-- report what we actually found, so a genuinely missing/misnamed marker is obvious
+	do
+		local n = 0
+		for i = 1, CONFIG.count do
+			if meatMarkers[i] then
+				n += 1
+			else
+				warn(("[RaptorNest] island7 IS streamed in, but marker 'Meat%d' is genuinely absent -- "
+					.. "name a part 'Meat%d' on island7."):format(i, i))
+			end
+		end
+		if not eSpot then
+			warn(("[RaptorNest] island7 IS streamed in, but '%s' is genuinely absent -- name a part '%s' on island7.")
+				:format(CONFIG.eggSpot, CONFIG.eggSpot))
+		end
+		print(("[RaptorNest] found %d/%d Meat marker(s) + egg spot %s")
+			:format(n, CONFIG.count, eSpot and "ok" or "MISSING"))
 	end
 	-- the parts you placed are just LOCATIONS -> ghost them immediately + remember where they were
 	local meatPos = {}
@@ -365,14 +564,19 @@ task.spawn(function()
 				local basePos = meatPos[i] + Vector3.new(0, 1.4, 0)
 				model:PivotTo(CFrame.new(basePos))
 				model.Parent = Workspace
-				local pp = Instance.new("ProximityPrompt"); pp.ActionText = "Carry Meat"; pp.ObjectText = "Meat"
+				-- "Carve", not "Carry" -- the prompt opens the saw minigame, it does not hand the meat over
+				local pp = Instance.new("ProximityPrompt"); pp.ActionText = "Carve Meat"; pp.ObjectText = "Meat"
 				pp.KeyboardKeyCode = Enum.KeyCode.E; pp.HoldDuration = 0.15; pp.MaxActivationDistance = 18; pp.RequiresLineOfSight = false; pp.Enabled = true; pp.Parent = chunk
-				meat[i] = { model = model, chunk = chunk, prompt = pp, pos = meatPos[i], delivered = false, hidden = false }
-				pp.Triggered:Connect(function() pickUp(i) end)
-				-- gentle BOB (up/down, no spin) so uncollected meat is easy to spot
+				meat[i] = { model = model, chunk = chunk, prompt = pp, pos = meatPos[i], basePos = basePos, delivered = false, hidden = false, carving = false }
+				pp.Triggered:Connect(function() startCarve(i) end)
+				-- gentle BOB (up/down, no spin) so uncollected meat is easy to spot.
+				-- Parked while this piece is being carved -- otherwise the bob and the
+				-- carve fight over the pivot and the ham-bone judders in place.
 				task.spawn(function()
 					while model.Parent and not meat[i].hidden and not meat[i].delivered and not st.done do
-						model:PivotTo(CFrame.new(basePos + Vector3.new(0, math.sin(os.clock()*2 + i)*0.25, 0)))
+						if not meat[i].carving then
+							model:PivotTo(CFrame.new(basePos + Vector3.new(0, math.sin(os.clock()*2 + i)*0.25, 0)))
+						end
 						task.wait()
 					end
 				end)

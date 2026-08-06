@@ -23,7 +23,8 @@ local GUIDE = {
 	[5] = { npcName = "MireWatcher",                      accept = "Island5QuestAccepted" },
 	[6] = { npcName = "RidgeWarden",                      accept = "Island6QuestAccepted" },
 	[7] = { npcName = "RaptorScout",                      accept = "Island7QuestAccepted" },
-	[8] = { npcName = "AshWarden",                        accept = "Island8QuestAccepted" },
+	-- island11 "Volcanic Vista" = the geyser FINALE (island8 is now a blank island)
+	[11] = { npcName = "AshWarden",                       accept = "Island11QuestAccepted" },
 }
 
 -- which island the player is on (XZ footprint), refreshed every 0.4s
@@ -34,7 +35,7 @@ task.spawn(function()
 		local hrp = char and char:FindFirstChild("HumanoidRootPart")
 		if hrp then
 			local pos = hrp.Position; local best, bestD = nil, math.huge
-			for i = 1, 14 do
+			for i = 1, 13 do
 				local isl = Workspace:FindFirstChild("island" .. i)
 				if isl then
 					local ok, cf, size = pcall(function() return isl:GetBoundingBox() end)
@@ -51,11 +52,41 @@ task.spawn(function()
 	end
 end)
 
+-- ONE SHOWING PER ISLAND -- the same rule NPCWaypointArrow uses, and they have to agree
+-- or the island keeps one guide and loses the other, which reads as a bug either way.
+--
+-- The trail is for finding the NPC the FIRST time you land. Once you fly off, that island
+-- is done: the chevrons go at once and stay gone when you come back, because by then you
+-- have been there and they are only pointing at someone you have already walked past.
+--
+-- Marked on the RISING EDGE of _G.isFlying (BottomHUD's flight flag), never continuously.
+-- curIsland tracks the NEAREST island, so mid-climb it flips to the one you are rising
+-- toward -- dismissing on "flying" alone would kill that island's trail before you ever
+-- landed on it. At takeoff, curIsland is still the ground you just left.
+local dismissed = {}
+do
+	local wasFlying = false
+	task.spawn(function()
+		while true do
+			local flying = (_G.isFlying == true)
+			if flying and not wasFlying and curIsland then
+				dismissed[curIsland] = true
+			end
+			wasFlying = flying
+			task.wait(0.1)
+		end
+	end)
+end
+
 -- find the quest NPC's ground position
+-- NOTE the RECURSIVE FindFirstChild (the `true`). These used to be non-recursive, so
+-- the island1 "miner" -- which lives at Workspace.island1.island1.miner (island1 is
+-- nested inside itself) -- was never found, and island1's chevron trail to the miner
+-- silently never appeared. Search the island's whole subtree, then all of Workspace.
 local function findNPC(spec)
 	local cont = spec.parent and Workspace:FindFirstChild(spec.parent) or Workspace
-	local npc = cont and cont:FindFirstChild(spec.npcName)
-	if not npc then npc = Workspace:FindFirstChild(spec.npcName) end
+	local npc = cont and cont:FindFirstChild(spec.npcName, true)
+	if not npc then npc = Workspace:FindFirstChild(spec.npcName, true) end
 	if not npc then return nil end
 	-- NOTE: a recursive FindFirstChild("HumanoidRootPart", true) can match a Pose
 	-- of that name inside the rig's AnimSaves (which has no .Position and errors),
@@ -98,6 +129,7 @@ local function hideFrom(n) for i = n, #pool do if pool[i] then setShown(pool[i],
 RunService.RenderStepped:Connect(function()
 	local spec = curIsland and GUIDE[curIsland]
 	if not spec then hideFrom(1); return end
+	if dismissed[curIsland] then hideFrom(1); return end -- already flown off here once -> guided already
 	if player:GetAttribute(spec.accept) then hideFrom(1); return end -- quest accepted -> stop guiding
 	local target = findNPC(spec)
 	if not target then hideFrom(1); return end

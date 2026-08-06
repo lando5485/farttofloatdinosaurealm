@@ -15,6 +15,10 @@ local function faceCamBehindChar(char)
 	local hrp = char:WaitForChild("HumanoidRootPart", 10)
 	if not hrp then return end
 	task.wait(0.2) -- let the character + default camera settle first
+	-- STAND DOWN DURING THE INTRO. The opening cinematic owns the camera (Scriptable) and
+	-- flies it up the tower; snapping it back behind the character here would fight it for
+	-- control every frame and shred the shot. Intro.client.luau sets this flag.
+	if _G.introPlaying then return end
 	local cam = Workspace.CurrentCamera
 	if not cam then return end
 	local look = hrp.CFrame.LookVector

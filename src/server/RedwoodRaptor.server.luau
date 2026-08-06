@@ -7,6 +7,26 @@
 --   * SniperSpot -> a big SNIPER LOCKER; grab a sniper Tool.
 --   * Shoot the mama 4 times -> she tips over, fades, and a RAPTOR EGG rises.
 --   * Hatch the egg -> the Velociraptor PET (the cube pet template), follower + Pet Hub.
+--
+-- WHY THIS QUEST HAS NO PickupFloor MINIGAME (it is not an oversight)
+-- ------------------------------------------------------------------
+-- Every other island holds each collectible to a 15s floor (see
+-- ReplicatedStorage/DinosaurRealm/PickupFloor). This one is deliberately exempt,
+-- on two counts:
+--
+--   1. It has ONE collectible, not five. The raptors are not items -- the EGG is,
+--      and only one raptor hides it. Downing all five is the single 15s of work
+--      that buys it, and the floor is a per-COLLECTIBLE rule.
+--   2. Nothing here is handed over on a prompt trigger. The floor exists to kill
+--      free grabs; a wandering target that charges you and steals CurrentPower is
+--      already work. It also already has PickupFloor's pattern 4 (natural rate
+--      limit): RedwoodRaptor.client.luau enforces a 0.5s gap between shots, so
+--      the optimal loop is 5 raptors x 4 hits x 0.5s = 9.5s of pure firing before
+--      any of the travel spent finding five raptors across the island.
+--
+-- So do NOT "fix" this by inflating MAX_HITS -- 11 sniper shots to drop one raptor
+-- would hit the number and wreck the weapon. If the island ever grows a real
+-- multi-item collect step, THAT step gets the floor, not the shooting.
 --======================================================================
 
 local RS            = game:GetService("ReplicatedStorage")
@@ -53,7 +73,7 @@ local RaptorShot   = ev("RaptorShot")
 local RedwoodHatch = ev("RedwoodRaptorHatch")
 
 local MAX_HITS, DETECT, STEAL_DIST, STEAL_CD, STEAL_AMT = 4, 24, 7, 2.5, 8
-local WANDER_R, CHASE_R, WANDER_SPD, CHASE_SPD = 32, 55, 6, 12 -- bigger roam area
+local WANDER_R, CHASE_R, WANDER_SPD, CHASE_SPD = 16, 55, 6, 12 -- tighter roam so the 5 raptors stay spread out
 
 -- ========================= MAMA RAPTOR model (blocky / structured, dino1-style) =========================
 local function buildMamaRaptor()
@@ -154,10 +174,39 @@ task.spawn(function()
 	-- returns the floor Y, or NIL if the ray missed. `fromY` = where to start the down-ray (default high);
 	-- for wandering we start it just above the current foot level + short range, so it finds the FLOOR
 	-- below and never snaps onto a tree canopy high overhead (Redwood Ridge = tall trees).
-	local function groundY(x, z, fromY, dist)
+	--
+	-- CANOPY REJECTION (`nearY`) -- why a raptor stood in mid-air on a tree.
+	--
+	-- The initial placement casts from 120 studs OVER a 'putdino' marker, and Redwood Ridge
+	-- is tall trees: if a marker sits under a branch, that ray meets the CANOPY before it
+	-- meets the island. The hit is perfectly real, so the old code grounded on it and the
+	-- raptor was planted on top of the foliage. The blurb above only ever held for the
+	-- WANDER casts, which start just above the feet on a short 50-stud range -- placement
+	-- used the long cast and had no such protection.
+	--
+	-- Pass `nearY` (the marker's own height) and a hit more than CANOPY_CLEARANCE above it
+	-- is treated as foliage: the ray restarts just below that hit and keeps descending until
+	-- it reaches something at the marker's actual level. MosquitoQuest solves the identical
+	-- island5 problem with its SURFACE_BAND clamp.
+	--
+	-- CALLERS THAT PASS NO nearY ARE UNCHANGED -- the eggs and the sniper locker ground
+	-- exactly as before. A raptor already standing correctly is unchanged too: its first hit
+	-- is inside the clearance, so the loop returns on the first pass. Only a raptor that was
+	-- grounding on foliage moves, which is what "fix the green one, leave the rest" needs.
+	local CANOPY_CLEARANCE = 8
+	local function groundY(x, z, fromY, dist, nearY)
 		local rp = RaycastParams.new(); rp.FilterType = Enum.RaycastFilterType.Exclude; rp.FilterDescendantsInstances = buildIgnore()
-		local hit = Workspace:Raycast(Vector3.new(x, fromY or (REF_Y + 120), z), Vector3.new(0, -(dist or 400), 0), rp)
-		return hit and hit.Position.Y or nil
+		local startY = fromY or (REF_Y + 120)
+		local endY = startY - (dist or 400)
+		for _ = 1, 12 do -- 12 is a runaway guard, not a budget: one pass per layer of branches
+			if startY <= endY then return nil end
+			local hit = Workspace:Raycast(Vector3.new(x, startY, z), Vector3.new(0, -(startY - endY), 0), rp)
+			if not hit then return nil end
+			local hy = hit.Position.Y
+			if not nearY or hy <= nearY + CANOPY_CLEARANCE then return hy end
+			startY = hy - 0.05 -- drop just under the foliage we hit and keep going down
+		end
+		return nil
 	end
 
 	local function floaty(hrp, text, color)
@@ -251,43 +300,49 @@ task.spawn(function()
 		return tool
 	end
 
-	-- ===== MAMA RAPTOR: spawn + wander/chase/steal =====
-	local mama, hits, dead = nil, 0, false
-	if raptorSpot then
-		-- locate the user's RaptorModel (Workspace / ServerStorage / ReplicatedStorage)
-		local src
-		for _, where in ipairs({ Workspace, ServerStorage, RS }) do
-			local f = where:FindFirstChild("RaptorModel", true)
-			if f then src = f; break end
-		end
-		-- ASSESS it so we can see how it's built (parts / joints / humanoid)
-		if src then
-			-- inspectModel(src) -- (full dump available if needed; commented out to keep Output clean)
-			local nb, nj, hum0 = 0, 0, src:FindFirstChildOfClass("Humanoid")
-			for _, d in ipairs(src:GetDescendants()) do
-				if d:IsA("BasePart") then nb += 1 elseif d:IsA("Motor6D") or d:IsA("Weld") then nj += 1 end
-			end
-			print(("===== [Redwood] RaptorModel: %s (%s) | parts=%d joints=%d humanoid=%s ====="):format(src:GetFullName(), src.ClassName, nb, nj, tostring(hum0 ~= nil)))
-			for _, d in ipairs(src:GetDescendants()) do
-				if d:IsA("BasePart") then print(("[Redwood]   part  %-18s size=(%.2f, %.2f, %.2f)"):format(d.Name, d.Size.X, d.Size.Y, d.Size.Z)) end
-			end
-			for _, d in ipairs(src:GetDescendants()) do
-				if d:IsA("Motor6D") then print(("[Redwood]   motor %-16s %s -> %s"):format(d.Name, d.Part0 and d.Part0.Name or "?", d.Part1 and d.Part1.Name or "?")) end
-			end
-		end
-		-- use the model as the mama (fallback to the code raptor if it's missing)
-		if src and src:IsA("Model") then
-			mama = src; mama.Name = "MamaRaptor"
-			if not mama:IsDescendantOf(Workspace) then mama.Parent = Workspace end
-		elseif src and src:IsA("BasePart") then
-			mama = Instance.new("Model"); mama.Name = "MamaRaptor"; mama.Parent = Workspace; src.Parent = mama; mama.PrimaryPart = src
-		elseif src then
-			mama = Instance.new("Model"); mama.Name = "MamaRaptor"; mama.Parent = Workspace
-			for _, c in ipairs(src:GetChildren()) do c.Parent = mama end; pcall(function() src:Destroy() end)
+	-- ===== MAMA RAPTORS: 5 wandering raptors, ONE hides the secret egg =====
+	-- Identical behaviour, different colours. Players must shoot each one down (4
+	-- hits) to discover which raptor was hiding the egg. Only ONE raptor may chase
+	-- a player at a time (shared `activeChaser` claim) -- you never get swarmed.
+	local raptorByModel = {}   -- raptor model -> its hit handler (a shot routes here by the model hit)
+	local activeChaser  = nil  -- index of the raptor currently chasing (only one at a time)
+
+	-- Find the user's RaptorModel ONCE and keep it as a hidden template we clone per
+	-- raptor (the old code used the single placed model directly).
+	local template
+	for _, where in ipairs({ Workspace, ServerStorage, RS }) do
+		local f = where:FindFirstChild("RaptorModel", true)
+		if f and f:IsA("Model") then template = f; break end
+	end
+	if template then
+		for _, d in ipairs(template:GetDescendants()) do if d:IsA("BasePart") then d.Anchored = true end end
+		template.Parent = ServerStorage -- stash out of view; we spawn clones of it
+	end
+
+	-- 5 distinct raptor palettes: { body, underside/legs, head }
+	local RAPTOR_PALETTES = {
+		{ Color3.fromRGB(86, 118, 72),  Color3.fromRGB(205, 178, 128), Color3.fromRGB(150, 95, 60) },  -- forest green
+		{ Color3.fromRGB(130, 72, 58),  Color3.fromRGB(214, 170, 138), Color3.fromRGB(96, 52, 44) },   -- rusty red-brown
+		{ Color3.fromRGB(72, 98, 132),  Color3.fromRGB(172, 192, 212), Color3.fromRGB(52, 72, 102) },  -- slate blue
+		{ Color3.fromRGB(158, 138, 64), Color3.fromRGB(222, 206, 150), Color3.fromRGB(116, 98, 46) },  -- sandy gold
+		{ Color3.fromRGB(104, 84, 128), Color3.fromRGB(186, 168, 210), Color3.fromRGB(74, 56, 98) },   -- dusk purple
+	}
+	-- distinct names so the 5 raptors aren't all called the same thing (the client
+	-- identifies them by the "RedwoodRaptor" attribute below, not by name).
+	local RAPTOR_NAMES = { "GreenRaptor", "RustRaptor", "SlateRaptor", "GoldRaptor", "VioletRaptor" }
+
+	-- Build one raptor at (homeX, homeZ) with the given palette. hasEgg = holds the secret egg.
+	local function spawnRaptor(index, palette, hasEgg, homeX, homeZ, homeY)
+		local mama, hits, dead = nil, 0, false
+		if template then
+			mama = template:Clone()
 		else
-			warn("[Redwood] RaptorModel not found anywhere -> using the code-built raptor")
-			mama = buildMamaRaptor(); mama.Parent = Workspace
+			if index == 1 then warn("[Redwood] RaptorModel not found anywhere -> using the code-built raptor") end
+			mama = buildMamaRaptor()
 		end
+		mama.Name = RAPTOR_NAMES[index] or ("Raptor" .. index) -- distinct names, not all "MamaRaptor"
+		mama:SetAttribute("RedwoodRaptor", true) -- how the client identifies a raptor (names now vary)
+		mama.Parent = Workspace
 		pcall(function() mama.ModelStreamingMode = Enum.ModelStreamingMode.Persistent end) -- never stream out
 		ignoreForGround[#ignoreForGround + 1] = mama
 
@@ -298,7 +353,17 @@ task.spawn(function()
 			for _, d in ipairs(mama:GetDescendants()) do
 				if d:IsA("Motor6D") then hasJoints = true; if d.Part0 then cnt[d.Part0] = (cnt[d.Part0] or 0) + 1 end end
 			end
-			local bn = 0; for p, n in pairs(cnt) do if n > bn then bn = n; jointHub = p end end
+			-- DETERMINISTIC PICK. This was a bare `pairs(cnt)` scan keeping the highest count,
+			-- and pairs() over an Instance-keyed table has NO defined order -- so whenever two
+			-- parts tied on joint count, which one became the rig's root varied from boot to
+			-- boot. The root becomes PrimaryPart, PrimaryPart defines the pivot, and the pivot
+			-- is what GetBoundingBox and footOffset are measured against: a different winner is
+			-- a different pivot, which is one way the footOffset clamp below gets tripped.
+			-- Ties now break on NAME, so the same rig resolves the same way every time.
+			local bn = 0
+			for p, n in pairs(cnt) do
+				if n > bn or (n == bn and jointHub and p.Name < jointHub.Name) then bn = n; jointHub = p end
+			end
 		end
 		local root = mama:FindFirstChild("HumanoidRootPart", true) or jointHub
 			or mama:FindFirstChild("Torso", true) or mama:FindFirstChild("Root", true)
@@ -317,9 +382,9 @@ task.spawn(function()
 			local p = mama:FindFirstChild(name, true)
 			if p and p:IsA("BasePart") then p.Color = color; p.Material = Enum.Material.SmoothPlastic end
 		end
-		paint("Velociraptor2", Color3.fromRGB(86, 118, 72))   -- body: green
-		paint("Velociraptor",  Color3.fromRGB(205, 178, 128)) -- underside/legs: tan
-		paint("Velociraptor3", Color3.fromRGB(150, 95, 60))   -- head: warm brown
+		paint("Velociraptor2", palette[1]) -- body
+		paint("Velociraptor",  palette[2]) -- underside/legs
+		paint("Velociraptor3", palette[3]) -- head
 
 		-- PLAY the model's animations (the "things that make it alive") so the legs/tail move
 		local animsPlayed = 0
@@ -341,8 +406,8 @@ task.spawn(function()
 			print(("[Redwood] mama: joints=%s animationsPlayed=%d root=%s"):format(tostring(hasJoints), animsPlayed, root and root.Name or "?"))
 		end
 
-		-- ORIENTATION DUMP: shows exactly how the model is rotated so the upright fix can be computed.
-		do
+		-- ORIENTATION DUMP (first raptor only -- keeps the log clean with 6 raptors).
+		if index == 1 then
 			local rp = mama:GetPivot()
 			local ax, ay, az = rp:ToOrientation()
 			print(("[Redwood][ORIENT] pivot orient(deg) X=%.0f Y=%.0f Z=%.0f"):format(math.deg(ax), math.deg(ay), math.deg(az)))
@@ -383,30 +448,54 @@ task.spawn(function()
 			end
 			return (minY < math.huge) and minY or mama:GetPivot().Position.Y
 		end
-		-- FEET ON GROUND: ground off the actual FOOT BONES' rest height (so the feet sit exactly on the floor),
-		-- falling back to the mesh box only if the bones aren't readable.
+		-- FEET ON GROUND: ground off the model's TRUE LOWEST part bottom so the feet rest
+		-- flush on the surface and nothing is buried. (Foot BONES sit up inside the ankle,
+		-- above the actual sole -- grounding off them sank the raptors underground.)
 		local footTune = 0 -- nudge if needed: + raises it, - lowers it
-		local footY = math.huge
-		for _, n in ipairs({ "FrontFoot.R", "FrontFoot.L", "BackFoot.R", "BackFoot.L", "BackLowLeg.R", "BackLowLeg.L" }) do
-			local b = mama:FindFirstChild(n, true)
-			if b and b:IsA("Bone") then
-				local ok, y = pcall(function() return b.WorldCFrame.Position.Y end)
-				if ok and y then footY = math.min(footY, y) end
-			end
-		end
-		local footOffset
-		if footY < math.huge then
-			footOffset = mama:GetPivot().Position.Y - footY + footTune
-		else
-			footOffset = mama:GetPivot().Position.Y - worldBottomY() + footTune
-		end
-		print(("[Redwood] footOffset=%.2f (grounded from %s)"):format(footOffset, footY < math.huge and "foot bones" or "mesh box"))
+		local footOffset = mama:GetPivot().Position.Y - worldBottomY() + footTune
 
-		local home = Vector3.new(raptorSpot.Position.X, 0, raptorSpot.Position.Z)
+		-- SANITY CLAMP -- this goes wrong INTERMITTENTLY and puts every raptor in orbit.
+		--
+		-- Seen in the wild: bbox size=(692.8, 30.5, 700.7) and footOffset=1050.29, on a rig
+		-- whose parts are all under 14 studs. A bounding box the size of the ISLAND means the
+		-- pivot and the body had drifted apart -- one stray part (or a PrimaryPart left at the
+		-- origin while the rest of the rig moved with island6) stretches the box across the
+		-- whole map, and footOffset is measured off that box. The raptors then stood ~1,050
+		-- studs above the ground, which is the bug this catches.
+		--
+		-- It is intermittent because it depends on boot ORDER against IslandLayout, so it
+		-- cannot be relied on to show up in testing -- most runs are fine, as this one was.
+		--
+		-- A raptor is ~13 studs tall before the 1.5x scale, so anything past MAX_FOOT is not
+		-- a tall raptor, it is a broken measurement. Fall back to half the model's height,
+		-- which is right for a centred pivot and is never catastrophically wrong.
+		local MAX_FOOT = 40
+		if footOffset ~= footOffset or math.abs(footOffset) > MAX_FOOT then -- NaN or absurd
+			local _, sz = mama:GetBoundingBox()
+			local fallback = math.min(sz.Y * 0.5, MAX_FOOT)
+			warn(("[Redwood] %s: footOffset %.1f is impossible for a raptor (bbox %.0fx%.0fx%.0f) "
+				.. "-> pivot/body drift, using %.2f instead. If this repeats, check RaptorModel for a "
+				.. "stray part far from the rig."):format(mama.Name, footOffset, sz.X, sz.Y, sz.Z, fallback))
+			footOffset = fallback
+		end
+		print(("[Redwood] footOffset=%.2f (grounded from lowest part bottom)"):format(footOffset))
+
+		local home = Vector3.new(homeX, 0, homeZ)
 		local pos  = Vector3.new(home.X, 0, home.Z)
 		local dir  = Vector3.new(0, 0, 1)
 		local target = pos
-		local lastGY = groundY(home.X, home.Z, REF_Y + 120, 400) or REF_Y
+		-- ground from THIS home's own elevation (the putdino marker's height), not
+		-- RaptorSpot's -- so a marker on a rise/rock grounds correctly and every raptor
+		-- ends up flush at its own spot (no odd-one-out floating/sunk).
+		local baseY = homeY or REF_Y
+		-- baseY (the marker's own height) doubles as the canopy-rejection reference, so a ray
+		-- that snags a branch overhead keeps descending to the island instead of grounding
+		-- the raptor on the foliage. See the CANOPY REJECTION note on groundY.
+		local lastGY = groundY(home.X, home.Z, baseY + 120, 400, baseY) or baseY
+		-- Per-raptor grounding line, so a floating one is identifiable from the log instead of
+		-- by walking the island. All five should read within a few studs of each other.
+		print(("[Redwood] %s: marker Y=%.1f -> ground Y=%.1f (feet at %.1f)")
+			:format(mama.Name, baseY, lastGY, lastGY + footOffset))
 		local homeGY = lastGY -- island surface level; never let it drop far below this (no falling to map bottom)
 		-- ISLAND BOUNDS: keep the raptor on island6 (inset from the edges) so it can NEVER wander/fall off
 		local i6cf, i6size = island6:GetBoundingBox()
@@ -429,7 +518,7 @@ task.spawn(function()
 		bb.StudsOffset = Vector3.new(0, 6, 0); bb.AlwaysOnTop = true; bb.MaxDistance = 140; bb.Parent = mama -- only show near island6 (not from other islands)
 		local lbl = Instance.new("TextLabel"); lbl.Size = UDim2.fromScale(1, 1); lbl.BackgroundTransparency = 1; lbl.Font = Enum.Font.FredokaOne
 		lbl.TextScaled = true; lbl.TextColor3 = Color3.fromRGB(255, 120, 120); lbl.TextStrokeTransparency = 0
-		lbl.Text = ("Mama Raptor  %d/%d"):format(MAX_HITS, MAX_HITS); lbl.Parent = bb
+		lbl.Text = ("%s  %d/%d"):format(mama.Name, MAX_HITS, MAX_HITS); lbl.Parent = bb
 
 		-- keep the model's EXACT placed orientation (never reorient -> it can NEVER flip); just translate + a tiny bob
 		local origRot = mama:GetPivot().Rotation -- = the corrected (pitched-upright) rotation
@@ -446,21 +535,41 @@ task.spawn(function()
 		end
 		place(0)
 
-		-- EYES: the imported mesh's eyes are baked in (can't recolor them), so add glowing eye parts on the head.
+		-- EYES: the imported mesh's eyes are baked in (can't recolor them), so add our
+		-- own eyes on the head. Instead of two flat red dots we build a natural eye per
+		-- side: a dark glossy eyeball + a bright glowing red iris + a small black pupil.
 		do
 			local hb = mama:FindFirstChild("Head", true)
 			local headMesh = mama:FindFirstChild("Velociraptor3", true) or root
 			if hb and hb:IsA("Bone") then
 				local base = CFrame.new(hb.WorldCFrame.Position) * mama:GetPivot().Rotation -- head pos, model's facing
-				for _, sgn in ipairs({ 1, -1 }) do
-					local e = Instance.new("Part"); e.Name = "RaptorEye"; e.Shape = Enum.PartType.Ball; e.Size = Vector3.new(0.7, 0.7, 0.7)
-					e.Color = Color3.fromRGB(255, 45, 45); e.Material = Enum.Material.Neon
-					e.Anchored = true; e.CanCollide = false; e.CanQuery = false
-					e.CFrame = base * CFrame.new(0.7 * sgn, 0.5, -0.8) -- sides / up / forward of the head (best guess)
-					e.Parent = mama
-					local w = Instance.new("WeldConstraint"); w.Part0 = headMesh; w.Part1 = e; w.Parent = e
+				local function eyePart(name, size, color, material, cf)
+					local p = Instance.new("Part"); p.Name = name; p.Shape = Enum.PartType.Ball; p.Size = size
+					p.Color = color; p.Material = material
+					p.Anchored = true; p.CanCollide = false; p.CanQuery = false; p.CastShadow = false
+					p.CFrame = cf; p.Parent = mama
+					local w = Instance.new("WeldConstraint"); w.Part0 = headMesh; w.Part1 = p; w.Parent = p
+					return p
 				end
-				print("[Redwood] eyes added on the head (Head bone)")
+				for _, sgn in ipairs({ 1, -1 }) do
+					-- eye socket centre: side + (down into the eye-crease) + forward of the
+					-- head. Lowered from +0.5 to +0.1 so the eyes sit flush in the socket
+					-- indent on either side of the skull instead of floating above the head.
+					local eye = base * CFrame.new(0.6 * sgn, 0.1, -0.78)
+					-- eyeball (sclera): dark, glossy, slightly recessed
+					eyePart("RaptorEye", Vector3.new(0.5, 0.5, 0.5),
+						Color3.fromRGB(24, 12, 12), Enum.Material.SmoothPlastic, eye)
+					-- iris: bright glowing red on the outer-front of the eyeball
+					eyePart("RaptorEyeIris", Vector3.new(0.34, 0.34, 0.34),
+						Color3.fromRGB(255, 40, 40), Enum.Material.Neon,
+						eye * CFrame.new(0.10 * sgn, 0.02, -0.16))
+					-- pupil: small black dot in the middle of the iris
+					eyePart("RaptorEyePupil", Vector3.new(0.15, 0.15, 0.15),
+						Color3.fromRGB(0, 0, 0), Enum.Material.SmoothPlastic,
+						eye * CFrame.new(0.13 * sgn, 0.02, -0.26))
+				end
+				print("[Redwood] natural red eyes added on the head (Head bone)")
+				print("EYES REPOSITIONED")
 			end
 		end
 
@@ -480,8 +589,13 @@ task.spawn(function()
 				end
 			end
 
+			-- Only ONE raptor may actively chase at a time -> if another already holds
+			-- the claim, ignore the player here and keep wandering (players never get swarmed).
+			if nearest and not (activeChaser == nil or activeChaser == index) then nearest = nil end
+
 			local speed = WANDER_SPD
 			if nearest then
+				if activeChaser == nil then activeChaser = index end -- claim the single chase slot
 				local hrp = nearest.Character.HumanoidRootPart
 				target = Vector3.new(hrp.Position.X, 0, hrp.Position.Z); speed = CHASE_SPD
 				if nd < STEAL_DIST then
@@ -497,6 +611,7 @@ task.spawn(function()
 					end
 				end
 			else
+				if activeChaser == index then activeChaser = nil end -- release the chase claim when not chasing
 				-- roam freely: new wander point when we reach the current one OR when the target is a stale
 				-- out-of-bounds chase point (so it heads back inside instead of bouncing on the edge)
 				local tHome = (Vector3.new(target.X - home.X, 0, target.Z - home.Z)).Magnitude
@@ -507,7 +622,12 @@ task.spawn(function()
 			if flat.Magnitude > 0.6 then
 				dir = flat.Unit
 				local rpF = RaycastParams.new(); rpF.FilterType = Enum.RaycastFilterType.Exclude; rpF.FilterDescendantsInstances = buildIgnore()
-				local blocked = Workspace:Raycast(Vector3.new(pos.X, lastGY + 2, pos.Z), dir * 4.5, rpF)
+				-- Look ahead far enough to clear the raptor's body + the next step, and
+				-- check both a low and a higher ray, so it never steps INTO an object
+				-- (tree/rock/etc). When blocked it simply doesn't move this frame.
+				local ahead = 6 + speed * dt
+				local blocked = Workspace:Raycast(Vector3.new(pos.X, lastGY + 1.5, pos.Z), dir * ahead, rpF)
+					or Workspace:Raycast(Vector3.new(pos.X, lastGY + 5, pos.Z), dir * ahead, rpF)
 				if blocked then
 					if not nearest then newTarget() end
 				else
@@ -530,7 +650,14 @@ task.spawn(function()
 		local function killMama()
 			if dead then return end
 			dead = true
+			raptorByModel[mama] = nil                            -- stop routing shots to a dead raptor
+			if activeChaser == index then activeChaser = nil end -- free the single chase slot
 			pcall(function() bb:Destroy() end)
+			-- announce whether THIS raptor was hiding the secret egg
+			if root and root.Parent then
+				if hasEgg then floaty(root, "\xF0\x9F\xA5\x9A The secret egg!", Color3.fromRGB(235, 205, 150))
+				else floaty(root, "No egg here\xE2\x80\xA6", Color3.fromRGB(225, 225, 225)) end
+			end
 			local cf = mama:GetPivot()
 			task.spawn(function()
 				local t0 = os.clock()
@@ -544,31 +671,106 @@ task.spawn(function()
 				task.wait(1.0)
 				local dp = mama:GetPivot().Position
 				pcall(function() mama:Destroy() end)
-				spawnEgg(dp.X, dp.Z)
+				if hasEgg then spawnEgg(dp.X, dp.Z) end -- only the secret raptor drops the egg
 			end)
 		end
 
-		-- watchdog: log the mama's position so we can confirm it's present + where (every 2s)
-		task.spawn(function()
-			while mama and mama.Parent and not dead do
-				local p = mama:GetPivot().Position
-				print(("[Redwood] mama at (%.1f, %.1f, %.1f)"):format(p.X, p.Y, p.Z))
-				task.wait(2)
-			end
-			if not (mama and mama.Parent) and not dead then warn("[Redwood] mama VANISHED (destroyed) -- not by death") end
-		end)
-
-		RaptorShot.OnServerEvent:Connect(function()
+		-- Route shots at THIS raptor to its own hit handler; the central RaptorShot
+		-- dispatcher below calls it based on the model the client reported hitting.
+		raptorByModel[mama] = function()
 			if dead or not mama.Parent then return end
 			hits += 1
-			pcall(function() lbl.Text = ("Mama Raptor  %d/%d"):format(math.max(0, MAX_HITS - hits), MAX_HITS) end)
+			pcall(function() lbl.Text = ("%s  %d/%d"):format(mama.Name, math.max(0, MAX_HITS - hits), MAX_HITS) end)
 			pcall(function()
 				local b = mama:FindFirstChild("Body")
 				if b then local c = b.Color; b.Color = Color3.fromRGB(255, 90, 90); task.delay(0.12, function() if b.Parent then b.Color = c end end) end
 			end)
 			if hits >= MAX_HITS then killMama() end
-		end)
-		print("[Redwood] Mama Raptor (blocky model) spawned -- wanders, chases + steals fart power")
+		end
+	end -- spawnRaptor
+
+	-- Central shot dispatcher: the client passes the raptor MODEL it hit, so the hit
+	-- is applied to that specific raptor (not all of them at once).
+	RaptorShot.OnServerEvent:Connect(function(_plr, model)
+		local onHit = typeof(model) == "Instance" and raptorByModel[model]
+		if onHit then onHit() end
+	end)
+
+	-- Spawn the 5 raptors on island6; ONE holds the secret egg. Each raptor is placed
+	-- on a "putdino" part (one per part); they then wander near that home but their
+	-- forward look-ahead keeps them from walking inside trees/rocks/other objects.
+	if raptorSpot then
+		local RAPTOR_COUNT = #RAPTOR_PALETTES
+		local secretIndex = math.random(1, RAPTOR_COUNT)
+		local i6cf, i6size = island6:GetBoundingBox()
+		local i6cx, i6cz = i6cf.Position.X, i6cf.Position.Z
+		local i6hx, i6hz = math.max(6, i6size.X / 2 - 12), math.max(6, i6size.Z / 2 - 12)
+		-- true only if (x,z) is over island6's OWN ground (an Include ray hits island6)
+		local groundRP = RaycastParams.new()
+		groundRP.FilterType = Enum.RaycastFilterType.Include
+		groundRP.FilterDescendantsInstances = { island6 }
+		groundRP.IgnoreWater = true
+		local function onIslandGround(x, z)
+			if math.abs(x - i6cx) > i6hx or math.abs(z - i6cz) > i6hz then return false end
+			return Workspace:Raycast(Vector3.new(x, raptorSpot.Position.Y + 80, z), Vector3.new(0, -300, 0), groundRP) ~= nil
+		end
+
+		-- Place one raptor on each part named "putdino" on island6 (ghosted so it
+		-- doesn't block the raptor's grounding). There are 5, one per raptor. If fewer
+		-- than 5 are found, the remaining raptors are spread on island ground below.
+		-- Each home records a reference elevation `y` (its marker's own height) so the
+		-- raptor grounds from ITS marker's level -- a marker on a rise/rock grounds
+		-- correctly instead of every raptor using RaptorSpot's height.
+		local homes = {}
+		local spots = {}
+		for _, d in ipairs(island6:GetDescendants()) do
+			if d:IsA("BasePart") and d.Name:lower():sub(1, 7) == "putdino" then
+				d.Transparency = 1; d.CanCollide = false; d.CanQuery = false
+				ignoreForGround[#ignoreForGround + 1] = d
+				spots[#spots + 1] = d
+			end
+		end
+		for _, s in ipairs(spots) do
+			if #homes >= RAPTOR_COUNT then break end
+			homes[#homes + 1] = { x = s.Position.X, z = s.Position.Z, y = s.Position.Y }
+		end
+		if #spots == 0 then
+			warn("[Redwood] no 'putdino' part on island6 -> spreading raptors on island ground")
+		else
+			print(("[Redwood] placing raptors on %d 'putdino' part(s) on island6"):format(#spots))
+		end
+
+		-- Spread any remaining raptors (only if fewer than 5 'putdino' parts) on island6
+		-- ground, each kept at least MIN_SEP studs from the others so nothing overlaps.
+		local MIN_SEP = 18
+		local function gather(enforceSep)
+			for _ = 1, 150 do
+				if #homes >= RAPTOR_COUNT then return end
+				local x = i6cx + (math.random() * 2 - 1) * i6hx
+				local z = i6cz + (math.random() * 2 - 1) * i6hz
+				if onIslandGround(x, z) then
+					local ok = true
+					if enforceSep then
+						for _, h in ipairs(homes) do
+							if (Vector3.new(x - h.x, 0, z - h.z)).Magnitude < MIN_SEP then ok = false; break end
+						end
+					end
+					if ok then homes[#homes + 1] = { x = x, z = z, y = raptorSpot.Position.Y } end
+				end
+			end
+		end
+		gather(true)  -- prefer spread-out homes
+		gather(false) -- fill any remaining with on-island ground (spacing relaxed)
+		while #homes < RAPTOR_COUNT do
+			homes[#homes + 1] = { x = raptorSpot.Position.X, z = raptorSpot.Position.Z, y = raptorSpot.Position.Y }
+		end
+
+		for i = 1, RAPTOR_COUNT do
+			spawnRaptor(i, RAPTOR_PALETTES[i], i == secretIndex, homes[i].x, homes[i].z, homes[i].y)
+			task.wait(0.05)
+		end
+		print(("[Redwood] 5 raptors spawned on island6 -- secret egg on raptor #%d"):format(secretIndex))
+		print("RAPTORS GROUNDED")
 	end
 
 	-- ===== BIG SNIPER LOCKER at SniperSpot =====
@@ -606,6 +808,18 @@ task.spawn(function()
 		local prompt = Instance.new("ProximityPrompt"); prompt.ActionText = "Grab Sniper"; prompt.ObjectText = "Sniper Locker"
 		prompt.HoldDuration = 0.3; prompt.MaxActivationDistance = 14; prompt.RequiresLineOfSight = false; prompt.Parent = glass
 		prompt.Triggered:Connect(function(plr)
+			-- QUEST GATE: the RidgeWarden hands this job out, same as every other island.
+			--
+			-- island6 was the ONE quest with no gate at all -- the locker handed out a rifle
+			-- to anyone who walked past, so the raptors could be hunted without ever meeting
+			-- the RidgeWarden and he was decorative. Gating the LOCKER rather than the trigger
+			-- is what makes this cheap: no sniper means no shooting, so one check covers the
+			-- whole quest and the player is never left clicking a gun that silently refuses.
+			if plr:GetAttribute("Island6QuestAccepted") ~= true then
+				local hrp = plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
+				if hrp then floaty(hrp, "Talk to the RidgeWarden first!", Color3.fromRGB(255, 210, 120)) end
+				return
+			end
 			local bp = plr:FindFirstChildOfClass("Backpack")
 			local has = (plr.Character and plr.Character:FindFirstChild("Sniper")) or (bp and bp:FindFirstChild("Sniper"))
 			if has then return end

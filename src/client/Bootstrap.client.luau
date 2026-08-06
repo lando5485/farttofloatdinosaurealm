@@ -31,9 +31,10 @@ local player    = Players.LocalPlayer
 local PlayerGui = player:WaitForChild("PlayerGui")
 
 local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
--- HUD is authored at ONE size (scale = 1.0) on every device. Phone/tablet fitting is handled
--- globally by ResponsiveUI.client.luau (a single UIScale per ScreenGui), so we do NOT bake a
--- mobile shrink in here -- doing so would double-shrink the HUD on phones. (Was: isMobile and 0.7.)
+-- HUD is authored at FULL size (scale = 1.0) on every device, exactly like the first realm. ALL
+-- device fitting is done by ResponsiveUI.client.luau, which puts one UIScale per cluster =
+-- getScale() x per-cluster extra. The extra (0.72/0.78, mobile-only) is set via the
+-- ResponsiveExtraShrink attribute on each cluster frame below. Do NOT bake a mobile shrink here.
 local scale    = 1.0
 
 -- ===== GUI HELPERS (copied from CoreClient) =====
@@ -75,20 +76,11 @@ local function styleText(lbl)
 	return lbl
 end
 
--- Soft drop shadow behind a rounded element (a dark, offset, rounded frame).
+-- Drop shadows removed from the HUD per request (buttons, stats panel, coin pill, etc.).
+-- Kept as a no-op stub so every existing addShadow(...) call site still works; to restore the
+-- soft shadow, put back the offset dark rounded frame that used to live here.
 local function addShadow(frame, corner)
-	local sh = Instance.new("Frame")
-	sh.Name = "Shadow"
-	sh.AnchorPoint = frame.AnchorPoint
-	sh.Size = UDim2.new(frame.Size.X.Scale, frame.Size.X.Offset + 6, frame.Size.Y.Scale, frame.Size.Y.Offset + 6)
-	sh.Position = frame.Position + UDim2.fromOffset(3, 5)
-	sh.BackgroundColor3 = Color3.new(0, 0, 0)
-	sh.BackgroundTransparency = 0.55
-	sh.BorderSizePixel = 0
-	sh.ZIndex = (frame.ZIndex or 1) - 1
-	local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, (corner or 16) + 3); c.Parent = sh
-	sh.Parent = frame.Parent
-	return sh
+	return nil
 end
 
 -- A small cartoon leaf (rounded ellipse) tucked into a corner, overlapping the border.
@@ -121,28 +113,53 @@ local function addIconBadge(parent, diameter, posScaleY, iconText, iconSize)
 	badge.ZIndex = 6
 	local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(1, 0); c.Parent = badge
 	local s = Instance.new("UIStroke"); s.Color = WOOD_DARK; s.Thickness = 2; s.Parent = badge
-	-- embossed/inset look: soft top-lit gradient + inner rim shadow
+	-- Flat, very slightly top-lit. The old version stacked a strong gradient PLUS a
+	-- second inset "Rim" frame with a semi-transparent brown stroke -- two concentric
+	-- rings a couple of pixels apart, which is what read as a rough, dirty edge on a
+	-- 44px circle. One clean fill and one clean outline instead.
 	do
 		local bg = Instance.new("UIGradient"); bg.Rotation = 90
-		bg.Color = ColorSequence.new(tint(CREAM, 0.4), shade(CREAM, 0.9)); bg.Parent = badge
-		local rim = Instance.new("Frame"); rim.Name = "Rim"; rim.AnchorPoint = Vector2.new(0.5, 0.5)
-		rim.Position = UDim2.fromScale(0.5, 0.5); rim.Size = UDim2.new(1, -4, 1, -4)
-		rim.BackgroundTransparency = 1; rim.ZIndex = badge.ZIndex
-		local rc = Instance.new("UICorner"); rc.CornerRadius = UDim.new(1, 0); rc.Parent = rim
-		local rs = Instance.new("UIStroke"); rs.Color = Color3.fromRGB(150, 125, 90); rs.Transparency = 0.4; rs.Thickness = 2; rs.Parent = rim
-		rim.Parent = badge
+		bg.Color = ColorSequence.new(tint(CREAM, 0.15), CREAM); bg.Parent = badge
 	end
 	if iconText and iconText ~= "" then
-		local il = Instance.new("TextLabel")
-		il.BackgroundTransparency = 1
-		il.Size = UDim2.fromScale(1, 1)
-		il.Text = iconText
-		il.Font = JUNGLE_FONT
-		il.TextScaled = false
-		il.TextSize = iconSize or math.floor(diameter * 0.55)
-		il.TextColor3 = Color3.fromRGB(60, 45, 30)
-		il.ZIndex = 7
-		il.Parent = badge
+		if iconText == "+" then
+			-- Drawn as two rounded bars rather than a font "+".
+			-- The other three glyphs are colour-emoji, which the engine renders from a
+			-- bitmap font at a fixed design size; a text "+" comes from the UI font and
+			-- lands visually much smaller and thinner beside them. Two bars match their
+			-- weight exactly and stay crisp at any scale.
+			local g = math.max(2, math.floor(diameter * 0.075))  -- bar thickness
+			local L = math.floor(diameter * 0.46)                -- bar length
+			for _, dims in ipairs({ { L, g }, { g, L } }) do
+				local bar = Instance.new("Frame")
+				bar.AnchorPoint = Vector2.new(0.5, 0.5)
+				bar.Position = UDim2.fromScale(0.5, 0.5)
+				bar.Size = UDim2.fromOffset(dims[1], dims[2])
+				bar.BackgroundColor3 = Color3.fromRGB(38, 30, 20)
+				bar.BorderSizePixel = 0
+				bar.ZIndex = 7
+				local bc = Instance.new("UICorner"); bc.CornerRadius = UDim.new(0, math.floor(g / 2)); bc.Parent = bar
+				bar.Parent = badge
+			end
+		else
+			local il = Instance.new("TextLabel")
+			il.BackgroundTransparency = 1
+			-- Full-bleed box with both axes centred, so every glyph is measured against the
+			-- same square and lands on the same optical centre regardless of its own metrics.
+			il.Size = UDim2.fromScale(1, 1)
+			il.TextXAlignment = Enum.TextXAlignment.Center
+			il.TextYAlignment = Enum.TextYAlignment.Center
+			il.Text = iconText
+			il.Font = JUNGLE_FONT
+			il.TextScaled = false
+			il.TextSize = iconSize or math.floor(diameter * 0.55)
+			-- hard cap so a taller emoji can never render bigger than its neighbours
+			local tc = Instance.new("UITextSizeConstraint")
+			tc.MaxTextSize = il.TextSize; tc.Parent = il
+			il.TextColor3 = Color3.fromRGB(38, 30, 20)
+			il.ZIndex = 7
+			il.Parent = badge
+		end
 	end
 	badge.Parent = parent
 	return badge
@@ -314,69 +331,569 @@ local setMoreOpen
 local moreOpenState = false
 
 --======================================================================
--- 1) TOP-RIGHT: COIN DISPLAY  (CoinGui)
+-- 1) TOP-RIGHT: THE CURRENCY BAR  (CoinGui)
 --======================================================================
+-- TWO SEPARATE OBJECTS, and the separation is the point:
+--   * a STANDALONE rounded-square settings button on the left, and
+--   * a single capsule holding the token and coin sections, which run straight into each
+--     other with no gap, no divider and no seam.
+-- SET_GAP of clear air sits between them. The button is a sibling of the capsule, never a
+-- section inside it, so no change to the capsule's interior can pull it back in.
+--
+-- THE NESTING, and why each level exists:
+--   barRoot        -- transparent, draws nothing, spans BOTH objects. It is the
+--                     ScreenGui's only top-level child, so ResponsiveUI hangs exactly one
+--                     UIScale here and the button and the capsule can never scale apart.
+--     settingsRoot -- shadow stack + the button face.
+--     capsuleRoot  -- shadow stack + the capsule frame.
+--       bar        -- the dark frame. Thin (BORDER), because the two colours are meant to
+--                     carry this, not the border around them.
+--         inner    -- rounded AND clipping. This is what makes the capsule continuous:
+--                     the sections inside are plain rectangles that abut, and the clip
+--                     supplies the round ends they do not have.
+--======================================================================
+-- SUPERSEDED BY CurrencyCapsule.client.luau
+--======================================================================
+-- The token/coin capsule below is NO LONGER SHOWN. CurrencyCapsuleGui draws the currency
+-- HUD now: a self-contained, CONFIG-driven component that reads leaderstats.Coins and
+-- _G.crateTokenBalance and owns its own layout.
+--
+-- The ScreenGui is DISABLED rather than the code deleted, for two reasons:
+--   1. the settings button is built inside this tree (settingsRoot -> settingsSlot ->
+--      gearBtn) and has to survive; it is reparented out to SettingsGui further down
+--   2. everything here -- the pill geometry, the fills, the "+" buttons, the coin value
+--      watcher -- is one interlocked block roughly 500 lines long, and unpicking it
+--      blind is how you lose the gear or the settings panel's anchor with it
+-- Disabled costs one hidden ScreenGui. Deleting it can wait for a pass that can be tested.
 local coinGui = Instance.new("ScreenGui")
 coinGui.Name = "CoinGui"; coinGui.ResetOnSpawn = false; coinGui.IgnoreGuiInset = true; coinGui.Parent = PlayerGui
+coinGui.Enabled = false -- CurrencyCapsuleGui replaces it; see the note above
 
-local coinPill = mkFrame(coinGui,{Position=UDim2.new(1,-10,0,10),Size=UDim2.new(0,200,0,52),BackgroundColor3=Color3.fromRGB(220,160,0),AnchorPoint=Vector2.new(1,0),ClipsDescendants=false,ZIndex=4})
-mkCorner(coinPill,25); mkStroke(coinPill,Color3.fromRGB(180,120,0),3)
-addShadow(coinPill,25)
-addInnerHighlight(coinPill,25)
-do -- small leaf sprig draping off the top-left of the coin pill
-	makeLeaf(coinPill, UDim2.new(0,9,0,-2), -40, 16, LEAF_MED, 13)
-	makeLeaf(coinPill, UDim2.new(0,17,0,-3), 35, 13, LEAF_LIGHT, 13)
+-- Design units at scale 1.0. Every measurement below derives from these four, so the
+-- proportions hold at any size -- there are no independent magic numbers to re-tune.
+-- TWO SEPARATE OBJECTS, not one bar. The settings button is a standalone rounded button
+-- with a gap after it; the token and coin sections share ONE capsule, each on its own
+-- solid colour, parted by a crisp divider rather than a gap. Sizes below reflect that.
+local CAP_H     = 58                      -- the currency capsule
+local BORDER    = 4                       -- frame thickness. Thin: the colour should carry
+-- Sized off the TOKEN section, which is the constraint. The icon and the "+" eat a fixed
+-- SEC_H - 10 between them whatever the padding is, so the balance gets (width - 90) to
+-- live in -- and at 40% of a narrower capsule that came out at 34px, which scales "1,250"
+-- down to nearly half the coin balance beside it. 348 gives the token number 46px.
+local CAP_W     = 348
+local SEC_H     = CAP_H - BORDER * 2      -- 50 -- the interior is most of the capsule
+local INNER_W   = CAP_W - BORDER * 2      -- 340
+local CAP_R     = math.floor(CAP_H / 2)   -- fully rounded: a capsule, never a rounded rect
+local INNER_R   = CAP_R - BORDER          -- the interior follows the outer curve exactly
+
+-- 40 / 60. The two currencies are NOT two panels -- they are two zones of ONE fill, and
+-- these are the widths their icons, numbers and buttons are laid out against.
+local TOKEN_FRAC = 0.40
+local TOKEN_W    = math.floor(INNER_W * TOKEN_FRAC) -- 136
+local COIN_W     = INNER_W - TOKEN_W                -- 204: the remainder, so the two zones
+                                                    -- always sum to the interior exactly
+-- The colour change between the two zones is a STEP, not a fade. This is the width of
+-- that step as a fraction of the interior: 0.001 of 340px is a third of a pixel, so the
+-- two colours meet on a hard edge. ColorSequence will not take two keypoints at the same
+-- offset, which is the only reason this is not simply zero.
+local STEP       = 0.001
+
+local SET_SIZE = 56                      -- the standalone settings button
+local SET_GAP  = 10                      -- clear air between it and the capsule
+local SET_R    = 22                      -- thick rounded square, NOT a capsule
+local TOTAL_W  = SET_SIZE + SET_GAP + CAP_W
+
+local SET_NAVY   = Color3.fromRGB(38, 48, 76) -- top of the button's vertical gradient
+local SET_NAVY_D = Color3.fromRGB(20, 27, 46) -- bottom
+local GEAR_GREY  = Color3.fromRGB(202, 209, 221)
+
+-- Reference palette. The frame is near-black navy, the token section a DEEP navy (the red
+-- belongs to the ticket icon alone, never the panel behind it) and the coin section a warm,
+-- fairly DESATURATED orange -- a fully saturated orange is what reads as toy plastic. The
+-- one colour that is not the reference's is the bronze, which is a hairline and barely
+-- separable from the frame at rest.
+local FRAME_DARK  = Color3.fromRGB(24, 29, 43)   -- capsule + settings button
+local FRAME_EDGE  = Color3.fromRGB(10, 13, 20)   -- dark outer border
+local BRONZE      = Color3.fromRGB(146, 108, 62) -- weathered inner border
+local TICKET_NAVY = Color3.fromRGB(28, 37, 62)   -- deepened
+local COIN_ORANGE = Color3.fromRGB(230, 160, 88) -- desaturated from a hot 240,149,45
+local PLUS_WHITE  = Color3.fromRGB(249, 250, 252)
+
+-- Layered soft shadow. The shared addShadow() above is a deliberate no-op -- drop shadows
+-- were pulled from this HUD -- so the bar carries its own rather than reviving that stub
+-- and putting shadows back under every other element in the game.
+local function addBarShadow(parent, radius)
+	for i = 3, 1, -1 do -- widest and faintest first, so the stack reads as one soft falloff
+		local grow = i * 3
+		local sh = mkFrame(parent, {
+			Name = "Shadow" .. i,
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.new(0.5, 0, 0.5, i * 2),
+			Size = UDim2.new(1, grow, 1, grow),
+			BackgroundColor3 = Color3.new(0, 0, 0),
+			BackgroundTransparency = 0.62 + i * 0.10,
+			BorderSizePixel = 0,
+			ZIndex = 1,
+		})
+		mkCorner(sh, radius + math.floor(grow / 2))
+	end
 end
-local coinGrad=Instance.new("UIGradient")
-coinGrad.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(255,190,20)),ColorSequenceKeypoint.new(1,Color3.fromRGB(200,140,0))})
-coinGrad.Rotation=90; coinGrad.Parent=coinPill
 
-local coinIcon=Instance.new("ImageLabel")
-coinIcon.Name="CoinIcon"
-coinIcon.Size=UDim2.new(0,math.floor(30*scale),0,math.floor(30*scale))
-coinIcon.Position=UDim2.new(0,8,0.5,0)
-coinIcon.AnchorPoint=Vector2.new(0,0.5)
-coinIcon.BackgroundTransparency=1
-coinIcon.Image=_G.COIN_IMAGE
-coinIcon.ScaleType=Enum.ScaleType.Fit
-coinIcon.ZIndex=6
-coinIcon.Parent=coinPill
+-- A pod sits DOWN in the frame, so its fill darkens toward the top -- the opposite of
+-- glossGradient(), which lights the top for something raised. Paired with the inner
+-- shadow below it reads as recessed without any bevel or highlight ridge.
+-- NOTE: there is no per-section shading helper any more. The interior's colour comes from
+-- ONE horizontal cross-fade gradient, and its lighting from two overlays spanning the
+-- whole capsule -- see the fill below. A vertical shading gradient applied per section is
+-- what the split used to be made of.
 
-local coinAmountLabel=Instance.new("TextLabel")
-coinAmountLabel.Name="Amount"
-coinAmountLabel.Size=UDim2.new(1,-95,1,0)
-coinAmountLabel.Position=UDim2.new(0,44,0,0)
-coinAmountLabel.BackgroundTransparency=1
-coinAmountLabel.Text="50"
-coinAmountLabel.Font=Enum.Font.GothamBold
-coinAmountLabel.TextSize=math.floor(20*scale)
-coinAmountLabel.TextColor3=Color3.fromRGB(255,255,255)
-coinAmountLabel.RichText=false
-coinAmountLabel.TextScaled=false
-coinAmountLabel.TextXAlignment=Enum.TextXAlignment.Left
-coinAmountLabel.ZIndex=5
-coinAmountLabel.Parent=coinPill
+-- NOTE: the fossil engravings that used to live here were dropped along with the thick
+-- frame. At BORDER = 4 the only stone still visible is a 4px rim, and an engraving that
+-- small is either invisible or, if pushed dark enough to read, a smudge on the outline.
+-- The prehistoric mark that survived the slimming is the bronze inner hairline.
 
-local coinPlusBtn=mkButton(coinPill,{Size=UDim2.new(0,34*scale,0,34*scale),Position=UDim2.new(1,-42,0.5,0),AnchorPoint=Vector2.new(0,0.5),BackgroundColor3=Color3.fromRGB(50,180,50),Text="+",Font=Enum.Font.GothamBold,TextSize=24,TextColor3=Color3.fromRGB(255,255,255)})
-mkCorner(coinPlusBtn,19); mkStroke(coinPlusBtn,Color3.fromRGB(0,130,0),2)
-coinPlusBtn.MouseButton1Click:Connect(function()
-	playUIClick()
+-- barRoot spans BOTH objects, so ResponsiveUI still hangs exactly one UIScale and the
+-- button and the capsule can never scale apart from each other. It draws nothing itself.
+local barRoot = mkFrame(coinGui, {
+	Name = "CurrencyBar",
+	Position = UDim2.new(1, -10, 0, 10),
+	Size = UDim2.new(0, math.floor(TOTAL_W * scale), 0, math.floor(CAP_H * scale)),
+	AnchorPoint = Vector2.new(1, 0),
+	BackgroundTransparency = 1,
+	ClipsDescendants = false,
+	ZIndex = 3,
+})
+barRoot:SetAttribute("ResponsiveExtraShrink", 0.78)  -- first-realm CoinGui cluster extra (mobile-only, applied by ResponsiveUI)
+
+--------------------------------------------------------------------
+-- THE SETTINGS BUTTON -- standalone, and deliberately NOT in the capsule
+--------------------------------------------------------------------
+-- Its own frame, its own shadow, its own border, separated by SET_GAP. It is a sibling
+-- of the capsule rather than a section inside it, so nothing about the capsule's layout
+-- can ever pull it in.
+local settingsRoot = mkFrame(barRoot, {
+	Name = "SettingsButton",
+	AnchorPoint = Vector2.new(0, 0.5),
+	Position = UDim2.new(0, 0, 0.5, 0),
+	Size = UDim2.fromOffset(SET_SIZE, SET_SIZE),
+	BackgroundTransparency = 1,
+	ZIndex = 3,
+})
+addBarShadow(settingsRoot, SET_R)
+local settingsSlot = mkFrame(settingsRoot, {
+	Name = "Face",
+	Size = UDim2.fromScale(1, 1),
+	BackgroundColor3 = SET_NAVY,
+	BorderSizePixel = 0,
+	ZIndex = 4,
+})
+mkCorner(settingsSlot, SET_R)
+mkStroke(settingsSlot, FRAME_EDGE, 2)
+do -- deep navy -> dark blue, straight down. This is the one place a gradient is meant to
+	-- be read as a gradient rather than as ambient light.
+	local g = Instance.new("UIGradient"); g.Rotation = 90
+	g.Color = ColorSequence.new(SET_NAVY, SET_NAVY_D)
+	g.Parent = settingsSlot
+end
+do -- subtle lighter inner border, one step in from the dark outer frame
+	local hl = addInnerHighlight(settingsSlot, SET_R)
+	local s = hl:FindFirstChildOfClass("UIStroke")
+	if s then s.Color = Color3.fromRGB(150, 170, 205); s.Transparency = 0.62; s.Thickness = 1.5 end
+end
+do -- INSET, not glossy: a soft dark wash inside the top edge, no highlight ridge
+	local ins = mkFrame(settingsSlot, { Name = "InnerShadow", Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = Color3.new(0, 0, 0), BorderSizePixel = 0, ZIndex = 4 })
+	mkCorner(ins, SET_R)
+	local g = Instance.new("UIGradient"); g.Rotation = 90
+	g.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.74), NumberSequenceKeypoint.new(0.38, 1), NumberSequenceKeypoint.new(1, 1),
+	})
+	g.Parent = ins
+end
+
+--------------------------------------------------------------------
+-- THE CURRENCY CAPSULE -- token and coin, one continuous container
+--------------------------------------------------------------------
+local capsuleRoot = mkFrame(barRoot, {
+	Name = "Capsule",
+	AnchorPoint = Vector2.new(1, 0.5),
+	Position = UDim2.new(1, 0, 0.5, 0),
+	Size = UDim2.fromOffset(CAP_W, CAP_H),
+	BackgroundTransparency = 1,
+	ZIndex = 3,
+})
+addBarShadow(capsuleRoot, CAP_R)
+
+local bar = mkFrame(capsuleRoot, {
+	Name = "Frame",
+	Size = UDim2.fromScale(1, 1),
+	BackgroundColor3 = FRAME_DARK,
+	BorderSizePixel = 0,
+	ZIndex = 4,
+})
+mkCorner(bar, CAP_R)
+mkStroke(bar, FRAME_EDGE, 2) -- thinner than before: the colour carries the bar, not the frame
+do -- the subtle inner border, a hairline inside the dark outer one. Weathered bronze
+	-- rather than white -- and this hairline is now the ONLY prehistoric mark on the
+	-- capsule, because a 4px frame has no room for carved detail that would still read.
+	local hl = addInnerHighlight(bar, CAP_R)
+	local s = hl:FindFirstChildOfClass("UIStroke")
+	if s then s.Color = BRONZE; s.Transparency = 0.6; s.Thickness = 1 end
+end
+do -- soft gradient only: barely lighter along the top so it reads as lit from above
+	local g = Instance.new("UIGradient"); g.Rotation = 90
+	g.Color = ColorSequence.new(tint(FRAME_DARK, 0.10), shade(FRAME_DARK, 0.84))
+	g.Parent = bar
+end
+do -- gentle top-edge highlight, faded at both ends so it doesn't stop in two hard dots
+	local top = mkFrame(bar, { Name = "TopEdge", AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 2), Size = UDim2.new(1, -34, 0, 1),
+		BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 0.84, BorderSizePixel = 0, ZIndex = 7 })
+	mkCorner(top, 1)
+	local g = Instance.new("UIGradient")
+	g.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0), NumberSequenceKeypoint.new(1, 1),
+	})
+	g.Parent = top
+end
+
+-- VINES: much smaller, and BEHIND the capsule rather than laid over it. ZIndex 2 puts
+-- them under the frame (4) and under the shadow, so all that shows is the tip of a
+-- tendril past the outer edge -- the frame hides where it comes from. They hang off
+-- capsuleRoot because the capsule itself has no room to spare at a 4px border.
+local function tuckVine(xScale, dir, len)
+	local stem = mkFrame(capsuleRoot, {
+		Name = "BorderVine",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(xScale, 0, dir > 0 and 1 or 0, dir * -2),
+		Size = UDim2.fromOffset(len, 2),
+		Rotation = dir > 0 and 10 or -10,
+		BackgroundColor3 = Color3.fromRGB(72, 108, 54),
+		BackgroundTransparency = 0.2,
+		BorderSizePixel = 0,
+		ZIndex = 2, -- BEHIND the capsule frame: only the tip clears the edge
+	})
+	mkCorner(stem, 99)
+	makeLeaf(capsuleRoot, UDim2.new(xScale, math.floor(len * 0.34), dir > 0 and 1 or 0, dir * 2), 46 * dir, 6, LEAF_MED, 2)
+	makeLeaf(capsuleRoot, UDim2.new(xScale, -math.floor(len * 0.30), dir > 0 and 1 or 0, dir * 1), -42 * dir, 5, LEAF_LIGHT, 2)
+end
+-- Foliage removed (both calls). Doubly dead now -- this whole capsule lives in the
+-- disabled CoinGui that CurrencyCapsule replaced -- but the calls went with the rest of
+-- the leaf accents so nothing re-renders them if that GUI is ever switched back on.
+
+-- THE INTERIOR: one rounded surface, INNER_R, which is the outer capsule's radius less
+-- the border -- so the inside curve is exactly concentric with the outside one rather
+-- than merely close to it.
+--
+-- The fill inside is rounded in its own right rather than relying on this frame's clip to
+-- shape it: ClipsDescendants clips to the rectangle, and whether it honours a UICorner is
+-- not something to bet the capsule's outline on. The clip stays as a backstop; the fill
+-- fits it exactly, so it removes nothing.
+local inner = mkFrame(bar, {
+	Name = "Inner",
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.5),
+	Size = UDim2.new(1, -BORDER * 2, 1, -BORDER * 2),
+	BackgroundTransparency = 1,
+	ClipsDescendants = true,
+	ZIndex = 5,
+})
+mkCorner(inner, INNER_R)
+
+-- ONE FILL OBJECT carrying TWO SOLID COLOURS that meet on a hard edge. Each zone is a
+-- flat, unmixed colour -- there is no blending anywhere between them.
+--
+-- Why one object rather than two abutting frames: the interior has to stay a single
+-- rounded shape. Two frames each need their own UICorner, which rounds their INNER
+-- corners as well as their outer ones and cuts a notch down the middle of the capsule;
+-- squaring that back off takes an extra patch per side. One frame is rounded once, and a
+-- hard-stepped gradient puts the colour boundary exactly where it belongs.
+--
+-- BackgroundColor3 is white on purpose: UIGradient MULTIPLIES the background colour, so a
+-- white base lets the gradient state both colours exactly rather than tinting them.
+local fill = mkFrame(inner, {
+	Name = "Fill",
+	Size = UDim2.fromScale(1, 1),
+	BackgroundColor3 = Color3.new(1, 1, 1),
+	BorderSizePixel = 0,
+	ZIndex = 5,
+})
+mkCorner(fill, INNER_R) -- the interior's own curve, following the outer capsule exactly
+local EDGE_FRAC = TOKEN_W / INNER_W -- where the two currencies meet, as a fraction
+do
+	local g = Instance.new("UIGradient")
+	g.Rotation = 0 -- horizontal: this gradient carries COLOUR, not lighting
+	g.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, TICKET_NAVY),
+		ColorSequenceKeypoint.new(EDGE_FRAC - STEP, TICKET_NAVY), -- solid navy right up to the edge
+		ColorSequenceKeypoint.new(EDGE_FRAC, COIN_ORANGE),        -- and solid amber from it
+		ColorSequenceKeypoint.new(1, COIN_ORANGE),
+	})
+	g.Parent = fill
+end
+
+-- The lighting is layered ON TOP of the colour rather than mixed into it, because an
+-- object gets exactly one UIGradient and the fill has spent its own stating the two
+-- colours. Both of these span the WHOLE interior, and that is deliberate: the capsule is
+-- one component with two zones in it, so the light running across it has to be continuous
+-- even though the colour underneath it steps. Shading each zone separately would put a
+-- second, softer seam beside the crisp one.
+do -- SOFT INNER SHADOW: a dark wash inside the top edge. Sets the interior back.
+	local ins = mkFrame(inner, { Name = "InnerShadow", Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = Color3.new(0, 0, 0), BorderSizePixel = 0, ZIndex = 6 })
+	mkCorner(ins, INNER_R)
+	local g = Instance.new("UIGradient"); g.Rotation = 90
+	g.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.78), NumberSequenceKeypoint.new(0.34, 1), NumberSequenceKeypoint.new(1, 1),
+	})
+	g.Parent = ins
+end
+do -- SUBTLE TOP HIGHLIGHT: one hairline just inside the interior's top edge, running the
+	-- full width and fading out at both ends so it never terminates in two hard dots.
+	local gloss = mkFrame(inner, { Name = "TopGloss", AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 2), Size = UDim2.new(1, -INNER_R, 0, 1),
+		BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 0.72,
+		BorderSizePixel = 0, ZIndex = 7 })
+	mkCorner(gloss, 1)
+	local g = Instance.new("UIGradient")
+	g.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0), NumberSequenceKeypoint.new(1, 1),
+	})
+	g.Parent = gloss
+end
+
+do -- THE DIVIDER: a crisp vertical line on the colour boundary, full interior height.
+	--
+	-- TWO hairlines, not one. A single dark line reads as a line drawn ON the surface; a
+	-- dark line with a faint light one immediately to its right reads as a groove cut
+	-- INTO it, which is the inset the reference uses. Both are kept low-contrast -- the
+	-- divider's job is to separate the two colours, not to become a third element.
+	--
+	-- It sits at ZIndex 7, above the fill and the inner shadow but below the content (8).
+	-- Nothing overlaps it either way: the icons and numbers live inside their own zones,
+	-- and this falls exactly between them.
+	-- the dark side, ending ON the boundary
+	mkFrame(inner, {
+		Name = "Divider",
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(EDGE_FRAC, 0, 0, 0),
+		Size = UDim2.new(0, 2, 1, 0),
+		BackgroundColor3 = Color3.fromRGB(8, 10, 16),
+		BackgroundTransparency = 0.45,
+		BorderSizePixel = 0,
+		ZIndex = 7,
+	})
+	-- the lit side, starting ON the boundary
+	mkFrame(inner, {
+		Name = "DividerLight",
+		AnchorPoint = Vector2.new(0, 0),
+		Position = UDim2.new(EDGE_FRAC, 0, 0, 0),
+		Size = UDim2.new(0, 1, 1, 0),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BackgroundTransparency = 0.86,
+		BorderSizePixel = 0,
+		ZIndex = 7,
+	})
+end
+
+-- ONE factory for both currencies, so there is no second copy of the layout to drift.
+-- The factory no longer builds any colour: the fill above already covers both currencies
+-- as one surface. All this lays out is a transparent CONTENT ZONE -- icon, number, "+" --
+-- over its share of that fill.
+--
+-- The zone sits at ZIndex 8, above the inner shadow (6) and the top gloss (7), so the
+-- capsule-wide lighting passes UNDER the icons and numbers instead of over them. Under
+-- Sibling ZIndex an overlay outranks a sibling's entire subtree, so content nested inside
+-- a coloured fill would be washed over by anything layered above that fill.
+local function makeCurrencySection(xOffset, width, baseCol, onPlus)
+	local pod = mkFrame(inner, {
+		Name = "Content",
+		Position = UDim2.fromOffset(xOffset, 0),
+		Size = UDim2.new(0, width, 1, 0),
+		BackgroundTransparency = 1,
+		ZIndex = 8,
+	})
+
+	-- PADDING. One number, applied to the icon's left inset, the "+"'s right inset and the
+	-- air on both sides of the number, so the content sits in a consistent margin instead
+	-- of three insets that happen to look similar.
+	local PAD = 8
+
+	-- ICON: sits directly on the fill, vertically centred. No badge disc behind it -- the
+	-- reference puts the bare icon on the colour, and a disc under it reads as a busier bar.
+	-- Sized off the padding rather than off SEC_H, so widening the margin shrinks the icon
+	-- with it and the vertical air above and below always matches the air at the left.
+	local ICON_D = SEC_H - PAD * 2
+	local iconHolder = mkFrame(pod, {
+		Name = "Icon",
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0, PAD, 0.5, 0),
+		Size = UDim2.fromOffset(ICON_D, ICON_D),
+		BackgroundTransparency = 1,
+		ZIndex = 8,
+	})
+
+	-- "+": small WHITE disc against the right, on the same margin as the icon. Deliberately
+	-- smaller than the icon -- it is a control, and it must not compete with the value.
+	local PLUS_D = SEC_H - PAD * 2 - 10
+	local plus = mkButton(pod, {
+		Name = "Plus",
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -PAD, 0.5, 0),
+		Size = UDim2.fromOffset(PLUS_D, PLUS_D),
+		BackgroundColor3 = PLUS_WHITE,
+		Text = "",
+		AutoButtonColor = false,
+		ZIndex = 8,
+	})
+	mkCorner(plus, 999)
+	do -- the faintest shading, top-lit. A white disc with a hard gradient is exactly the
+		-- glossy-plastic read the reference avoids.
+		local g = Instance.new("UIGradient"); g.Rotation = 90
+		g.Color = ColorSequence.new(Color3.new(1, 1, 1), shade(PLUS_WHITE, 0.94)); g.Parent = plus
+	end
+	do -- the "+" as two rounded bars, not a font glyph. A text "+" comes from the UI font
+		-- and lands visibly thinner and smaller than the icon beside it (same reasoning as
+		-- addIconBadge above); two bars match its weight and stay crisp at any scale. Cut
+		-- in the section's own darkened colour, so each "+" belongs to its section.
+		local g = math.max(2, math.floor(PLUS_D * 0.15))
+		local L = math.floor(PLUS_D * 0.48)
+		for _, dims in ipairs({ { L, g }, { g, L } }) do
+			local barPiece = mkFrame(plus, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+				Size = UDim2.fromOffset(dims[1], dims[2]), BackgroundColor3 = shade(baseCol, 0.72),
+				BorderSizePixel = 0, ZIndex = 9 })
+			mkCorner(barPiece, math.floor(g / 2))
+		end
+	end
+	if onPlus then
+		plus.MouseButton1Click:Connect(function() playUIClick(); onPlus() end)
+	end
+
+	-- AMOUNT: centred in the gap the icon and the "+" leave behind, so the number stays
+	-- optically centred in the pod however wide the value grows.
+	--
+	-- TextScaled UNDER a MaxTextSize cap, rather than a fixed size. A balance of "50" wants
+	-- the full 22px the reference uses, but "125,400" at 22px is wider than the space the
+	-- icon and the "+" leave and would truncate to "125,4...". Capped-scaled text renders
+	-- short balances at exactly 22 and quietly steps a rich player's number down instead
+	-- of hiding digits -- and the sections keep their widths either way.
+	local leftEdge  = PAD + ICON_D + PAD
+	local rightEdge = PAD + PLUS_D + PAD
+	local amount = mkLabel(pod, {
+		Name = "Amount",
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0, leftEdge, 0.5, 0),
+		Size = UDim2.new(1, -(leftEdge + rightEdge), 0, math.floor(SEC_H * 0.58)),
+		Text = "0",
+		TextColor3 = Color3.new(1, 1, 1),
+		TextScaled = true,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		TextYAlignment = Enum.TextYAlignment.Center,
+		ZIndex = 8,
+	})
+	do
+		local c = Instance.new("UITextSizeConstraint")
+		c.MaxTextSize = math.floor(22 * scale)
+		c.MinTextSize = 11
+		c.Parent = amount
+	end
+	styleText(amount) -- bold rounded white with the thin black outline, the house token
+	return pod, iconHolder, amount
+end
+
+-- SECTION ORDER inside the capsule, left to right: token, then coin. The coin section is
+-- the wider of the two -- see TOKEN_W / COIN_W above. The settings button is NOT in here;
+-- it is a separate object built above.
+
+-- CRATE TOKENS (leaderstats.CrateTokens) -- the cosmetic currency, kept strictly apart
+-- from coins (see DinosaurRealm/CrateTokens). "+" opens the crate shop, the only place
+-- tokens are ever spent.
+--
+-- FindFirstChild, deliberately NOT WaitForChild: this runs on the main body of the
+-- bootstrap, so a yield here would hold up every HUD element built after it -- settings,
+-- the right panel, the shop -- for as long as the wait. The folder is replicated at join
+-- so it is always already there; if it somehow is not, the fallbacks below are the same
+-- icon bytes and the same formatting the module would have supplied.
+local CrateTokens = nil
+pcall(function()
+	local realm = game:GetService("ReplicatedStorage"):FindFirstChild("DinosaurRealm")
+	local mod = realm and realm:FindFirstChild("CrateTokens")
+	if mod then CrateTokens = require(mod) end
+end)
+-- The panel is NAVY; the red belongs to the ticket icon sitting on it. x = 0: the token
+-- section starts hard against the left of the interior, and the coin section starts at
+-- exactly TOKEN_W -- the two therefore share an edge with nothing between them.
+local tokenPod, tokenIconHolder, tokenAmountLabel = makeCurrencySection(0, TOKEN_W, TICKET_NAVY, function()
+	toggleMainMenu("SkinCrates", "SkinCrateGui")
+end)
+local tokenIcon = mkLabel(tokenIconHolder, {
+	Name = "TokenIcon",
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.5),
+	Size = UDim2.fromScale(1, 1),
+	Text = (CrateTokens and CrateTokens.ICON) or "\xF0\x9F\x8E\x9F",
+	Font = JUNGLE_FONT,
+	TextScaled = true,
+	TextXAlignment = Enum.TextXAlignment.Center,
+	TextYAlignment = Enum.TextYAlignment.Center,
+	ZIndex = 9,
+})
+do -- TextScaled under a cap: the emoji renders from a bitmap font at a fixed design size,
+	-- so scaling it to the box keeps it crisp instead of resampling a fixed TextSize.
+	local c = Instance.new("UITextSizeConstraint")
+	c.MaxTextSize = math.floor(SEC_H * 0.78)
+	c.Parent = tokenIcon
+end
+
+-- FOOD COINS (leaderstats.Coins) -- "+" opens the premium shop, as it always has.
+local coinPod, coinIconHolder, coinAmountLabel = makeCurrencySection(TOKEN_W, COIN_W, COIN_ORANGE, function()
 	toggleMainMenu("Premium", "PremiumShopGui")
 end)
+local coinIcon = Instance.new("ImageLabel")
+coinIcon.Name = "CoinIcon"
+coinIcon.Size = UDim2.fromScale(1, 1)
+coinIcon.Position = UDim2.fromScale(0.5, 0.5)
+coinIcon.AnchorPoint = Vector2.new(0.5, 0.5)
+coinIcon.BackgroundTransparency = 1
+coinIcon.Image = _G.COIN_IMAGE
+coinIcon.ResampleMode = Enum.ResamplerMode.Default -- crisp downscale of the source art
+coinIcon.ScaleType = Enum.ScaleType.Fit
+coinIcon.ZIndex = 9
+coinIcon.Parent = coinIconHolder
 
--- Live coin number: mirror leaderstats.Coins if it exists (so it "just works" when
--- a coin leaderstat is present in the new world). No-ops gracefully otherwise.
+-- Live numbers: mirror the leaderstats values if they exist (so this "just works" when
+-- the stats are present) and no-op gracefully otherwise. Both currencies are formatted
+-- with thousands separators -- a bare five-digit balance is the one thing that would
+-- overflow a fixed-width pod.
+local function commas(n)
+	if CrateTokens then return CrateTokens.format(n) end
+	local s = tostring(math.max(0, math.floor(tonumber(n) or 0)))
+	local out = s:reverse():gsub("(%d%d%d)", "%1,"):reverse()
+	return (out:gsub("^,", ""))
+end
 task.spawn(function()
 	local ls = player:WaitForChild("leaderstats", 30)
-	local coins = ls and ls:FindFirstChild("Coins")
-	if not coins then return end
-	local function refresh() coinAmountLabel.Text = tostring(coins.Value) end
-	refresh()
-	coins:GetPropertyChangedSignal("Value"):Connect(refresh)
+	if not ls then return end
+	local function bind(statName, label)
+		local stat = ls:FindFirstChild(statName)
+		if not stat then
+			-- the stat may be created after leaderstats itself; catch it when it lands
+			local conn
+			conn = ls.ChildAdded:Connect(function(child)
+				if child.Name == statName then conn:Disconnect(); bind(statName, label) end
+			end)
+			return
+		end
+		local function refresh() label.Text = commas(stat.Value) end
+		refresh()
+		stat:GetPropertyChangedSignal("Value"):Connect(refresh)
+	end
+	bind("Coins", coinAmountLabel)
+	bind("CrateTokens", tokenAmountLabel)
 end)
 
 --======================================================================
--- 2) SETTINGS: gear button (tucks left of coins) + Music/SFX panel  (SettingsGui)
+-- 2) SETTINGS: gear button (fills the currency bar's utility slot) + Music/SFX panel
 --    Fully self-contained -- works standalone with no other game systems.
 --======================================================================
 local musicOn = true
@@ -402,31 +919,75 @@ local function applyMusic() _G.musicEnabled = musicOn; if _G.refreshMusicVolume 
 local settingsGui = Instance.new("ScreenGui")
 settingsGui.Name = "SettingsGui"; settingsGui.ResetOnSpawn = false; settingsGui.IgnoreGuiInset = true; settingsGui.DisplayOrder = 60; settingsGui.Parent = PlayerGui
 
+-- The gear lives INSIDE the currency bar's utility slot, not loose in this ScreenGui.
+-- It therefore fills its slot (no size of its own) and rides the bar's single UIScale,
+-- which is what keeps it locked to the pods on every device -- the old copy floated in
+-- SettingsGui and had to be re-placed from the coin pill's AbsolutePosition whenever
+-- that moved, with its own scale to keep in step.
 local gearBtn = Instance.new("TextButton")
 gearBtn.Name = "SettingsGearBtn"
-gearBtn.AnchorPoint = Vector2.new(1, 0)
-gearBtn.Size = UDim2.new(0, 46, 0, 46)
-gearBtn.Position = UDim2.new(1, -198, 0, 10)
-gearBtn.BackgroundColor3 = Color3.fromRGB(96, 66, 40) -- carved wood
-gearBtn.Text = "" -- the gear icon is drawn on a cream badge on top (below)
-gearBtn.TextScaled = true
-gearBtn.Font = Enum.Font.GothamBold
-gearBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-gearBtn.ZIndex = 20
-gearBtn.Parent = settingsGui
-do local c=Instance.new("UICorner"); c.CornerRadius=UDim.new(0,12); c.Parent=gearBtn end
-do local s=Instance.new("UIStroke"); s.Color=Color3.fromRGB(40,26,14); s.Thickness=2; s.Parent=gearBtn end
-glossGradient(gearBtn, Color3.fromRGB(96,66,40))
-addInnerHighlight(gearBtn,12)
-do -- leaf accents tucked into the CORNERS only (kept off the center icon)
-	makeLeaf(gearBtn, UDim2.new(0,2,0,2), -40, 12, LEAF_MED, 21)
-	makeLeaf(gearBtn, UDim2.new(1,-2,1,-2), 140, 11, LEAF_LIGHT, 21)
+gearBtn.AnchorPoint = Vector2.new(0.5, 0.5)
+gearBtn.Position = UDim2.fromScale(0.5, 0.5)
+gearBtn.Size = UDim2.fromScale(1, 1)
+-- The button's FACE -- gradient, borders, shadow and inset -- is built with the currency
+-- bar above (settingsSlot), because that is where its geometry belongs. All that is left
+-- here is the transparent hit target that fills it and the gear glyph on top.
+--
+-- CLEAN AND MINIMAL, by instruction: no vines, leaves, wood, stone or fossils touch this
+-- button. The only prehistoric mark anywhere near it is the weathered edge on its outer
+-- frame, and that is a single darkened hairline you would have to go looking for.
+gearBtn.BackgroundTransparency = 1 -- settingsSlot is the visible face; this is just the input
+gearBtn.Text = ""                  -- no text, ever: the glyph below is the whole button
+gearBtn.AutoButtonColor = false
+gearBtn.Size = UDim2.fromScale(1, 1)
+gearBtn.Position = UDim2.fromScale(0.5, 0.5)
+gearBtn.AnchorPoint = Vector2.new(0.5, 0.5)
+gearBtn.ZIndex = 9
+gearBtn.Parent = settingsSlot
+do -- extremely subtle weathered edge: one short darkened arc on the outer frame, at 0.86
+	-- transparency. This is the ENTIRE dinosaur styling on the settings button.
+	local worn = mkFrame(settingsSlot, { Name = "WornEdge", AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.62, 0, 0, 1), Size = UDim2.fromOffset(14, 2),
+		BackgroundColor3 = Color3.fromRGB(120, 96, 62), BackgroundTransparency = 0.86,
+		BorderSizePixel = 0, ZIndex = 6 })
+	mkCorner(worn, 99)
 end
-do -- cream circle badge with the gear symbol clearly on top
-	local gbadge = mkFrame(gearBtn,{Name="GearBadge",Size=UDim2.new(0.74,0,0.74,0),Position=UDim2.fromScale(0.5,0.5),AnchorPoint=Vector2.new(0.5,0.5),BackgroundColor3=CREAM,BorderSizePixel=0,ZIndex=23})
-	mkCorner(gbadge,999); mkStroke(gbadge,WOOD_DARK,2)
-	mkLabel(gbadge,{Name="GearIcon",Text="\xE2\x9A\x99\xEF\xB8\x8F",TextScaled=true,Size=UDim2.fromScale(0.82,0.82),Position=UDim2.fromScale(0.5,0.5),AnchorPoint=Vector2.new(0.5,0.5),TextColor3=Color3.fromRGB(55,40,25),BackgroundTransparency=1,ZIndex=24})
+do -- LARGE light-grey gear, dead centre, with generous padding around it. The soft emboss
+	-- is a darker copy one pixel BELOW the light one -- the glyph then catches the same
+	-- top-down light as the button, without a bevel or an outline.
+	local GEAR_GLYPH = "\xE2\x9A\x99"
+	local function gearLayer(col, dy, z)
+		return mkLabel(settingsSlot, {
+			Name = dy == 0 and "GearIcon" or "GearEmboss",
+			Text = GEAR_GLYPH,
+			Font = Enum.Font.GothamBold,
+			TextScaled = true,
+			TextColor3 = col,
+			Size = UDim2.fromScale(0.54, 0.54), -- generous padding: just over half the face
+			Position = UDim2.new(0.5, 0, 0.5, dy),
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			BackgroundTransparency = 1,
+			ZIndex = z,
+		})
+	end
+	gearLayer(Color3.fromRGB(12, 16, 28), 1, 7) -- the shadow underneath
+	gearLayer(GEAR_GREY, 0, 8)                  -- the gear itself
 end
+
+-- ---- HAND THE BUTTON TO THE CAPSULE -------------------------------------------------
+-- Built above as a child of barRoot, whose ScreenGui (CoinGui) is now disabled -- so left
+-- where it was, the settings button would simply vanish with the bar it was nested in.
+--
+-- It moves out INTACT, face and all: `settingsRoot` is the visible button (frame, shadow,
+-- borders, gear glyph, worn edge) and gearBtn inside it is only the hit target. That is
+-- why CurrencyCapsule's CONFIG.GEAR_BTN names THIS frame and not gearBtn.
+--
+-- Reparented here rather than at creation because it has to be finished first: the slot,
+-- the hit target, the worn edge and both gear layers are all added above.
+--
+-- Position/AnchorPoint are not set: CurrencyCapsule adopts this into a UIListLayout, which
+-- ignores a child's Position entirely and re-asserts its AnchorPoint every frame.
+settingsRoot.Parent = settingsGui
 
 local settingsPanel = Instance.new("Frame")
 settingsPanel.Name = "SettingsPanel"
@@ -479,27 +1040,43 @@ gearBtn.MouseButton1Click:Connect(function() playUIClick(); settingsPanel.Visibl
 sCloseBtn.MouseButton1Click:Connect(function() playUIClick(); settingsPanel.Visible = false end)
 applySFX(); applyMusic()
 
--- Tuck the gear immediately to the LEFT of the coin pill, same row, on every device.
+-- Hang the settings panel under the currency row. The GEAR still needs no placing -- a
+-- UIListLayout positions it, CurrencyCapsule's now -- so this only follows the row for the
+-- drop-down panel, which lives in its own ScreenGui (DisplayOrder 60) to stay above
+-- everything it covers.
+--
+-- ANCHORED TO THE GEAR, NOT THE OLD BAR. barRoot is inside the disabled CoinGui: a hidden
+-- ScreenGui's descendants report AbsoluteSize 0, so `place()` would hit the guard below and
+-- return every time, leaving the panel parked at wherever it was authored. The gear is the
+-- thing the panel drops out of anyway, so following it is also the more honest anchor --
+-- and it keeps working wherever the capsule's row puts it.
 task.spawn(function()
-	local GAP = 8
 	local function place()
-		local cSize = coinPill.AbsoluteSize
-		if cSize.X <= 0 or cSize.Y <= 0 then return end
-		local cLeft = coinPill.AbsolutePosition.X
-		local gearW = cSize.Y
-		local coinPosY    = coinPill.Position.Y
-		local coinAnchorY = coinPill.AnchorPoint.Y
-		gearBtn.AnchorPoint = Vector2.new(0, coinAnchorY)
-		gearBtn.Size = UDim2.fromOffset(gearW, cSize.Y)
-		gearBtn.Position = UDim2.new(0, cLeft - GAP - gearW, coinPosY.Scale, coinPosY.Offset)
-		settingsPanel.AnchorPoint = Vector2.new(0, coinAnchorY)
-		settingsPanel.Position = UDim2.new(0, (cLeft + cSize.X) - settingsPanel.Size.X.Offset, coinPosY.Scale, coinPosY.Offset + cSize.Y + 6)
+		local size = settingsRoot.AbsoluteSize
+		if size.X <= 0 or size.Y <= 0 then return end
+		local pos = settingsRoot.AbsolutePosition
+		-- ABSOLUTE width, not Size.X.Offset: ResponsiveUI puts a UIScale on the panel, so
+		-- its authored 260 is not its rendered width on a phone. Right-aligning off the
+		-- authored number pushed the panel off the screen edge at any scale below 1.
+		local panelW = settingsPanel.AbsoluteSize.X
+		if panelW <= 0 then panelW = settingsPanel.Size.X.Offset end
+		-- DROPS FROM THE GEAR, RIGHT-ALIGNS TO THE ROW. The gear gives the Y (it is what the
+		-- panel opens out of) but it is only 56 wide -- right-aligning a 260px panel to a
+		-- 56px button would hang it off to the left of the capsule instead of under the
+		-- cluster. The row is the full [gear + capsule] width, so its right edge is the one
+		-- the panel should line up with, exactly as the old bar's right edge used to be.
+		local row = _G.CurrencyCapsule and _G.CurrencyCapsule.row
+		local rightX = pos.X + size.X
+		if row and row.Parent and row.AbsoluteSize.X > 0 then
+			rightX = row.AbsolutePosition.X + row.AbsoluteSize.X
+		end
+		settingsPanel.AnchorPoint = Vector2.new(0, 0)
+		settingsPanel.Position = UDim2.fromOffset(rightX - panelW, pos.Y + size.Y + 6)
 	end
 	place()
-	coinPill:GetPropertyChangedSignal("AbsolutePosition"):Connect(place)
-	coinPill:GetPropertyChangedSignal("AbsoluteSize"):Connect(place)
-	coinPill:GetPropertyChangedSignal("Position"):Connect(place)
-	coinPill:GetPropertyChangedSignal("AnchorPoint"):Connect(place)
+	settingsRoot:GetPropertyChangedSignal("AbsolutePosition"):Connect(place)
+	settingsRoot:GetPropertyChangedSignal("AbsoluteSize"):Connect(place)
+	settingsPanel:GetPropertyChangedSignal("AbsoluteSize"):Connect(place)
 end)
 
 --======================================================================
@@ -516,12 +1093,15 @@ do
 	rightPanel.AnchorPoint = Vector2.new(1,0); rightPanel.BackgroundColor3 = PARCHMENT
 	rightPanel.ZIndex = 3; rightPanel.Parent = rightGui
 end
+rightPanel:SetAttribute("ResponsiveExtraShrink", 0.78)  -- first-realm RightPanelGui cluster extra (mobile-only, applied by ResponsiveUI)
 mkCorner(rightPanel,18); mkStroke(rightPanel,WOOD_DARK,3)
 addShadow(rightPanel,18)
 glossGradient(rightPanel, PARCHMENT)
 addInnerHighlight(rightPanel, 18)
-addVineCorner(rightPanel, UDim2.new(0,5,0,5), 1, 1, 28, 14)
-addVineCorner(rightPanel, UDim2.new(1,-5,0,5), -1, 1, 26, 14)
+-- Foliage removed, same call as the side buttons above. The two top-corner vines ran at
+-- ZIndex 14 -- above the panel's own content -- so a 28px cluster sat over the top of the
+-- STATS banner. The wooden frame, the gloss and the skull already say jungle; the leaves
+-- were only covering the numbers people open this panel to read.
 
 -- stats section (y=8, height=175)
 local statsSection = Instance.new("Frame")
@@ -542,9 +1122,9 @@ do
 	do local tc=Instance.new("UITextSizeConstraint"); tc.MaxTextSize=22; tc.Parent=t end
 	-- dino-skull icon to the RIGHT of the title (clear of the text)
 	mkLabel(statsTitle,{Name="Skull",Text="\xF0\x9F\xA6\x96",TextScaled=true,Size=UDim2.new(0,26,0,26),Position=UDim2.new(1,-8,0.5,0),AnchorPoint=Vector2.new(1,0.5),BackgroundTransparency=1,ZIndex=9})
-	-- leaves to the LEFT of the title (clear of the text)
-	addLeaf(statsTitle, UDim2.new(0,11,0.5,0), -28, 18, 8)
-	addLeaf(statsTitle, UDim2.new(0,21,0.5,0), 34, 14, 8)
+	-- Leaves removed. The skull on the right is the banner's only ornament now, which
+	-- also re-centres STATS optically: it was flanked by foliage on one side and a
+	-- glyph on the other.
 end
 
 local islandLabel = Instance.new("TextLabel")
@@ -700,7 +1280,7 @@ meteorBtn.MouseButton1Click:Connect(function() playUIClick(); pcall(function() M
 -- Jungle restyle for the three right-side action buttons: glossy fill, dark
 -- border, cream circular icon badge on the left, bold outlined text.
 local function styleActionBtn(btn, iconLbl, baseCol)
-	-- match the left plaques exactly: corner 18, stroke 3, shadow, gloss, glow, foliage
+	-- match the left plaques exactly: corner 18, stroke 3, shadow, gloss, glow (no foliage)
 	local cn = btn:FindFirstChildOfClass("UICorner"); if cn then cn.CornerRadius = UDim.new(0, 18) end
 	local st = btn:FindFirstChildOfClass("UIStroke"); if st then st.Color = shade(baseCol, 0.45); st.Thickness = 3 end
 	addShadow(btn, 18)
@@ -719,8 +1299,9 @@ local function styleActionBtn(btn, iconLbl, baseCol)
 		local rs=Instance.new("UIStroke"); rs.Color=Color3.fromRGB(150,125,90); rs.Transparency=0.4; rs.Thickness=2; rs.Parent=rim; rim.Parent=badge
 	end
 	if iconLbl then iconLbl.ZIndex = 7; iconLbl.TextColor3 = Color3.fromRGB(60,45,30) end
-	-- trailing vine in the top-right corner (clear of the left icon badge)
-	addVineCorner(btn, UDim2.new(1,-4,0,4), -1, 1, 18, 13)
+	-- Foliage removed. These three buttons live INSIDE rightPanel, so their corner vines
+	-- read as part of the stats panel's decoration rather than their own -- stripping the
+	-- panel and leaving them would have left leaves scattered down its right side.
 	for _,d in ipairs(btn:GetChildren()) do
 		if d:IsA("TextLabel") then
 			d.Font = JUNGLE_FONT; d.TextStrokeColor3 = Color3.new(0,0,0); d.TextStrokeTransparency = 0
@@ -741,12 +1322,19 @@ styleActionBtn(meteorBtn, meteorIcon, Color3.fromRGB(232,108,40))
 local sidebarGui = Instance.new("ScreenGui")
 sidebarGui.Name = "SidebarGui"; sidebarGui.ResetOnSpawn = false; sidebarGui.Parent = PlayerGui
 
+-- All 4 side buttons live in ONE cluster frame so ResponsiveUI scales the rail as a single unit
+-- (button size AND the spacing between them) about its top-left corner -- exactly like the first
+-- realm. Without this wrapper each button would scale its size but keep its authored Y, pushing the
+-- lower buttons (y up to ~512) off a short phone viewport. SidebarGui's cluster extra is 1.00 (none),
+-- so no ResponsiveExtraShrink attribute here -- it just rides getScale() (1.0 desktop / ~0.60 phone).
+local sidebarCluster = mkFrame(sidebarGui,{Size=UDim2.new(0,120,0,520),Position=UDim2.new(0,0,0,0),AnchorPoint=Vector2.new(0,0),BackgroundTransparency=1})
+
 local function mkSideBtn(yTop,bgCol,iconTxt,labelTxt)
 	-- Wooden-plaque cartoon button: glossy saturated fill, thick dark rounded
 	-- border, leafy corner accents, cream icon badge, outlined label.
 	-- Layout matches the main Fart-to-Float HUD: 95x95, pinned TOP-LEFT (anchor 0,0) at
 	-- X=12 on a fixed top-down Y grid (yTop = 96/203/310/417, 107px pitch) -- NOT centre-anchored.
-	local btn=mkFrame(sidebarGui,{Size=UDim2.new(0,95,0,95),Position=UDim2.new(0,12,0,yTop),AnchorPoint=Vector2.new(0,0),BackgroundColor3=bgCol})
+	local btn=mkFrame(sidebarCluster,{Size=UDim2.new(0,95,0,95),Position=UDim2.new(0,12,0,yTop),AnchorPoint=Vector2.new(0,0),BackgroundColor3=bgCol})
 	btn.ZIndex = 3
 	addShadow(btn, 18)
 	mkCorner(btn,18)
@@ -757,11 +1345,11 @@ local function mkSideBtn(yTop,bgCol,iconTxt,labelTxt)
 	mkCorner(gloss,9)
 	-- faint inner highlight bevel just inside the border
 	addInnerHighlight(btn, 18)
-	-- lush layered foliage reclaiming opposite corners + a vine down the left edge
-	addVine(btn, math.floor(6*scale), math.floor(12*scale), math.floor(70*scale), 11)
-	addVineCorner(btn, UDim2.new(0,2,0,2), 1, 1, math.floor(18*scale), 13)
-	addVineCorner(btn, UDim2.new(1,-2,1,-2), -1, -1, math.floor(16*scale), 13)
-	-- cream circular icon badge, higher with top breathing room
+	-- Foliage removed. The left-edge vine ran at ZIndex 11 and the two corner clusters at
+	-- 13, all ABOVE the icon badge's ZIndex 6, so leaves were drawn straight over the
+	-- glyph on a 95px button -- the badge is 44px and the top-left cluster overlapped it
+	-- directly. The buttons keep their gloss, bevel and outline; only the overlap is gone.
+	-- circular icon badge, uniform size and position on all four buttons
 	addIconBadge(btn, math.floor(44*scale), 0.1, iconTxt, math.floor(24*scale))
 	-- outlined white label lower, with a clear gap below the badge
 	local textL=mkLabel(btn,{Name="Label",Text=labelTxt,TextScaled=true,TextColor3=Color3.new(1,1,1),Size=UDim2.new(1,-8,0,22),Position=UDim2.new(0,4,1,-10),AnchorPoint=Vector2.new(0,1),TextXAlignment=Enum.TextXAlignment.Center,BackgroundTransparency=1,ZIndex=6})
@@ -772,7 +1360,9 @@ local function mkSideBtn(yTop,bgCol,iconTxt,labelTxt)
 end
 
 local shopSideFrame,shopSideClick     = mkSideBtn(96,Color3.fromRGB(50,180,50),"\xF0\x9F\x9b\x92","SHOP")
-local inviteSideFrame,inviteSideClick = mkSideBtn(203,Color3.fromRGB(70,160,235),"\xF0\x9F\x91\xa5","INVITE")
+-- PETS takes over the old Invite/Wormhole slot: opens the Pet Hub directly. The Wormhole
+-- travel menu moved into the MORE+ popup (see MORE_ENTRIES below) -- swapped by request.
+local petsSideFrame,petsSideClick = mkSideBtn(203,Color3.fromRGB(70,150,235),"\xF0\x9F\x90\xBE","PETS")
 -- STOMACH (was the "Pets" paw button).
 -- The Pet Hub is NOT orphaned by this: PetHub.client.luau builds its own paw button in
 -- the bottom-left corner, which is the real way in -- this sidebar slot was a duplicate.
@@ -792,10 +1382,6 @@ shopSideClick.MouseButton1Click:Connect(function()
 	playUIClick()
 	toggleMainMenu("Premium", "PremiumShopGui")
 end)
-inviteSideClick.MouseButton1Click:Connect(function()
-	playUIClick()
-	pcall(function() SocialService:PromptGameInvite(game.Players.LocalPlayer) end)
-end)
 gutSideClick.MouseButton1Click:Connect(function()
 	playUIClick()
 	-- open the STOMACH SHOP (gut tiers). Same call the MORE+ menu's "Stomachs" entry
@@ -806,6 +1392,16 @@ stomachSideClick.MouseButton1Click:Connect(function()
 	playUIClick()
 	-- MORE+ popup is built below in this same script; toggle it open/closed.
 	if setMoreOpen then setMoreOpen(not moreOpenState) end
+end)
+petsSideClick.MouseButton1Click:Connect(function()
+	playUIClick()
+	-- Open the Pet Hub -- the same path the MORE+ Pets card used. _G.togglePetHub first
+	-- (the PetInvToggle BindableEvent can be swept out of PlayerGui by GUI cleanup);
+	-- the event stays as a fallback for a hub build that predates the global.
+	if _G.togglePetHub then _G.togglePetHub(true) return end
+	local ev = PlayerGui:FindFirstChild("PetInvToggle") or PlayerGui:WaitForChild("PetInvToggle", 5)
+	if ev then ev:Fire()
+	else warn("[Bootstrap] PETS side button: PetInvToggle not found (is PetHub.client.luau running?)") end
 end)
 
 --======================================================================
@@ -823,12 +1419,16 @@ local MPS = MarketplaceService
 local GAMEPASS_IDS = {TwoXForever=1862015450, GlitterTrail=1859714979}
 local PRODUCT_IDS  = {TwoXOneHour=3600302990, MidAirRecharge=3600303163, SkipIsland=3600303265, MeteoriteExplosion=3606893853}
 
--- per-tier gut emoji (used by the stomach shop icons/labels); guarded so it's shared if already set
-_G.GUT_EMOJI = _G.GUT_EMOJI or {
-	["Hatchling Belly"]="\xF0\x9F\xA5\x9A", ["Raptor Gut"]="\xF0\x9F\xA6\x8E", ["Stego Stomach"]="\xF0\x9F\xA6\xB4",
-	["Bronto Belly"]="\xF0\x9F\xA6\x95", ["Rex Gut"]="\xF0\x9F\xA6\x96", ["Fossil Gut"]="\xF0\x9F\xAA\xA8",
-	["Primal Gut"]="\xF0\x9F\x8C\x8B",
-}
+-- per-tier gut emoji (used by the stomach shop icons/labels), BUILT FROM StomachTiers rather
+-- than hand-listed -- this table only had the six original tiers, and every consumer of it
+-- falls back to "leave the icon alone" on a miss, so the twelve-tier tower would have shown
+-- stale badges with nothing in the output to say why. Guarded so it is shared if already set.
+if not _G.GUT_EMOJI then
+	_G.GUT_EMOJI = {}
+	for _, t in ipairs(require(RS:WaitForChild("DinosaurRealm"):WaitForChild("StomachTiers")).LIST) do
+		_G.GUT_EMOJI[t.name] = t.emoji
+	end
+end
 
 -- insufficient-funds error sound + "can't afford" button shake (from CoreClient)
 local errorSound = Instance.new("Sound")
@@ -852,151 +1452,15 @@ local function shakeButton(btn)
 end
 
 --======================================================================
--- 5a) PREMIUM SHOP  (opened by the coin "+" button and the SHOP side button)
---     Verbatim from ShopClient. Fully self-contained: every card just fires a
---     MarketplaceService gamepass/product prompt (works standalone).
+-- 5a) PREMIUM SHOP -- MOVED OUT.
+--     This script used to build its own "PremiumShopGui" here, and Shop.client.luau built a
+--     SECOND ScreenGui under the same name, so PlayerGui held two shop panels and the SHOP
+--     button toggled whichever FindFirstChild returned first. Both are gone: ShopKit.client.luau
+--     is now the only thing that builds PremiumShopGui.
+--     The SHOP rail button and the coin "+" button below are unchanged -- they still call
+--     toggleMainMenu("Premium", "PremiumShopGui"), which resolves the GUI by name at CLICK time,
+--     so they pick up the new panel with no wiring change.
 --======================================================================
-do
-	local sg=Instance.new("ScreenGui"); sg.Name="PremiumShopGui"; sg.ResetOnSpawn=false; sg.Enabled=false; sg.DisplayOrder=100; sg.Parent=PlayerGui
-	local PremiumShopGui=sg
-	mkFrame(sg,{Size=UDim2.new(1,0,1,0),BackgroundColor3=Color3.new(0,0,0),BackgroundTransparency=1,Active=false})
-	local premPanel=mkFrame(sg,{Size=UDim2.new(0.9,0,0.85,0),Position=UDim2.new(0.5,0,0.5,0),AnchorPoint=Vector2.new(0.5,0.5),BackgroundColor3=Color3.fromRGB(25,90,185),ClipsDescendants=true,Active=true})
-	mkCorner(premPanel,20); mkStroke(premPanel,Color3.new(1,1,1),3)
-
-	local premHeader=mkFrame(premPanel,{Size=UDim2.new(1,0,0,65),BackgroundColor3=Color3.fromRGB(15,60,140)})
-	local premTitleLbl=mkLabel(premHeader,{Text="\xF0\x9F\x9B\x92 SHOP",Font=Enum.Font.GothamBold,TextSize=30,TextColor3=Color3.fromRGB(255,215,0),Size=UDim2.new(1,-60,0,40),Position=UDim2.new(0,14,0,5),TextXAlignment=Enum.TextXAlignment.Left,BackgroundTransparency=1})
-	mkStroke(premTitleLbl,Color3.new(0,0,0),2)
-	mkLabel(premHeader,{Text="Power up your farts!",Font=Enum.Font.Gotham,TextSize=14,TextColor3=Color3.new(1,1,1),Size=UDim2.new(1,-60,0,18),Position=UDim2.new(0,14,0,45),TextXAlignment=Enum.TextXAlignment.Left,BackgroundTransparency=1})
-	local premClose=mkButton(premHeader,{Size=UDim2.new(0,40,0,40),Position=UDim2.new(1,-48,0,12),BackgroundColor3=Color3.fromRGB(220,50,50),Text="\xe2\x9c\x95",Font=Enum.Font.GothamBold,TextSize=20,TextColor3=Color3.new(1,1,1)})
-	mkCorner(premClose,8)
-
-	local premScroll=Instance.new("ScrollingFrame")
-	premScroll.Name="PremiumScroll"; premScroll.BackgroundTransparency=1; premScroll.BorderSizePixel=0
-	premScroll.Position=UDim2.new(0,0,0,65); premScroll.Size=UDim2.new(1,0,1,-92)
-	premScroll.ScrollBarThickness=6; premScroll.ScrollBarImageColor3=Color3.fromRGB(255,215,0)
-	premScroll.CanvasSize=UDim2.new(0,0,0,0); premScroll.ScrollingDirection=Enum.ScrollingDirection.Y
-	premScroll.AutomaticCanvasSize=Enum.AutomaticSize.None; premScroll.Parent=premPanel
-	do
-		local sll=Instance.new("UIListLayout"); sll.FillDirection=Enum.FillDirection.Vertical
-		sll.HorizontalAlignment=Enum.HorizontalAlignment.Center; sll.Padding=UDim.new(0,10); sll.SortOrder=Enum.SortOrder.LayoutOrder; sll.Parent=premScroll
-		local slp=Instance.new("UIPadding"); slp.PaddingTop=UDim.new(0,8); slp.PaddingBottom=UDim.new(0,10); slp.Parent=premScroll
-		local function syncCanvas() premScroll.CanvasSize=UDim2.new(0,0,0, sll.AbsoluteContentSize.Y + 18) end
-		sll:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(syncCanvas); task.defer(syncCanvas)
-	end
-	local CARD_W, CARD_H = 208, 190
-	local function sectionHeader(text,order)
-		local h=mkFrame(premScroll,{Size=UDim2.new(1,-16,0,28),BackgroundTransparency=1,LayoutOrder=order})
-		mkLabel(h,{Text=text,Font=Enum.Font.GothamBold,TextSize=16,TextColor3=Color3.fromRGB(255,215,0),Size=UDim2.new(1,-8,0,22),Position=UDim2.new(0,4,0,0),TextXAlignment=Enum.TextXAlignment.Left})
-		mkFrame(h,{Size=UDim2.new(1,-8,0,2),Position=UDim2.new(0,4,0,25),BackgroundColor3=Color3.fromRGB(255,215,0)})
-		return h
-	end
-	local function mkSectionRow(order)
-		local row=mkFrame(premScroll,{Size=UDim2.new(1,-16,0,CARD_H),BackgroundTransparency=1,LayoutOrder=order})
-		local ll=Instance.new("UIListLayout"); ll.FillDirection=Enum.FillDirection.Horizontal
-		ll.HorizontalAlignment=Enum.HorizontalAlignment.Center; ll.VerticalAlignment=Enum.VerticalAlignment.Top
-		ll.Padding=UDim.new(0,18); ll.SortOrder=Enum.SortOrder.LayoutOrder; ll.Parent=row
-		return row
-	end
-	local function mkShopCard(parent,order)
-		local c=mkFrame(parent,{Size=UDim2.new(0,CARD_W,0,CARD_H),LayoutOrder=order,BackgroundColor3=Color3.fromRGB(20,70,160)})
-		mkCorner(c,16); mkStroke(c,Color3.new(1,1,1),2)
-		local holder=mkFrame(c,{Name="Content",Size=UDim2.new(1,0,1,0),BackgroundTransparency=1})
-		local hl=Instance.new("UIListLayout"); hl.FillDirection=Enum.FillDirection.Vertical
-		hl.HorizontalAlignment=Enum.HorizontalAlignment.Center; hl.VerticalAlignment=Enum.VerticalAlignment.Top
-		hl.Padding=UDim.new(0,3); hl.SortOrder=Enum.SortOrder.LayoutOrder; hl.Parent=holder
-		local hp=Instance.new("UIPadding"); hp.PaddingTop=UDim.new(0,18); hp.PaddingBottom=UDim.new(0,6); hp.PaddingLeft=UDim.new(0,8); hp.PaddingRight=UDim.new(0,8); hp.Parent=holder
-		return c
-	end
-	local function cH(card) return card:FindFirstChild("Content") or card end
-	local function cardIcon(card,txt)
-		mkLabel(cH(card),{Text=txt,Font=Enum.Font.Gotham,TextSize=40,TextColor3=Color3.new(1,1,1),Size=UDim2.new(1,0,0,42),LayoutOrder=1,RichText=false,TextXAlignment=Enum.TextXAlignment.Center,TextYAlignment=Enum.TextYAlignment.Center})
-	end
-	local function cardTitles(card,main,sub,subCol)
-		mkLabel(cH(card),{Text=main,Font=Enum.Font.GothamBold,TextSize=16,TextColor3=Color3.new(1,1,1),Size=UDim2.new(1,0,0,19),LayoutOrder=2,TextXAlignment=Enum.TextXAlignment.Center})
-		mkLabel(cH(card),{Text=sub,Font=Enum.Font.GothamBold,TextSize=12,TextColor3=subCol,Size=UDim2.new(1,0,0,15),LayoutOrder=3,TextXAlignment=Enum.TextXAlignment.Center})
-	end
-	local function cardPrice(card,price)
-		mkLabel(cH(card),{Text=price,Font=Enum.Font.GothamBold,TextSize=15,TextColor3=Color3.fromRGB(255,215,0),Size=UDim2.new(1,0,0,17),LayoutOrder=4,TextXAlignment=Enum.TextXAlignment.Center})
-	end
-	local function cardDesc(card,desc)
-		mkLabel(cH(card),{Text=desc,Font=Enum.Font.Gotham,TextSize=11,TextColor3=Color3.fromRGB(180,210,255),Size=UDim2.new(1,0,0,20),LayoutOrder=5,TextWrapped=true,TextXAlignment=Enum.TextXAlignment.Center,TextYAlignment=Enum.TextYAlignment.Top})
-	end
-	local function cardBuyBtn(card,col,txt,onClick)
-		local btn=mkButton(cH(card),{Size=UDim2.new(1,0,0,32),LayoutOrder=10,BackgroundColor3=col,Text=txt,Font=Enum.Font.GothamBold,TextSize=13,TextColor3=Color3.new(1,1,1)})
-		mkCorner(btn,8); btn.MouseButton1Click:Connect(onClick); return btn
-	end
-	sectionHeader("\xe2\xad\x90 GAMEPASSES",1)
-	local gamepassRow=mkSectionRow(2)
-
-	local card1=mkShopCard(gamepassRow,1)
-	local gpBadge=mkLabel(card1,{Text="BEST VALUE \xe2\xad\x90",Font=Enum.Font.GothamBold,TextSize=11,TextColor3=Color3.fromRGB(80,40,0),Size=UDim2.new(1,-16,0,16),Position=UDim2.new(0.5,0,0,3),AnchorPoint=Vector2.new(0.5,0),BackgroundColor3=Color3.fromRGB(255,180,0),TextXAlignment=Enum.TextXAlignment.Center,ZIndex=3})
-	mkCorner(gpBadge,6)
-	cardIcon(card1,"\xe2\x9a\xa1"); cardTitles(card1,"2x Power","FOREVER",Color3.fromRGB(100,220,100)); cardPrice(card1,"249 R$")
-	local btn1=cardBuyBtn(card1,Color3.fromRGB(255,180,0),"BUY GAMEPASS",function()
-		if _G.playerGamepasses and _G.playerGamepasses.twoXForever then return end
-		pcall(function() MPS:PromptGamePassPurchase(player,GAMEPASS_IDS.TwoXForever) end)
-	end)
-	mkStroke(btn1,Color3.fromRGB(200,130,0),2)
-
-	local card2=mkShopCard(gamepassRow,2)
-	cardIcon(card2,"\xe2\x9c\xa8"); cardTitles(card2,"Glitter Trail","PERMANENT",Color3.fromRGB(100,220,100)); cardPrice(card2,"49 R$")
-	cardBuyBtn(card2,Color3.fromRGB(220,80,180),"BUY GAMEPASS",function()
-		if _G.playerGamepasses and _G.playerGamepasses.glitterTrail then return end
-		pcall(function() MPS:PromptGamePassPurchase(player,GAMEPASS_IDS.GlitterTrail) end)
-	end)
-
-	local card3=mkShopCard(gamepassRow,3)
-	cardIcon(card3,"\xe2\x8f\xb0"); cardTitles(card3,"2x Power","1 HOUR",Color3.fromRGB(255,200,100)); cardPrice(card3,"59 R$")
-	local twoXShopTimer=mkLabel(cH(card3),{Text="",Font=Enum.Font.GothamBold,TextSize=11,TextColor3=Color3.fromRGB(100,220,100),Size=UDim2.new(1,-8,0,14),LayoutOrder=6,TextXAlignment=Enum.TextXAlignment.Center,Visible=false})
-	cardBuyBtn(card3,Color3.fromRGB(50,150,255),"BUY NOW",function() pcall(function() MPS:PromptProductPurchase(player,PRODUCT_IDS.TwoXOneHour) end) end)
-
-	sectionHeader("\xF0\x9F\x8E\xAF ONE-TIME ITEMS",3)
-	local productRow=mkSectionRow(4)
-
-	local card4=mkShopCard(productRow,1)
-	cardIcon(card4,"\xF0\x9F\x94\x8B"); cardTitles(card4,"Mid-Air","RECHARGE",Color3.fromRGB(100,220,100)); cardPrice(card4,"39 R$"); cardDesc(card4,"Refills gas to 100%!")
-	cardBuyBtn(card4,Color3.fromRGB(50,200,50),"BUY NOW",function() pcall(function() MPS:PromptProductPurchase(player,PRODUCT_IDS.MidAirRecharge) end) end)
-
-	local card5=mkShopCard(productRow,2)
-	cardIcon(card5,"\xF0\x9F\x8F\x9D\xEF\xB8\x8F"); cardTitles(card5,"Skip Island","ONE USE",Color3.fromRGB(255,200,100)); cardPrice(card5,"69 R$"); cardDesc(card5,"Jump to next island!")
-	cardBuyBtn(card5,Color3.fromRGB(255,140,0),"BUY NOW",function() pcall(function() MPS:PromptProductPurchase(player,PRODUCT_IDS.SkipIsland) end) end)
-
-	local card6=mkShopCard(productRow,3)
-	cardIcon(card6,"\xE2\x98\x84\xEF\xB8\x8F"); cardTitles(card6,"Meteorite Explosion","CHAOS MODE",Color3.fromRGB(255,140,80)); cardPrice(card6,"79 R$"); cardDesc(card6,"Rain meteorites down on everyone!")
-	cardBuyBtn(card6,Color3.fromRGB(232,108,40),"BUY NOW",function() pcall(function() MPS:PromptProductPurchase(player,PRODUCT_IDS.MeteoriteExplosion) end) end)
-
-	mkLabel(premPanel,{Text="Purchases support the game! Thank you! \xF0\x9F\x99\x8F",Font=Enum.Font.Gotham,TextSize=12,TextColor3=Color3.fromRGB(150,180,255),Size=UDim2.new(1,-20,0,18),Position=UDim2.new(0,10,1,-22),TextXAlignment=Enum.TextXAlignment.Center,BackgroundTransparency=1})
-
-	task.spawn(function()
-		while true do
-			task.wait(1)
-			local gp=_G.playerGamepasses
-			if gp and gp.twoXHourExpiry and gp.twoXHourExpiry>os.time() then
-				local rem=gp.twoXHourExpiry-os.time()
-				twoXShopTimer.Text="\xe2\x9a\xa1 Active: "..math.floor(rem/60).."m "..rem%60 .."s"
-				twoXShopTimer.Visible=true
-			else
-				twoXShopTimer.Visible=false
-			end
-		end
-	end)
-
-	premClose.MouseButton1Click:Connect(function() playUIClick(); PremiumShopGui.Enabled=false; _G.MainMenuManager.notifyClosed("Premium") end)
-
-	-- ===== match the Pet Hub: same 700x520 size + jungle chrome (olive panel, bamboo border, plaque header, glossy buttons) =====
-	premPanel.Size = UDim2.new(0,700,0,520); premPanel.Position = UDim2.new(0.5,0,0.5,-45); premPanel.AnchorPoint = Vector2.new(0.5,0.5)
-	task.spawn(function()
-		local okMod, JC = pcall(function() return require(game:GetService("ReplicatedStorage"):WaitForChild("DinosaurRealm"):WaitForChild("JungleChrome", 10)) end)
-		if not okMod or not JC then warn("[Bootstrap] JungleChrome missing -- premium shop keeps default style"); return end
-		JC.buildShell(PremiumShopGui)
-		JC.stylePanel(premPanel)
-		local subLbl; for _, c in ipairs(premHeader:GetChildren()) do if c:IsA("TextLabel") and c ~= premTitleLbl then subLbl = c; break end end
-		JC.plaqueHeader(premHeader, premTitleLbl, subLbl, premClose)
-		for _, v in ipairs(premPanel:GetDescendants()) do if v:IsA("TextButton") and v ~= premClose then JC.styleButton(v) end end
-		for _, v in ipairs(premScroll:GetDescendants()) do if v:IsA("Frame") and v.Size.Y.Offset >= 120 then v.BackgroundColor3 = Color3.fromRGB(34,74,40); local cs = v:FindFirstChildOfClass("UIStroke") or Instance.new("UIStroke"); cs.Color = Color3.fromRGB(22,44,26); cs.Thickness = 2; cs.Parent = v end end
-		print("[Bootstrap] premium shop chrome applied -- matches Pet Hub")
-	end)
-end
 
 --======================================================================
 -- 5b) STOMACH SHOP  (opened by the "Stomach" side button)
@@ -1019,7 +1483,7 @@ task.spawn(function()
 	local currentStomachLabel; local scrollFrame; local ttlIcon; local ttlIconImg
 	do
 		local stomachPanel=Instance.new("Frame"); stomachPanel.Size=UDim2.new(0,700,0,520)
-		stomachPanel.Position=UDim2.new(0.5,0,0.5,-45); stomachPanel.AnchorPoint=Vector2.new(0.5,0.5)
+		stomachPanel.Position=UDim2.new(0.5,0,0.5,-16); stomachPanel.AnchorPoint=Vector2.new(0.5,0.5)  -- HUB PARITY: -16 = the hub's on-screen panel spot in an inset-ignoring gui (no phone clipping)
 		stomachPanel.BackgroundColor3=Color3.fromRGB(30,120,220); stomachPanel.BorderSizePixel=0; stomachPanel.Active=true; stomachPanel.Parent=stomachShopGui
 		mkCorner(stomachPanel,20); mkStroke(stomachPanel,Color3.fromRGB(20,60,160),3)
 		if JC then pcall(function() JC.buildShell(stomachShopGui); JC.stylePanel(stomachPanel) end) end -- bamboo border + olive panel
@@ -1053,15 +1517,23 @@ task.spawn(function()
 		end
 	end
 
-	local tierDefs={
-		{name="Hatchling Belly", maxPower=100,  cost=0,      robux=false, emoji="\xF0\x9F\xA5\x9A"},
-		{name="Raptor Gut",      maxPower=182,  cost=1600,   robux=false, emoji="\xF0\x9F\xA6\x8E"},
-		{name="Stego Stomach",   maxPower=520,  cost=3000,   robux=false, emoji="\xF0\x9F\xA6\xB4"},
-		{name="Bronto Belly",    maxPower=1075, cost=5200,   robux=false, emoji="\xF0\x9F\xA6\x95"},
-		{name="Rex Gut",         maxPower=2146, cost=8000,   robux=false, emoji="\xF0\x9F\xA6\x96"},
-		{name="Fossil Gut",      maxPower=3218, cost=11000,  robux=false, emoji="\xF0\x9F\xAA\xA8"},
-		{name="Primal Gut",      maxPower=9999, cost=499,    robux=true,  emoji="\xF0\x9F\x8C\x8B"},
-	}
+	-- SHARED WITH THE SERVER, deliberately. This was a local copy, and Shop.server had its
+	-- own; they drifted to 1600 vs 112 for the Raptor Gut, and since the purchase handler
+	-- refused any price that did not match ITS table, every free gut became unbuyable with
+	-- no error anywhere. One table now, in ReplicatedStorage.
+	local StomachTiers = require(RS:WaitForChild("DinosaurRealm"):WaitForChild("StomachTiers"))
+	local IslandOrder  = require(RS:WaitForChild("DinosaurRealm"):WaitForChild("IslandOrder"))
+	local tierDefs = StomachTiers.LIST
+	-- How far up the tower this player has actually been. Guts are gated on it so nobody can
+	-- park on island 1 and buy their way to the summit -- see StomachTiers.isUnlocked.
+	local function reachedSlot()
+		return math.floor(tonumber(player:GetAttribute("HighestSlot")) or 1)
+	end
+	-- The name the lock should tell you to go and reach.
+	local function slotName(slot)
+		local isl = IslandOrder.SLOT_TO_ISLAND[slot]
+		return (isl and IslandOrder.NAMES[isl]) or ("Island " .. tostring(slot))
+	end
 	local BuyStomachEvent=RS:WaitForChild("BuyStomachEvent",30)
 	local StomachUpdateEvent=RS:WaitForChild("StomachUpdateEvent",30)
 
@@ -1087,10 +1559,14 @@ task.spawn(function()
 		gutWiggleTween = TweenService:Create(gutSideIcon, info, { Rotation = 8 })
 		gutWiggleTween:Play()
 	end
+	-- The cheapest gut this player could actually buy right now. UNLOCKED ones only: the
+	-- side button wiggles when this is affordable, and pointing it at a gut the server will
+	-- refuse would be an advert for a locked purchase.
 	local function nextCoinGutTier(curMax)
+		local reached = reachedSlot()
 		local best = nil
 		for _, t in ipairs(tierDefs) do
-			if (not t.robux) and t.cost > 0 and t.maxPower > curMax then
+			if (not t.robux) and t.cost > 0 and t.maxPower > curMax and StomachTiers.isUnlocked(t, reached) then
 				if (not best) or t.maxPower < best.maxPower then best = t end
 			end
 		end
@@ -1141,8 +1617,41 @@ task.spawn(function()
 			else buyBtn.BackgroundColor3=Color3.fromRGB(50,220,50); buyBtn.Text="\xF0\x9F\xAA\x99 "..tostring(tier.cost) end
 			buyBtn.Font=Enum.Font.FredokaOne; buyBtn.TextScaled=true; buyBtn.TextColor3=Color3.fromRGB(255,255,255); buyBtn.Parent=card
 			mkCorner(buyBtn,10); mkStroke(buyBtn,Color3.fromRGB(0,0,0),2); if JC then pcall(function() JC.styleButton(buyBtn) end) end
+			-- LOCKED / OWNED / BUYABLE, refreshed together.
+			--
+			-- The card used to only ever learn one thing (OWNED) and only from a 1-second poll.
+			-- A gut is now also LOCKED until you have reached the island it belongs to, and
+			-- that state changes the instant HighestSlot does -- so it is driven by the
+			-- attribute as well as the poll, and both go through the same function rather than
+			-- each writing the button's colours in their own way.
+			local UNLOCKED_COLOR, UNLOCKED_TEXT = buyBtn.BackgroundColor3, buyBtn.Text
+			local CARD_LIT, CARD_LOCKED = card.BackgroundColor3, Color3.fromRGB(74, 86, 58)
+			local locked = false
+			local function refreshCard()
+				local ls = player:FindFirstChild("leaderstats")
+				local sm = ls and ls:FindFirstChild("StomachMax")
+				if sm and tier.maxPower <= sm.Value then
+					locked = false
+					buyBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80); buyBtn.Text = "\xe2\x9c\x93 OWNED"
+					card.BackgroundColor3 = CARD_LIT
+					return
+				end
+				locked = not StomachTiers.isUnlocked(tier, reachedSlot())
+				if locked then
+					buyBtn.BackgroundColor3 = Color3.fromRGB(68, 74, 62)
+					buyBtn.Text = "\xF0\x9F\x94\x92 " .. slotName(tier.unlockSlot or 1)
+					card.BackgroundColor3 = CARD_LOCKED
+				else
+					buyBtn.BackgroundColor3 = UNLOCKED_COLOR; buyBtn.Text = UNLOCKED_TEXT
+					card.BackgroundColor3 = CARD_LIT
+				end
+			end
 			buyBtn.MouseButton1Click:Connect(function()
 				if tier.cost==0 then return end
+				-- Do not even fire when locked. The server refuses it anyway (a greyed button
+				-- is not a check), but firing would spend the click on nothing and give no
+				-- feedback -- the shake says "not yet" in the same language as "can't afford".
+				if locked then playErrorSound(); shakeButton(buyBtn); return end
 				if tier.robux then pcall(function() game:GetService("MarketplaceService"):PromptGamePassPurchase(player,1860686821) end)
 				elseif BuyStomachEvent then
 					local coinsVal, ownedMax = 0, 0
@@ -1160,28 +1669,24 @@ task.spawn(function()
 					pcall(function() BuyStomachEvent:FireServer(tier.maxPower, tier.cost) end)
 				end
 			end)
+			pcall(refreshCard)
+			player:GetAttributeChangedSignal("HighestSlot"):Connect(function() pcall(refreshCard) end)
 			task.spawn(function()
 				while true do
 					task.wait(1)
-					pcall(function()
-						local ls=player:FindFirstChild("leaderstats"); if not ls then return end
-						local sm=ls:FindFirstChild("StomachMax"); if not sm then return end
-						if tier.maxPower<=sm.Value then buyBtn.BackgroundColor3=Color3.fromRGB(80,80,80); buyBtn.Text="\xe2\x9c\x93 OWNED" end
-					end)
+					pcall(refreshCard)
 				end
 			end)
 		end
 	end
 
-	local stomachNames = {
-		[100]  = {"\xF0\x9F\xA5\x9A", "Hatchling Belly"},
-		[182]  = {"\xF0\x9F\xA6\x8E", "Raptor Gut"},
-		[520]  = {"\xF0\x9F\xA6\xB4", "Stego Stomach"},
-		[1075] = {"\xF0\x9F\xA6\x95", "Bronto Belly"},
-		[2146] = {"\xF0\x9F\xA6\x96", "Rex Gut"},
-		[3218] = {"\xF0\x9F\xAA\xA8", "Fossil Gut"},
-		[9999] = {"\xF0\x9F\x8C\x8B", "Primal Gut"},
-	}
+	-- maxPower -> {emoji, name} for the "Current: ..." readout. Derived from tierDefs (which
+	-- IS StomachTiers.LIST) rather than typed out again: this was a literal seven-row table
+	-- of the OLD tank sizes, and `if info then` means an unlisted size leaves the previous
+	-- gut's name and icon on screen -- so after the six->twelve retier, buying a Dilo would
+	-- have kept saying "Raptor Gut" and nothing would have complained.
+	local stomachNames = {}
+	for _, t in ipairs(tierDefs) do stomachNames[t.maxPower] = { t.emoji, t.name } end
 	if StomachUpdateEvent then
 		StomachUpdateEvent.OnClientEvent:Connect(function(newMax)
 			pcall(function()
@@ -1214,45 +1719,127 @@ end)
 
 --======================================================================
 -- 5c) MORE+ POPUP  (opened by the MORE+ side button)
---     Verbatim from CoreClient. The three entries fire the SAME events the real
---     game uses: Daily Rewards -> OpenMeteorCrate (CrateClient), Pets -> PetInvToggle
---     (PetFollow), Seasonal Pets -> openLocker. Those sub-systems must exist in the
---     world for the entries to DO something; otherwise each entry fires harmlessly.
+--     Three rows: Rebirth, Rewards, Pets. Each hands off to the system that owns
+--     it -- OpenRebirth / _G.toggleSocialRewards / _G.togglePetHub -- and warns
+--     rather than failing silently if that system is not loaded. Seasonal Pets and
+--     Season Pass were removed; Daily Rewards was merged into Rewards (its DAILY
+--     LOGIN section); Skin Crates moved INSIDE the Pet Hub (CRATES / TOKENS tabs).
 --======================================================================
 do
 	local moreGui = Instance.new("ScreenGui"); moreGui.Name = "MoreMenuGui"; moreGui.ResetOnSpawn = false
-	moreGui.DisplayOrder = 8; moreGui.Parent = PlayerGui
-	local catcher = mkButton(moreGui, { Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Text = "", ZIndex = 1, Visible = false })
-	local panel = mkFrame(moreGui, { Size = UDim2.new(0, 196, 0, 206), BackgroundColor3 = Color3.fromRGB(225, 70, 170), Visible = false, ZIndex = 2 })
-	mkCorner(panel, 14); mkStroke(panel, Color3.new(1, 1, 1), 2)
-	local pad = Instance.new("UIPadding", panel); pad.PaddingTop = UDim.new(0, 8); pad.PaddingBottom = UDim.new(0, 8); pad.PaddingLeft = UDim.new(0, 8); pad.PaddingRight = UDim.new(0, 8)
-	local hdr = mkFrame(panel, { Size = UDim2.new(1, 0, 0, 28), Position = UDim2.new(0, 0, 0, 0), BackgroundTransparency = 1, ZIndex = 2 })
-	mkLabel(hdr, { Text = "MORE", Font = Enum.Font.FredokaOne, TextSize = 18, TextColor3 = Color3.new(1, 1, 1), Size = UDim2.new(1, -32, 1, 0), Position = UDim2.new(0, 4, 0, 0), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3 })
-	local moreX = mkButton(hdr, { Size = UDim2.new(0, 26, 0, 26), Position = UDim2.new(1, -26, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5), BackgroundColor3 = Color3.fromRGB(210, 60, 55), Text = "X", Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = Color3.new(1, 1, 1), ZIndex = 3 })
-	mkCorner(moreX, 8)
+	-- DisplayOrder 9, not 8. Any stale second "MoreMenuGui" baked into the place also uses 8,
+	-- and at equal DisplayOrder the winner is whichever was created last -- so the old design
+	-- can render OVER this one. 9 makes this one win outright.
+	moreGui.DisplayOrder = 9; moreGui.Parent = PlayerGui
+	-- LOAD-BEARING. repositionGUIs force-sets TextScaled = true on every TextLabel under
+	-- PlayerGui. The dashboard is precise type -- 21px titles beside 13px descriptions --
+	-- so without this opt-out every label rescales to fill its frame and the hierarchy
+	-- collapses into same-size mush.
+	moreGui:SetAttribute("NoTextSweep", true)
+
+	-- Full-screen blocker so clicks can't reach the HUD behind the panel. It does NOT
+	-- close the menu: a stray tap anywhere on screen must not shut a panel you are
+	-- reading. The X button is the only way out.
+	local catcher = mkButton(moreGui, { Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Text = "", ZIndex = 1, Visible = false, Active = true })
+
+	-- 660x480 PANEL so the FINISHED MENU IS 700x520 -- the same footprint as the Pet Hub
+	-- and the Wormhole. The old 196x206 pop-out beside the rail button showed 3 of its rows
+	-- and buried the rest below the fold.
+	--
+	-- WHY NOT 700x520 LIKE THE OTHER TWO: this is the only one of the three wrapped in a
+	-- JungleChrome bamboo shell, and fitShell() below builds that shell at PANEL SIZE + 40
+	-- (20px of bamboo per side). At 700x520 the panel matched the hub on paper while
+	-- rendering as a 740x560 object -- visibly the odd one out, which is the whole thing
+	-- being fixed here. The number that has to match is the OUTER edge, so the panel gives
+	-- back exactly what the shell adds.
+	--
+	-- Change this and the shell follows automatically (fitShell is bound to Size), but the
+	-- 40 has to stay in step with the +40 below or the footprints drift apart again.
+	local panel = mkFrame(moreGui, { Size = UDim2.new(0, 660, 0, 480), Position = UDim2.new(0.5, 0, 0.5, -16), -- hub-parity screen spot (-45 equivalent in this inset-ignoring gui)
+		AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor3 = Color3.fromRGB(122, 142, 82),
+		Visible = false, Active = true, ZIndex = 2 })
+	mkCorner(panel, 20); mkStroke(panel, Color3.fromRGB(40, 52, 38), 3)
+	-- same jungle chrome the Stomach shop and Pet Hub use: bamboo shell behind the panel,
+	-- olive panel fill. Applied through the shared module so all three stay identical.
+	do
+		local okJC, JC = pcall(function()
+			return require(game:GetService("ReplicatedStorage"):WaitForChild("DinosaurRealm"):WaitForChild("JungleChrome", 10))
+		end)
+		if okJC and JC then pcall(function() JC.stylePanel(panel) end) end
+		-- The bamboo frame is REBUILT at the panel's real size, not resized.
+		--
+		-- buildShell() is hard-coded to 740x560 and pins its rocks and leaves at absolute
+		-- offsets (bottom row at y=544, corner knots at 724/544). Simply resizing that Frame
+		-- shrank the tan backing and left the stonework scattered around the old footprint --
+		-- a border wrapped around empty space. buildShellAround() lays the decoration out
+		-- from w/h instead, so it hugs whatever the panel currently is.
+		--
+		-- It also has to follow POSITION (this panel sits 45px above centre, buildShell
+		-- assumes dead centre) and VISIBILITY (the ScreenGui stays enabled while only
+		-- `panel.Visible` toggles, so an unbound shell sits on screen from join onward).
+		if okJC and JC and JC.buildShellAround then
+			local lastW, lastH
+			local function fitShell()
+				local w = panel.Size.X.Offset + 40   -- 20px of bamboo on every side
+				local h = panel.Size.Y.Offset + 40
+				if w ~= lastW or h ~= lastH then     -- only rebuild when the SIZE actually changed
+					lastW, lastH = w, h
+					pcall(function() JC.buildShellAround(moreGui, w, h) end)
+				end
+				local shell = moreGui:FindFirstChild("JungleShell")
+				if shell then
+					shell.AnchorPoint = panel.AnchorPoint
+					shell.Position    = panel.Position
+					shell.Visible     = panel.Visible
+				end
+			end
+			fitShell()
+			for _, prop in ipairs({ "Visible", "Size", "Position", "AnchorPoint" }) do
+				panel:GetPropertyChangedSignal(prop):Connect(fitShell)
+			end
+		end
+	end
+
+	local hdr = mkFrame(panel, { Size = UDim2.new(1, 0, 0, 72), BackgroundColor3 = Color3.fromRGB(26, 48, 30), ZIndex = 2 })
+	mkCorner(hdr, 20)
+	-- square patch over the header's bottom edge -- kills the lower rounding so the header
+	-- meets the body flush instead of showing two pink slivers
+	mkFrame(hdr, { Size = UDim2.new(1, 0, 0, 22), Position = UDim2.new(0, 0, 1, -22), BackgroundColor3 = Color3.fromRGB(26, 48, 30), BorderSizePixel = 0, ZIndex = 2 })
+	mkLabel(hdr, { Text = "MORE", Font = Enum.Font.FredokaOne, TextSize = 34, TextColor3 = Color3.fromRGB(255, 220, 0),
+		Size = UDim2.new(0, 300, 0, 38), Position = UDim2.new(0, 20, 0, 8), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3 })
+	mkLabel(hdr, { Text = "Everything else lives here", Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = Color3.fromRGB(232, 209, 158),
+		Size = UDim2.new(0, 300, 0, 16), Position = UDim2.new(0, 22, 0, 46), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3 })
+	local moreX = mkButton(hdr, { Size = UDim2.new(0, 40, 0, 40), Position = UDim2.new(1, -52, 0, 16),
+		BackgroundColor3 = Color3.fromRGB(210, 60, 55), Text = "X", Font = Enum.Font.FredokaOne, TextSize = 20,
+		TextColor3 = Color3.new(1, 1, 1), ZIndex = 3 })
+	mkCorner(moreX, 10); mkStroke(moreX, Color3.new(0, 0, 0), 2)
+	mkFrame(panel, { Size = UDim2.new(1, -40, 0, 2), Position = UDim2.new(0, 20, 0, 74),
+		BackgroundColor3 = Color3.fromRGB(160, 200, 120), BackgroundTransparency = 0.62, BorderSizePixel = 0, ZIndex = 3 })
 
 	local entryScroll = Instance.new("ScrollingFrame")
 	entryScroll.Name = "EntryList"
 	entryScroll.BackgroundTransparency = 1
 	entryScroll.BorderSizePixel = 0
-	entryScroll.Position = UDim2.new(0, 0, 0, 36)
-	entryScroll.Size = UDim2.new(1, 0, 1, -36)
+	entryScroll.Position = UDim2.new(0, 16, 0, 82)
+	entryScroll.Size = UDim2.new(1, -32, 1, -96)   -- 628 x 384 against the 660x480 panel
 	entryScroll.ScrollingDirection = Enum.ScrollingDirection.Y
 	entryScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-	entryScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-	entryScroll.ScrollBarThickness = 6
+	entryScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y  -- measured from the cards, which are
+	entryScroll.ScrollBarThickness = 6                      -- parented DIRECTLY here (no wrapper frame)
+	entryScroll.ScrollBarImageColor3 = Color3.fromRGB(255, 215, 0)
 	entryScroll.ClipsDescendants = true
 	entryScroll.ZIndex = 2
 	entryScroll.Parent = panel
-	local entryListLayout = Instance.new("UIListLayout", entryScroll); entryListLayout.SortOrder = Enum.SortOrder.LayoutOrder; entryListLayout.Padding = UDim.new(0, 8)
 
-	local crateReadyDots = {}
-	local function mkCrateDot(parent)
+	-- Two INDEPENDENT dot groups. Claiming the crate must not clear the tasks dot and vice
+	-- versa, so they are separate lists that happen to share one wiggle.
+	local crateReadyDots, taskPendingDots = {}, {}
+	local function mkDot(parent, group, xOff)
 		local dot = Instance.new("Frame")
-		dot.Name = "CrateReadyDot"
+		dot.Name = "ReadyDot"
 		dot.Size = UDim2.fromOffset(18, 18)
 		dot.AnchorPoint = Vector2.new(1, 0)
-		dot.Position = UDim2.new(1, -2, 0, -2)
+		dot.Position = UDim2.new(1, xOff or -2, 0, -2)
 		dot.BackgroundColor3 = Color3.fromRGB(225, 50, 50)
 		dot.ZIndex = 8
 		dot.Visible = false
@@ -1262,48 +1849,242 @@ do
 		bang.BackgroundTransparency = 1; bang.Size = UDim2.fromScale(1, 1)
 		bang.Font = Enum.Font.GothamBlack; bang.Text = "!"; bang.TextSize = 13
 		bang.TextColor3 = Color3.new(1, 1, 1); bang.ZIndex = 9; bang.Parent = dot
-		crateReadyDots[#crateReadyDots + 1] = dot
+		group[#group + 1] = dot
 		return dot
 	end
+	local function mkCrateDot(parent) return mkDot(parent, crateReadyDots, -2) end
 
-	local MORE_ENTRIES = {
-		{ label = "Stomachs", emoji = "\xF0\x9F\xA6\x95", action = function() toggleMainMenu("Stomach", "StomachShopGui") end }, -- gut upgrades
-		{ label = "Daily Rewards", emoji = "\xF0\x9F\x8E\x81", readyDot = true, action = function()
-			local ev = RSx:FindFirstChild("OpenMeteorCrate")
-			if not ev then ev = Instance.new("BindableEvent"); ev.Name = "OpenMeteorCrate"; ev.Parent = RSx end
-			ev:Fire()
-		end },
-		-- PETS. This is now the MAIN way into the Pet Hub from the HUD -- the LEFT sidebar
-		-- slot that used to hold the paw button is the STOMACH button now.
-		--
-		-- PetInvToggle is a BindableEvent that PetHub.client.luau creates under PlayerGui.
-		-- FindFirstChild would return nil if PetHub hasn't finished loading, and the old
-		-- code then did NOTHING -- a dead click with no feedback and nothing in the log.
-		-- WaitForChild with a short timeout closes that hole, and a warn makes a genuine
-		-- failure visible instead of silent.
-		{ label = "Pets", emoji = "\xF0\x9F\x90\xBE", action = function()
-			local ev = PlayerGui:FindFirstChild("PetInvToggle") or PlayerGui:WaitForChild("PetInvToggle", 5)
-			if ev then
-				ev:Fire()
-			else
-				warn("[Bootstrap] MORE+ -> Pets: PetInvToggle not found (is PetHub.client.luau running?)")
-			end
-		end },
-		{ label = "Seasonal Pets",  emoji = "\xF0\x9F\x90\xBE", action = function() if openLocker then openLocker() end end },
-	}
-	for i, e in ipairs(MORE_ENTRIES) do
-		local row = mkButton(entryScroll, { Size = UDim2.new(1, 0, 0, 46), BackgroundColor3 = e.color or Color3.fromRGB(248, 240, 250), Text = "", ZIndex = 2, LayoutOrder = i })
-		mkCorner(row, 10)
-		if e.readyDot then mkCrateDot(row) end
-		if e.image then
-			local im = Instance.new("ImageLabel"); im.BackgroundTransparency = 1; im.Image = e.image; im.ScaleType = Enum.ScaleType.Fit
-			im.Size = UDim2.new(0, 30, 0, 30); im.Position = UDim2.new(0, 8, 0.5, 0); im.AnchorPoint = Vector2.new(0, 0.5); im.ZIndex = 3; im.Parent = row
-		else
-			mkLabel(row, { Text = e.emoji or "", Font = Enum.Font.Gotham, TextSize = 22, Size = UDim2.new(0, 30, 1, 0), Position = UDim2.new(0, 8, 0, 0), TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 3 })
+	--------------------------------------------------------------------
+	-- CARD ICONS -- drawn, not typed.
+	--
+	-- These were emoji (ð etc.) rendered in Gotham, which has no glyphs for
+	-- them, so every icon came out as tofu boxes. Roblox only renders emoji from its colour
+	-- emoji font, and the UI fonts do not fall back to it -- so ANY emoji in a styled label
+	-- is a tofu risk. Drawn from Frames instead: no font dependency, crisp at any scale, and
+	-- no asset upload needed.
+	--
+	-- `mask` is the icon square's own fill, used to knock a gap out of the Rebirth ring.
+	--------------------------------------------------------------------
+	local ICON_INK = Color3.fromRGB(38, 30, 20)
+	local function drawCardIcon(parent, kind, mask)
+		local D = 62 -- the icon square is 62x62
+		local function box(w, h, x, y, col, radius, rot)
+			local f = mkFrame(parent, {
+				Size = UDim2.fromOffset(w, h), Position = UDim2.new(0.5, x, 0.5, y),
+				AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor3 = col or ICON_INK,
+				BorderSizePixel = 0, ZIndex = 7 })
+			if rot then f.Rotation = rot end
+			if radius then mkCorner(f, radius) end
+			return f
 		end
-		mkLabel(row, { Text = e.label, Font = Enum.Font.GothamBold, TextSize = 18, TextColor3 = Color3.fromRGB(70, 40, 65), Size = UDim2.new(1, -50, 1, 0), Position = UDim2.new(0, 46, 0, 0), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3 })
-		row.MouseButton1Click:Connect(function() playUIClick(); setMoreOpen(false); pcall(e.action) end)
+		local function ring(d, thick, col)
+			local f = mkFrame(parent, {
+				Size = UDim2.fromOffset(d, d), Position = UDim2.new(0.5, 0, 0.5, 0),
+				AnchorPoint = Vector2.new(0.5, 0.5), BackgroundTransparency = 1, ZIndex = 7 })
+			mkCorner(f, math.floor(d / 2)); mkStroke(f, col or ICON_INK, thick)
+			return f
+		end
+
+		if kind == "rebirth" then
+			-- a ring with a bite taken out, plus an arrowhead: the recycle/reset symbol
+			ring(34, 5)
+			box(14, 14, 11, -11, mask)                 -- mask the gap in the ring's top-right
+			box(13, 13, 10, -12, ICON_INK, 2, 45)      -- arrowhead (a rotated square)
+		elseif kind == "gift" then
+			box(34, 22, 0, 7, ICON_INK, 3)             -- the box
+			box(38, 9, 0, -6, ICON_INK, 2)             -- lid
+			box(6, 22, 0, 7, mask)                     -- vertical ribbon gap
+			box(9, 9, -6, -13, ICON_INK, 4)            -- bow, left loop
+			box(9, 9, 6, -13, ICON_INK, 4)             -- bow, right loop
+		elseif kind == "paw" then
+			box(22, 18, 0, 7, ICON_INK, 9)             -- main pad
+            for _, t in ipairs({ {-12,-6}, {-4,-12}, {5,-12}, {13,-6} }) do
+				box(9, 11, t[1], t[2], ICON_INK, 5)    -- four toes
+			end
+		elseif kind == "crate" then
+			box(36, 30, 0, 0, ICON_INK, 3)             -- the crate
+			box(36, 6, 0, -4, mask)                    -- tape across
+			box(6, 30, 0, 0, mask)                     -- tape down
+		elseif kind == "lock" then
+			box(22, 16, 0, 6, ICON_INK, 3)             -- body
+			ring(18, 4); box(20, 10, 0, 6, mask)       -- shackle, lower half masked off
+		elseif kind == "wormhole" then
+			-- a portal: concentric rings around a centre dot
+			ring(38, 4)
+			ring(22, 4)
+			box(8, 8, 0, 0, ICON_INK, 4)
+		end
 	end
+
+	--------------------------------------------------------------------
+	-- ENTRIES
+	--
+	-- `locked` marks a row whose backing system does not exist in this realm yet.
+	-- It is rendered greyed and refuses the click rather than being wired to a
+	-- guarded no-op -- a silent no-op looks identical to a working row until you
+	-- tap it, which is the single easiest way to ship a broken menu.
+	--------------------------------------------------------------------
+	local MORE_ENTRIES = {
+		{ order = 1, label = "Rebirth", desc = "Reset your progress for permanent multipliers.",
+		  tint = Color3.fromRGB(90, 200, 255), icon = "rebirth", action = function()
+			local rs = game:GetService("ReplicatedStorage")
+			local sig = rs:FindFirstChild("OpenRebirth")
+			if not sig then sig = Instance.new("BindableEvent"); sig.Name = "OpenRebirth"; sig.Parent = rs end
+			sig:Fire()
+		end },
+		-- REWARDS = the old "Daily Rewards" and "Free Rewards" rows, merged.
+		--
+		-- They were two rows for one habit, and the player had to already know they were
+		-- different menus. Daily Rewards had no panel of its own either -- it claimed the
+		-- crate outright -- so it now lives as the DAILY LOGIN section inside the rewards
+		-- panel (SocialRewards.client.luau) alongside the FREE REWARDS rows.
+		--
+		-- Both dot groups ride this single row: readyDot for the crate, tasksDot kept for a
+		-- daily-tasks system if one is ever added. They stay INDEPENDENT, so claiming the
+		-- crate cannot clear the other badge.
+		{ order = 2, label = "Rewards", desc = "Daily crate and free rewards, all in one place.",
+		  tint = Color3.fromRGB(255, 175, 45), icon = "gift", readyDot = true, tasksDot = true,
+		  action = function()
+			if _G.toggleSocialRewards then _G.toggleSocialRewards()
+			else warn("[Bootstrap] MORE+ -> Rewards: SocialRewards.client.luau not loaded") end
+		end },
+		-- WORMHOLE swapped in here from the left sidebar (the Pets button took its rail slot).
+		-- Same OpenWormhole BindableEvent the side button used to fire; get-or-create it so
+		-- the load order of the two client scripts never matters.
+		{ order = 3, label = "Wormhole", desc = "Travel between islands and realms.",
+		  tint = Color3.fromRGB(110, 90, 225), icon = "wormhole", action = function()
+			local rs = game:GetService("ReplicatedStorage")
+			local sig = rs:FindFirstChild("OpenWormhole")
+			if not sig then sig = Instance.new("BindableEvent"); sig.Name = "OpenWormhole"; sig.Parent = rs end
+			sig:Fire()
+		end },
+		-- Skin Crates card REMOVED from the HUD menu (by request): crates are reached
+		-- through the Pet Hub only -- its CRATES / TOKENS tabs route to
+		-- _G.toggleSkinCrates(true, tab). The crate panel itself is untouched.
+		-- Seasonal Pets and Season Pass removed. Seasonal Pets was never reachable here (its
+		-- locker lives inside the source game's CoreClient), and Season Pass is gone by
+		-- request. SeasonPass.client/server are still installed and still expose
+		-- _G.toggleSeasonPass -- nothing in the HUD calls it now.
+	}
+	table.sort(MORE_ENTRIES, function(a, b) return (a.order or 99) < (b.order or 99) end)
+
+	-- Sized against the 628x384 content box (panel 660x480, less 32 wide / 96 tall of inset):
+	--   columns  304 + 20 gutter + 304  = 628
+	--   4 cards  2 rows x 116 + 20      = 252, so there is room to spare
+	--
+	-- THESE TRACK THE PANEL WIDTH BY HAND. The cards are positioned in absolute pixels, so
+	-- they do NOT follow the panel the way the ScrollingFrame above does. When the panel
+	-- shrank from 700 to 660 (to make room for the bamboo shell and land the finished menu
+	-- on the hub's 700x520), 324+20+324 = 668 no longer fit in 628 and the right-hand column
+	-- ran off the edge. Move the panel and these two lines move with it or the columns break.
+	-- Positioned by hand rather than by a UIGridLayout, because the FULL_* path lets one
+	-- card span both columns and a grid cannot make one cell double-width.
+	-- NOTE nothing sets `full = true` any more (that was the Season Pass card), so FULL_W/
+	-- FULL_H/FULL_Y and the `e.full` branches below are currently unused. They are kept
+	-- because a future full-width row is one flag away; FULL_Y = 342 assumes SIX half-width
+	-- cards above it, so re-check it if you add one.
+	local CARD_W, CARD_H, GAP = 304, 116, 20 -- 2 x 304 + 20 = 628, the content box exactly (was 324, sized for the old 700 panel)
+	local FULL_W, FULL_H, FULL_Y = 628, 82, 342 -- FULL_W spans both columns; FULL_Y still assumes the old 424-tall box, so re-check it if a full-width card is ever re-enabled
+
+	local halfIdx = 0
+	for _, e in ipairs(MORE_ENTRIES) do
+		local w = e.full and FULL_W or CARD_W
+		local h = e.full and FULL_H or CARD_H
+		local cx, cy
+		if e.full then
+			cx, cy = FULL_W / 2, FULL_Y + h / 2
+		else
+			cx = (halfIdx % 2) * (CARD_W + GAP) + CARD_W / 2
+			cy = math.floor(halfIdx / 2) * (CARD_H + GAP) + h / 2
+			halfIdx += 1
+		end
+
+		-- anchored from the CENTRE so the hover scale grows evenly on all four sides
+		-- instead of shoving the card down and right
+		local row = mkButton(entryScroll, { Size = UDim2.fromOffset(w, h), Position = UDim2.fromOffset(cx, cy),
+			AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor3 = e.locked and Color3.fromRGB(88, 96, 70) or Color3.fromRGB(96, 116, 66),
+			Text = "", AutoButtonColor = false, ClipsDescendants = true, ZIndex = 3 })
+		mkCorner(row, 16); mkStroke(row, Color3.fromRGB(40, 52, 38), 2)
+
+		-- gloss: always on, this is what makes the tile read as a panel rather than a flat block
+		local gloss = mkFrame(row, { Size = UDim2.new(1, 0, 0.5, 0), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0, ZIndex = 4 })
+		mkCorner(gloss, 16)
+		do local g = Instance.new("UIGradient"); g.Rotation = 90
+			g.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.84), NumberSequenceKeypoint.new(1, 1) })
+			g.Parent = gloss end
+
+		-- shine: parked off the left edge, swept across on hover
+		local shine = mkFrame(row, { Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0, ZIndex = 5 })
+		mkCorner(shine, 16)
+		local shineGrad = Instance.new("UIGradient"); shineGrad.Rotation = 18
+		shineGrad.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.42, 1),
+			NumberSequenceKeypoint.new(0.5, 0.74), NumberSequenceKeypoint.new(0.58, 1),
+			NumberSequenceKeypoint.new(1, 1) })
+		shineGrad.Offset = Vector2.new(-1, 0); shineGrad.Parent = shine
+
+		local icon = mkFrame(row, { Size = UDim2.fromOffset(62, 62), Position = UDim2.new(0, 16, 0.5, 0),
+			AnchorPoint = Vector2.new(0, 0.5), BackgroundColor3 = e.locked and Color3.fromRGB(92, 96, 74) or e.tint, ZIndex = 6 })
+		mkCorner(icon, 14); mkStroke(icon, Color3.fromRGB(40, 52, 38), 2)
+		drawCardIcon(icon, e.icon, e.locked and Color3.fromRGB(92, 96, 74) or e.tint)
+
+		mkLabel(row, { Text = e.label, Font = Enum.Font.GothamBold, TextSize = 21,
+			TextColor3 = e.locked and Color3.fromRGB(196, 186, 150) or Color3.new(1, 1, 1),
+			Size = UDim2.new(0, w - 126, 0, 24), Position = UDim2.new(0, 92, 0, e.full and 14 or 18),
+			TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 6 })
+		mkLabel(row, { Text = e.locked and (e.lockNote or "Not in this realm yet.") or e.desc, Font = Enum.Font.Gotham, TextSize = 13,
+			TextColor3 = Color3.fromRGB(232, 209, 158),
+			Size = UDim2.new(0, w - 126, 0, e.full and 24 or 36), Position = UDim2.new(0, 92, 0, e.full and 42 or 44),
+			TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, TextWrapped = true, ZIndex = 6 })
+		mkLabel(row, { Text = "\xE2\x9D\xAF", Font = Enum.Font.FredokaOne, TextSize = 20,
+			TextColor3 = Color3.fromRGB(160, 200, 120), Size = UDim2.new(0, 24, 1, 0),
+			Position = UDim2.new(0, w - 34, 0, 0), ZIndex = 6 })
+
+		-- badges sit SIDE BY SIDE, not stacked -- they are independent, and stacking hid
+		-- whichever one drew second
+		if e.readyDot then mkDot(row, crateReadyDots, -10) end
+		if e.tasksDot then mkDot(row, taskPendingDots, -32) end
+
+		if not e.locked then
+			local scale = Instance.new("UIScale"); scale.Parent = row
+			row.MouseEnter:Connect(function()
+				TweenService:Create(scale, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1.03 }):Play()
+				shineGrad.Offset = Vector2.new(-1, 0)
+				TweenService:Create(shineGrad, TweenInfo.new(0.5), { Offset = Vector2.new(1, 0) }):Play()
+			end)
+			row.MouseLeave:Connect(function()
+				TweenService:Create(scale, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+			end)
+			row.MouseButton1Click:Connect(function() playUIClick(); setMoreOpen(false); pcall(e.action) end)
+		end
+	end
+
+	--------------------------------------------------------------------
+	-- SHRINK THE PANEL TO ITS CONTENT
+	--
+	-- The 700x520 box was authored for SEVEN rows. With four, the bottom ~210px was
+	-- dead space and the grid floated in the top half of an oversized panel. Measure
+	-- what was actually laid out and size the panel to header + grid + even padding.
+	--
+	-- Computed rather than hardcoded so this stays correct if rows are added or
+	-- removed later. The bamboo shell tracks panel.Size (see the fitShell binding
+	-- above), so it resizes with this instead of framing empty space.
+	--------------------------------------------------------------------
+	do
+		local halfCount, hasFull = 0, false
+		for _, e in ipairs(MORE_ENTRIES) do
+			if e.full then hasFull = true else halfCount += 1 end
+		end
+		local rows = math.ceil(halfCount / 2)
+		local gridH = rows > 0 and (rows * CARD_H + (rows - 1) * GAP) or 0
+		if hasFull then gridH = math.max(gridH, FULL_Y + FULL_H) end
+
+		local TOP = 82   -- header (72) + divider + breathing room, matches entryScroll's Y
+		local BOT = 38   -- HUB PARITY: with two 116px rows + 20px gutter this lands the panel at the hub's 700x372
+		entryScroll.Size = UDim2.new(1, -32, 0, gridH)
+		panel.Size = UDim2.new(0, 700, 0, TOP + gridH + BOT)
+	end
+
 	mkCrateDot(stomachSideFrame) -- "!" dot on the MORE+ button itself
 	local moreWiggling, moreWiggleTween = false, nil
 	local function stopMoreWiggle()
@@ -1322,31 +2103,32 @@ do
 	end
 	task.spawn(function()
 		while true do
-			local ready = (_G.crateIsClaimable and _G.crateIsClaimable()) == true
-			for _, d in ipairs(crateReadyDots) do d.Visible = ready end
-			if ready then startMoreWiggle() else stopMoreWiggle() end
+			-- two independent predicates feeding two independent dot groups; either one
+			-- wiggles the rail button
+			local ready   = (_G.crateIsClaimable  and _G.crateIsClaimable())  == true
+			local pending = (_G.dailyTasksPending and _G.dailyTasksPending()) == true
+			for _, d in ipairs(crateReadyDots)  do d.Visible = ready end
+			for _, d in ipairs(taskPendingDots) do d.Visible = pending end
+			if ready or pending then startMoreWiggle() else stopMoreWiggle() end
 			task.wait(1)
 		end
 	end)
 
+	-- No repositioning: the panel is centred, so it opens in the same place regardless of
+	-- where repositionGUIs left the rail button on this device.
 	setMoreOpen = function(open)
 		moreOpenState = open and true or false
-		if moreOpenState then
-			local ap, asz = stomachSideFrame.AbsolutePosition, stomachSideFrame.AbsoluteSize
-			panel.Position = UDim2.fromOffset(ap.X + asz.X + 10, ap.Y) -- appears just to the RIGHT of the MORE+ button
-			panel.Visible = true; catcher.Visible = true
-		else
-			panel.Visible = false; catcher.Visible = false
-		end
+		panel.Visible = moreOpenState
+		catcher.Visible = moreOpenState
 	end
-	catcher.MouseButton1Click:Connect(function() setMoreOpen(false) end)
+	-- deliberately NO catcher click-to-close: a stray tap must not shut the panel
 	moreX.MouseButton1Click:Connect(function() playUIClick(); setMoreOpen(false) end)
 end
 
 -- (Pets inventory is the full Pet Hub built in PetHub.client.luau. The LEFT sidebar's
---  Pets button was replaced by STOMACH, so the Pet Hub is now reached via its OWN paw
---  button -- bottom-left, built in PetHub.client.luau -- or via MORE+ -> Pets. Both fire
---  the same PetInvToggle BindableEvent, so nothing was orphaned by the swap.)
+--  Pets button was replaced by STOMACH, so the Pet Hub is reached via MORE+ -> Pets,
+--  which calls _G.togglePetHub (with the PetInvToggle BindableEvent as a fallback).
+--  Skin Crates open from INSIDE the hub -- its CRATES / TOKENS tabs.)
 
 --======================================================================
 -- TOP-MIDDLE: current island name + current task (stacked)
@@ -1411,8 +2193,8 @@ do
 	local nameBar = mkFrame(holder,{Name="IslandName",Size=UDim2.fromOffset(300,42),Position=UDim2.new(0.5,0,0,0),AnchorPoint=Vector2.new(0.5,0),BackgroundColor3=WOOD_DARK,ZIndex=3})
 	mkCorner(nameBar,14); mkStroke(nameBar,Color3.fromRGB(40,26,14),3)
 	glossGradient(nameBar, WOOD_DARK); addShadow(nameBar,14); addInnerHighlight(nameBar,14)
-	addVineCorner(nameBar, UDim2.new(0,4,0,3), 1, 1, 16, 6)
-	addVineCorner(nameBar, UDim2.new(1,-4,1,-3), -1, -1, 14, 6)
+	-- Foliage removed. On a 300x42 bar the two corner vines ate both ends of the island
+	-- name, which is the one thing this banner exists to show.
 	local nameLbl = mkLabel(nameBar,{Name="Text",Text="Nesting Nook",TextColor3=Color3.new(1,1,1),TextScaled=true,Size=UDim2.new(1,-56,1,-8),Position=UDim2.fromScale(0.5,0.5),AnchorPoint=Vector2.new(0.5,0.5),TextXAlignment=Enum.TextXAlignment.Center,BackgroundTransparency=1,ZIndex=20})
 	styleText(nameLbl)
 	do local c=Instance.new("UITextSizeConstraint"); c.MaxTextSize=26; c.Parent=nameLbl end
@@ -1511,7 +2293,7 @@ local playerGui = player:WaitForChild("PlayerGui")
 -- These MUST stay identical to the server bundle (DailyRewards_Server) — both sides roll/clamp the same.
 local Constants = {
 	CRATE = {
-		COOLDOWN_SECONDS = 21600, -- 6 hours between free claims
+		COOLDOWN_SECONDS = 28800, -- 8 hours between free claims
 		FALLBACK_COINS = 500,     -- coins when every owned pet is maxed
 		PET_MAX_LEVEL = 25,
 		RARITY_WEIGHTS = { Uncommon = 55, Rare = 28, Epic = 13, Mythical = 4 },
@@ -1613,6 +2395,7 @@ end)
 
 -- ===== sounds (pcall-guarded, 5s Debris cleanup) =====
 local function playSound(id, volume)
+	if not id then return end -- a nil id means "no sound" (used to disable SND_TAP in the daily-rewards crate)
 	pcall(function()
 		local s = Instance.new("Sound")
 		s.SoundId = "rbxassetid://" .. tostring(id)
@@ -1623,7 +2406,7 @@ local function playSound(id, volume)
 	end)
 end
 
-local SND_TAP        = 103794849233173 -- tap/open attempt; button presses (vol 0.6)
+local SND_TAP        = nil             -- disabled: no tap/eat sound in the daily-rewards crate (was 103794849233173)
 local SND_SHAKE      = 9116367700       -- meteor shake begins (vol 0.5)
 local SND_CRACK      = 199578212        -- cracks form (vol 0.6)
 local SND_BURST      = 1837709104       -- burst, non-Legendary (vol 0.85)
@@ -2033,54 +2816,35 @@ local function freshReveal()
 	return closeReveal
 end
 
--- playMeteor(big, onDone): the OPENING animation — meteor shake -> cracks -> burst — then onDone().
--- `big` = larger Mythical-style burst + the heavier burst sound.
-local function playMeteor(big, onDone)
-	local meteor = Instance.new("Frame")
-	meteor.AnchorPoint = Vector2.new(0.5, 0.5)
-	meteor.Position = UDim2.fromScale(0.5, 0.5)
-	meteor.Size = UDim2.fromOffset(170, 170)
-	meteor.BackgroundColor3 = Color3.fromRGB(70, 64, 58)
-	meteor.ZIndex = 4
-	meteor.Parent = revealGui
-	local mc = Instance.new("UICorner"); mc.CornerRadius = UDim.new(0, 28); mc.Parent = meteor
-	local ms = Instance.new("UIStroke"); ms.Color = Color3.fromRGB(40, 36, 32); ms.Thickness = 4; ms.Parent = meteor
-
-	task.spawn(function()
-		-- 1) meteor shake
-		playSound(SND_SHAKE, 0.5)
-		local base = meteor.Position
-		for _ = 1, 16 do
-			meteor.Position = base + UDim2.fromOffset(math.random(-7, 7), math.random(-7, 7))
-			task.wait(0.045)
-		end
-		meteor.Position = base
-
-		-- 2) cracks form
-		playSound(SND_CRACK, 0.6)
-		for i = 1, 4 do
-			local crack = Instance.new("Frame")
-			crack.AnchorPoint = Vector2.new(0.5, 0.5)
-			crack.Position = UDim2.fromScale(0.5, 0.5)
-			crack.Size = UDim2.fromOffset(6, 0)
-			crack.Rotation = i * 40 - 80
-			crack.BackgroundColor3 = Color3.fromRGB(255, 220, 120)
-			crack.ZIndex = 5
-			crack.Parent = meteor
-			TweenService:Create(crack, TweenInfo.new(0.2), { Size = UDim2.fromOffset(6, 170) }):Play()
-			task.wait(0.12)
-		end
-		task.wait(0.15)
-
-		-- 3) burst
-		if big then playSound(SND_BURST_LEG, 0.85) else playSound(SND_BURST, 0.85) end
-		playBurst(big)
-		meteor:Destroy()
-
-		-- 4) hand off to whatever shows next (picker / claim / result card)
-		task.wait(0.25)
-		onDone()
+-- MeteorBreak: the shared meteor-crate OPENING animation (shake -> cracks -> burst; burst sound 4612378364),
+-- extracted verbatim from the Space Realm. Guarded require so a missing/unsynced module can't break the crate.
+local MeteorBreak
+do
+	local ok, mod = pcall(function()
+		return require(game:GetService("ReplicatedStorage"):WaitForChild("DinosaurRealm"):WaitForChild("MeteorBreak", 10))
 	end)
+	MeteorBreak = ok and mod or nil
+	if not MeteorBreak then
+		warn("[CrateClient] MeteorBreak module NOT found in ReplicatedStorage.DinosaurRealm — the crate will open "
+			.. "straight to the reward with no meteor animation. Add MeteorBreak.luau (rojo: src/shared/MeteorBreak.luau).")
+	end
+end
+
+-- playMeteor(big, onDone): the OPENING animation shown BEFORE the reward — now the shared MeteorBreak module's
+-- exact meteor shake -> cracks -> burst. At the burst it hands off to onDone (which shows the reward on
+-- revealGui) and tears down the MeteorBreak overlay so the reward reveal shows.
+local function playMeteor(big, onDone)
+	if MeteorBreak then
+		MeteorBreak.play({
+			isLegendary = big and true or false,
+			onReward = function()
+				task.spawn(onDone)   -- reward reveal (picker / result card) lives on revealGui
+				MeteorBreak.close()  -- fade + clear the MeteorBreak overlay so the reward shows
+			end,
+		})
+	else
+		task.spawn(onDone) -- fallback: skip the animation, go straight to the reward
+	end
 end
 
 -- showResultCard(result, closeReveal): ensure the pet's name is known, then build the result card
@@ -2524,7 +3288,7 @@ local function showPicker(pets, roll, closeReveal, onPick)
 	-- verbatim: 700 x 520 fixed, centered, nudged up 45px) + the SAME adaptive UIScale factor the shops
 	-- get via _G.applyHudScaling — so it opens at identical dimensions and scale. (DisplayOrder 100.) ---
 	local panel = mk("Frame", revealGui, {
-		Name = "PetPicker", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0.5, -45),
+		Name = "PetPicker", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0.5, -16),  -- hub-parity screen spot (no phone clipping)
 		Size = UDim2.new(0, 700, 0, 520), BackgroundColor3 = C.panel, ZIndex = 10,
 	})
 	corner(panel, 24)
@@ -2536,22 +3300,17 @@ local function showPicker(pets, roll, closeReveal, onPick)
 		PaddingTop = UDim.new(0, 24), PaddingBottom = UDim.new(0, 22),
 		PaddingLeft = UDim.new(0, 22), PaddingRight = UDim.new(0, 22),
 	})
-	-- adaptive UIScale: the SAME factor ShopClient/_G.applyHudScaling applies, min(vp.X/1280, vp.Y/720, 1),
-	-- kept in sync with the viewport so the panel tracks the shops across screen sizes.
+	-- adaptive UIScale: ride the SAME getScale() ResponsiveUI applies to the HUD and every other menu
+	-- (1.0 desktop / ~0.60 phone / ~1.07 iPad, with NO per-cluster extra) so the Pet Picker opens at
+	-- the shops' exact scale. ResponsiveUI publishes getScale() as the LocalPlayer "ResponsiveScale"
+	-- attribute on mobile; on desktop it's unset so we stay at 1.0. (Was: hardcoded
+	-- min(vp.X/1280, vp.Y/720, 1), which gave ~0.517 on phone instead of 0.60 and mis-sized on iPad.)
 	local uiScale = mk("UIScale", panel, { Scale = 1 })
 	local function applyShopScale()
-		local cam = workspace.CurrentCamera
-		local vp = cam and cam.ViewportSize or Vector2.new(1280, 720)
-		uiScale.Scale = math.min(vp.X / 1280, vp.Y / 720, 1)
+		uiScale.Scale = player:GetAttribute("ResponsiveScale") or 1
 	end
 	applyShopScale()
-	do
-		local cam = workspace.CurrentCamera
-		if cam then
-			local cc = cam:GetPropertyChangedSignal("ViewportSize"):Connect(applyShopScale)
-			panel.Destroying:Connect(function() cc:Disconnect() end)
-		end
-	end
+	player:GetAttributeChangedSignal("ResponsiveScale"):Connect(applyShopScale)
 
 	-- inner content FILLS the panel (header pinned top, list fills the middle, footer pinned bottom —
 	-- the shop layout). The token pill floats top-right as a separate child of `panel`.

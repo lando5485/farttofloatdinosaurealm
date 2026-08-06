@@ -227,4 +227,48 @@ end
 task.defer(refreshAll)
 task.delay(0.3, refreshAll)
 
+-- ===== HUB-PARITY PHONE NUDGES (measured against the main hub at viewport 734x372) =====
+-- One-time position deltas, PHONE ONLY (desktop returned early above):
+--  * RightPanel/STATS: the hub renders its RightPanel top at absY=-16 with an 8px right gap; ours (authored
+--    y=85 in an inset-ignoring gui) landed at absY=27 with a 5px gap. Up 43, left 3.
+--  * Left rail: the hub's buttons land at (12,8) on a 61px pitch; our cluster scales about (0,0) which drags
+--    them to (7,0) on a 64px pitch. Nudge the cluster +5,+8 (its own position is unscaled by its UIScale) and
+--    retighten the button pitch to 101 authored (= the hub's 61 on screen at 0.6).
+task.spawn(function()
+	local function findRightPanel()
+		local sg = PlayerGui:FindFirstChild("RightPanelGui")
+		return sg and sg:FindFirstChild("RightPanel")
+	end
+	local t0 = os.clock()
+	local rightPanel, cluster
+	while os.clock() - t0 < 10 and not (rightPanel and cluster) do
+		rightPanel = rightPanel or findRightPanel()
+		if not cluster then
+			local sb = PlayerGui:FindFirstChild("SidebarGui")
+			cluster = sb and sb:FindFirstChildWhichIsA("Frame")
+		end
+		if rightPanel and cluster then break end
+		task.wait(0.25)
+	end
+	if rightPanel then
+		rightPanel.Position = rightPanel.Position + UDim2.fromOffset(-3, -43)
+		print("[UIScale] PHONE RightPanel nudged to the hub's spot (top -16, right gap 8)")
+	end
+	if cluster then
+		cluster.Position = cluster.Position + UDim2.fromOffset(5, 8)
+		-- Retighten the four 95x95 buttons to the hub's phone pitch (96/197/298/399 authored = 61px on screen).
+		local btns = {}
+		for _, c in ipairs(cluster:GetChildren()) do
+			if c:IsA("GuiObject") and c.Size.X.Offset == 95 and c.Size.Y.Offset == 95 then
+				btns[#btns + 1] = c
+			end
+		end
+		table.sort(btns, function(a, b) return a.Position.Y.Offset < b.Position.Y.Offset end)
+		for i, b in ipairs(btns) do
+			b.Position = UDim2.new(0, b.Position.X.Offset, 0, 96 + (i - 1) * 101)
+		end
+		print("[UIScale] PHONE left rail nudged to the hub's spot (buttons land at 12,8; 61px pitch)")
+	end
+end)
+
 print("[UIScale] PHONE branch — global responsive scale + device safe-area insets applied to all HUD ScreenGuis.")

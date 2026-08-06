@@ -53,8 +53,19 @@ function M.play(pos, shellColor)
 		Debris:AddItem(shard, 0.8)
 	end
 
-	-- 5) pop sound (pcall-safe)
-	pcall(function() local snd = Instance.new("Sound"); snd.SoundId = "rbxassetid://92880640988467"; snd.Volume = 2.5; snd.Parent = fx; snd:Play() end)
+	-- 5) egg-opening / pop sound. Lives on its OWN holder part (not `fx`, which is
+	-- cleaned up at 1.3s) so it always plays to the very END -- it is no longer cut
+	-- off the instant the egg has fully hatched. Cleaned up when the sound finishes.
+	pcall(function()
+		local holder = Instance.new("Part"); holder.Name = "HatchSound"
+		holder.Anchored = true; holder.CanCollide = false; holder.CanQuery = false
+		holder.CastShadow = false; holder.Transparency = 1; holder.Size = Vector3.new(1,1,1)
+		holder.CFrame = CFrame.new(pos); holder.Parent = Workspace
+		local snd = Instance.new("Sound"); snd.SoundId = "rbxassetid://92880640988467"; snd.Volume = 2.5; snd.Parent = holder
+		snd.Ended:Connect(function() holder:Destroy() end)
+		Debris:AddItem(holder, 15) -- safety cap in case .Ended never fires
+		snd:Play()
+	end)
 end
 
 return M

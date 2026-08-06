@@ -1,8 +1,9 @@
 --======================================================================
 -- BurritoDig_AllInOne.client.lua  (LocalScript)
 --======================================================================
--- EXACTLY how Burrito Barrens (island 13) does its DIGGING quest + animation,
--- lifted VERBATIM from buildBurritoWorld (PetFollow.client.lua). Self-contained:
+-- RUNS ON island3 -- FOSSIL FRONTIER (tower slot 5). The name is provenance, not
+-- location: the mechanic was lifted VERBATIM from the Food Realm's Burrito Barrens
+-- (buildBurritoWorld in PetFollow.client.lua) and repointed here. Self-contained:
 -- it lays the props out in front of you at runtime and runs the whole hunt.
 --
 -- THE QUEST (a ~3-minute hunt):
@@ -10,7 +11,9 @@
 --      rides on your right hand, blade pointed down-forward.
 --   2. DIG the mounds, ONE AT A TIME (the "Armadillo Trail"). Each E-tap = one
 --      SWING: the mound SHRINKS a step (ScaleTo), bursts dirt, plays a dig sound,
---      and kicks the camera. 6 swings fully digs a mound.
+--      and kicks the camera. 11 swings fully digs a mound, and the prompt goes
+--      cold for 1.5s after each one -- so a mound is a FLAT 15 seconds of work
+--      no matter how hard the player mashes E (see PickupFloor).
 --   3. A fully-dug DECOY reveals JUNK that RISES out of the hole + lays ARMADILLO
 --      TRACKS toward the NEXT mound (which then appears). 5 decoys, then...
 --   4. The final BuriedEggSpot reveals the real ARMADILLO EGG, which RISES up out
@@ -29,7 +32,10 @@ local RunService = game:GetService("RunService")
 local TS         = game:GetService("TweenService")
 local RS         = game:GetService("ReplicatedStorage")
 local Debris     = game:GetService("Debris")
-local HatchBurst = require(RS:WaitForChild("DinosaurRealm"):WaitForChild("HatchBurst")) -- shared cool hatch FX
+local HatchBurst   = require(RS:WaitForChild("DinosaurRealm"):WaitForChild("HatchBurst"))   -- shared cool hatch FX
+local ChevronTrail = require(RS:WaitForChild("DinosaurRealm"):WaitForChild("ChevronTrail")) -- shared ground chevron guide
+local DoneCommand  = require(RS:WaitForChild("DinosaurRealm"):WaitForChild("DoneCommand"))  -- "/done" -> skip to the reward egg
+local PickupFloor  = require(RS:WaitForChild("DinosaurRealm"):WaitForChild("PickupFloor")) -- the 15s-per-collectible floor
 
 local player = Players.LocalPlayer
 local petId  = "BurritoArmadillo"
@@ -229,7 +235,28 @@ local function buildBurritoWorld(positions)
 	player.CharacterAdded:Connect(function() task.wait(0.4); equipFreshShovel() end) -- re-give after respawn (Backpack resets)
 	print("[Pet] shovel TOOL given by the Digger -- dig the mounds now")
 
-	local N_SWINGS = 6 -- E-taps ("swings") to fully dig a mound away
+	-- FORCED CADENCE (PickupFloor pattern 2). Each mound used to be six E-taps with
+	-- HoldDuration 0, so a mashing player cleared one in about a second and the whole
+	-- six-stop Armadillo Trail collapsed into a walk. The prompt is now disabled for
+	-- SWING_COOLDOWN after every swing, which makes N_SWINGS x cooldown the floor --
+	-- extra presses inside the cooldown do literally nothing.
+	--
+	-- 11 swings, 1.5s apart = 15s per mound. The first swing starts the clock, hence
+	-- cadence() solving for (N - 1) gaps. 11 taps over 15s is ~0.73/sec, comfortably
+	-- inside the ~2.7/sec mobile ceiling.
+	--
+	-- WAS 16 SWINGS (1.0s apart) -- cut 30% by request, to 11.
+	--
+	-- THIS DID NOT MAKE THE MOUND FASTER, and that is cadence() working as designed:
+	-- it solves the cooldown for a FIXED PickupFloor.SECONDS floor, so dropping the
+	-- swing count just widens the gap between swings (1.0s -> 1.5s) and a mound is
+	-- still a flat 15 seconds. What changed is the TAPPING -- 30% fewer presses for
+	-- the same stretch of work. To make the dig genuinely shorter, the floor is the
+	-- lever, not this number: pass a seconds override, e.g.
+	--     PickupFloor.cadence(N_SWINGS, 10.5)   -- 30% off the 15s floor too
+	-- which is exactly how island 1's Lost Eggs run short (PickupFloor.ISLAND1_EGG_SECONDS).
+	local N_SWINGS = 11
+	local SWING_COOLDOWN = PickupFloor.cadence(N_SWINGS)
 	-- a dug-up JUNK item RISES out of the decoy hole (in-world reveal), holds, then fades
 	local function junkRise(pos, junkName)
 		local j = newPart(Workspace, petId.."DugJunk", Enum.PartType.Ball, Vector3.new(1.3,1.3,1.3), Color3.fromRGB(232,224,202), CFrame.new(pos + Vector3.new(0, -3.0, 0)), Enum.Material.SmoothPlastic)
@@ -248,6 +275,15 @@ local function buildBurritoWorld(positions)
 	local function spawnArmadilloEgg(atPos)
 		if st.egg then return end
 		st.eggPos = atPos; st.eggCaught = true
+
+		-- same green chevron runway island1 / island11 use. The egg rises out of the hole
+		-- you just dug, so usually you're already on top of it and the trail draws nothing
+		-- (it hides within 12 studs) -- but if you wander off, it leads you straight back.
+		ChevronTrail.guideToEgg(
+			function() return atPos end,
+			function() return st.owns end,
+			"You found the egg! Press E to hatch it!"
+		)
 		local egg = Instance.new("Model"); egg.Name = petId.."Egg"
 		local visual = Instance.new("Model"); visual.Name = "Visual"; visual.Parent = egg
 		local shell = newPart(visual, "Shell", Enum.PartType.Ball, Vector3.new(1,1,1), Color3.fromRGB(224,194,148), nil)
@@ -284,6 +320,7 @@ local function buildBurritoWorld(positions)
 		end)
 		print("[Pet] armadillo egg rose out of the ground for "..player.Name)
 	end
+	st.spawnEgg = spawnArmadilloEgg -- handle for the /done command (bound at the bottom of this file)
 
 	-- ===== ARMADILLO TRAIL: low-poly dirt mounds dug ONE AT A TIME =====
 	local DIRT, DIRT2 = Color3.fromRGB(150,110,70), Color3.fromRGB(134,96,58)
@@ -377,6 +414,15 @@ local function buildBurritoWorld(positions)
 					if hum then hum.CameraOffset = Vector3.new((math.random()-0.5)*0.5, -0.35, 0); TS:Create(hum, TweenInfo.new(0.18), {CameraOffset = Vector3.zero}):Play() end
 				end)
 				print(string.format("[Pet][DIG] swing %d/%d on %s", swings, N_SWINGS, spot.label))
+				-- ARM THE COOLDOWN -- this is what the floor actually is.
+				-- Re-enabled behind the SAME guard activateStep uses (plus this mound's own
+				-- `done`), because otherwise a mound finished -- or the whole quest completed --
+				-- during the wait would quietly re-arm its own prompt.
+				prompt.Enabled = false
+				task.delay(SWING_COOLDOWN, function()
+					if done or st.owns or st.eggCaught then return end
+					prompt.Enabled = true
+				end)
 				if swings >= N_SWINGS then -- mound fully dug -> reveal + advance the trail
 					done = true; prompt.Enabled = false
 					if activeBeacon then pcall(function() activeBeacon:Destroy() end); activeBeacon = nil end -- clear the beacon
@@ -524,7 +570,12 @@ local function makePositions()
 	-- shovel barrel RIGHT BY the Digger NPC so the player grabs it straight after the chat
 	local npc = Workspace:FindFirstChild("DigMiner")
 	if npc then
-		local pv = npc:GetPivot()
+		-- NpcLife turns the Digger to face the player, so his LIVE LookVector points wherever you happen
+		-- to be standing -- barrel four studs that way could be inside a rock or off the island. "NpcHome"
+		-- is the resting pose NpcLife captured before it took him over; it is nil until then, at which
+		-- point the live pivot has not been touched and is the right answer anyway.
+		local home = npc:GetAttribute("NpcHome")
+		local pv = (typeof(home) == "CFrame") and home or npc:GetPivot()
 		extra.shovel = ground(pv.Position + pv.LookVector * 4)
 	else
 		extra.shovel = ground(ordered[1].Position + Vector3.new(6, 0, 0))
@@ -563,26 +614,32 @@ else
 	print("[BurritoDig] waiting for the island3 Digger NPC to grant the dig quest...")
 end
 
--- ===== /done : instantly unlock the Velociraptor (skip the digging) -- follower + Pet Hub card =====
-local function grantRaptorNow()
-	if st.owns then return end
-	st.owns = true
-	if st.shovelTool then pcall(function() st.shovelTool:Destroy() end); st.shovelTool = nil end -- put the shovel away
-	local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-	local at = hrp and (hrp.CFrame * CFrame.new(0, 0, -6)) or CFrame.new(0, 8, 0)
-	if _G.SpawnRaptorFollower then pcall(function() _G.SpawnRaptorFollower(at) end) end
-	if _G.PetHubAddPet then pcall(function() _G.PetHubAddPet("RaptorPet", { petId="RaptorPet", displayName="Velociraptor", level=1, xp=0, xpNeed=100, maxLevel=25, milestone="Newly hatched!" }) end) end
-	do local rh = game:GetService("ReplicatedStorage"):FindFirstChild("RaptorHatched"); if rh then pcall(function() rh:FireServer() end) end end -- server grant -> Pet Hub card
-	if PetDigEvent then pcall(function() PetDigEvent:FireServer(petId) end) end
-	floatText((hrp and hrp.Position or Vector3.zero) + Vector3.new(0,4,0), "Velociraptor unlocked! \xF0\x9F\xA6\x96")
-	print("[BurritoDig] /done -> Velociraptor granted (follower + Pet Hub)")
-end
-local function onRaptorChat(text)
-	if text and string.gsub(string.lower(text), "%s", "") == "/done" then grantRaptorNow() end
-end
-player.Chatted:Connect(onRaptorChat)
-pcall(function()
-	game:GetService("TextChatService").SendingMessage:Connect(function(m) onRaptorChat(m.Text) end)
+-- ===== /done : skip the digging and UNEARTH THE EGG (so you still hatch it yourself) =====
+--
+-- This used to grant the Velociraptor OUTRIGHT -- follower + Pet Hub card, no egg, nothing
+-- to hatch. That skipped the actual payoff. Now it does what /done does everywhere else:
+-- it spawns the reward EGG in front of you, with its Hatch prompt, and you press E.
+--
+-- It also used to have NO island check, so typing /done anywhere in the game -- on the
+-- volcano, in the swamp -- silently handed you the Raptor. DoneCommand gates it to
+-- island3, so each island's /done only completes that island's quest.
+task.spawn(function()
+	local island3 = Workspace:WaitForChild("island3", 60)
+	if not island3 then return end
+	DoneCommand.bind(island3, "BurritoDig", function()
+		if st.owns or st.egg then return end
+		if st.shovelTool then pcall(function() st.shovelTool:Destroy() end); st.shovelTool = nil end -- put the shovel away
+		if PetDigEvent then pcall(function() PetDigEvent:FireServer(petId) end) end -- server unlocks the claim (anti-cheat gate)
+		pushQuestProg(petId, { complete = true })
+
+		local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+		local at = hrp and (hrp.Position + hrp.CFrame.LookVector * 6) or Vector3.new(0, 8, 0)
+		if st.spawnEgg then
+			st.spawnEgg(at) -- the real egg + its Hatch prompt + the chevron guide
+		else
+			warn("[BurritoDig] /done: the dig world isn't built yet (talk to the Digger first)")
+		end
+	end)
 end)
 
 -- ============================================================================

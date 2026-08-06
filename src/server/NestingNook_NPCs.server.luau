@@ -3,14 +3,17 @@
 -- Wires the "Nesting Nook" quest onto the user's existing models:
 --   * dino1  - the baby dino, moved onto the DinoPlacement marker
 --   * miner  - the quest giver, left where it sits
--- Each LostEgg (spawned by NestingNook_Setup) gets a "Take Egg" ProximityPrompt
--- that returns it to the nest in a ring. Shared state lives in
+-- Each LostEgg (spawned by NestingNook_Setup) gets a "Rock Egg Free" ProximityPrompt.
+-- That prompt does NOT hand the egg over -- it starts a 15s minigame on the client
+-- (NestingNookEggs.client.luau) over the EggCarry remote, and only a claim that comes
+-- back no sooner than the floor returns the egg to the nest ring. Shared state lives in
 -- ReplicatedStorage.NestingNook so both scripts stay in sync.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
+local PickupFloor = require(ReplicatedStorage:WaitForChild("DinosaurRealm"):WaitForChild("PickupFloor")) -- the 15s-per-collectible floor
 -- wait for IslandLayout to space the islands first, so NPCs/spawns land at the NEW island positions
 do local t0 = os.clock(); while not _G.islandsPositioned and os.clock() - t0 < 5 do task.wait() end end
 
@@ -53,8 +56,36 @@ else
 	questGate = re
 end
 
+-- EggCarry: the pickup floor for the LostEggs (see DinosaurRealm/PickupFloor). Island 1
+-- runs ISLAND1_EGG_SECONDS = 10.5s, 30% short of the game-wide 15s standard.
+--
+-- Taking an egg used to be ONE prompt trigger -- five free grabs, and island1's whole
+-- quest was a walk. It now opens a client minigame (NestingNookEggs.client.luau): the
+-- server fires this remote to START one, and the client fires it back when the rocking
+-- is finished.
+--
+-- The client declares success, so the SERVER keeps the clock. carryStartedAt records
+-- when each egg's minigame was handed out, and a claim that comes back faster than the
+-- floor is refused. That means the floor holds even against a client that skips the UI --
+-- the panel is the presentation, this table is the rule.
+local eggCarry: RemoteEvent
+local existingCarry = folder:FindFirstChild("EggCarry")
+if existingCarry and existingCarry:IsA("RemoteEvent") then
+	eggCarry = existingCarry
+else
+	local re = Instance.new("RemoteEvent")
+	re.Name = "EggCarry"
+	re.Parent = folder
+	eggCarry = re
+end
+
+-- [player][egg] = os.clock() when that egg's minigame was handed out
+local carryStartedAt: { [Player]: { [Instance]: number } } = {}
+local CARRY_TOLERANCE = 0.5 -- seconds of slack for latency + frame jitter
+
 Players.PlayerRemoving:Connect(function(plr)
 	questClaimed[plr] = nil
+	carryStartedAt[plr] = nil
 end)
 
 ----------------------------------------------------------------------
@@ -69,6 +100,21 @@ local function getSize(obj: Instance): Vector3
 		return size
 	end
 	return Vector3.new(2, 2, 2)
+end
+
+-- The read half of setPivot below. This file had setPivot and getSize but NEVER
+-- getPivot, and the EggCarry claim handler calls it for the distance check -- so
+-- every completed egg died on "attempt to call a nil value". It went unnoticed
+-- because the rocking minigame could not finish either (it tested `fill >= 1`
+-- against a value clamped to a ceiling it could only ever REACH), so the claim
+-- never got that far. Fixing the minigame is what exposed this.
+local function getPivot(obj: Instance): CFrame
+	if obj:IsA("BasePart") then
+		return obj.CFrame
+	elseif obj:IsA("Model") then
+		return obj:GetPivot()
+	end
+	return CFrame.new()
 end
 
 local function setPivot(obj: Instance, cf: CFrame)
@@ -267,12 +313,24 @@ local function makeNameLabel(adornee: BasePart, text: string, size: UDim2?, worl
 	bb.Parent = adornee
 end
 
+-- The name tag and the speech bubble fight for the same patch of screen: the name
+-- sits at +3 studs and the bubble at +5.5, and the bubble is 150px tall, so its
+-- lower edge lands right on top of the name. Hide the name for as long as the NPC
+-- is actually talking, and put it back the moment the bubble goes.
+local function setNameVisible(adornee: BasePart, visible: boolean)
+	local nl = adornee:FindFirstChild("NameLabel")
+	if nl and nl:IsA("BillboardGui") then
+		nl.Enabled = visible
+	end
+end
+
 -- Rounded white speech bubble that auto-hides after SPEECH_LIFETIME seconds.
 local function hideSpeech(adornee: BasePart)
 	local prev = adornee:FindFirstChild("SpeechBubble")
 	if prev then
 		prev:Destroy()
 	end
+	setNameVisible(adornee, true)
 end
 
 -- Show a speech bubble. If `persist` is true it stays until replaced/hidden
@@ -343,12 +401,17 @@ local function showSpeech(adornee: BasePart, text: string, persist: boolean?, fo
 	end
 
 	bb.Parent = adornee
+	setNameVisible(adornee, false)   -- talking now: get the name out from under the bubble
 
 	-- Auto-hide unless this is a persistent (paged) bubble.
 	if not persist then
 		task.delay(SPEECH_LIFETIME, function()
+			-- the Parent/Name guard keeps this from destroying a NEWER bubble that
+			-- replaced ours, so the name is only restored when OUR bubble is the one
+			-- still up -- otherwise a fresh line would lose its name-hiding
 			if bb and bb.Parent == adornee and bb.Name == "SpeechBubble" then
 				bb:Destroy()
+				setNameVisible(adornee, true)
 			end
 		end)
 	end
@@ -369,16 +432,42 @@ end
 -- Locate the DinoPlacement marker (BasePart, name contains "dino" + "plac")
 ----------------------------------------------------------------------
 
+-- SEARCH ISLAND1 FIRST. This is the NESTING NOOK dino -- it belongs on island1.
+--
+-- This used to scan all of Workspace and take the first "dino*plac*" it hit. The moment
+-- a 'dinoplacement' part appeared on island6 (for the Redwood raptors), that one won the
+-- race and the Mama Dino was built 14,000 studs up on Redwood Ridge:
+--     Placed dino1 on DinoPlacement marker Workspace.island6.island6.dinoplacement
+--     ground = 14182.256          <- island6's altitude, not island1's
+-- ...which quietly removes the Mama Dino from the island1 quest entirely.
+--
+-- Scoping to island1 first makes that impossible; the Workspace-wide scan is only a
+-- last resort now, and it says so out loud when it fires.
 local function findDinoMarker(): BasePart?
-	for _, desc in ipairs(Workspace:GetDescendants()) do
-		if desc:IsA("BasePart") then
-			local n = string.lower(desc.Name)
-			if string.find(n, "dino", 1, true) and string.find(n, "plac", 1, true) then
-				return desc
+	local function scan(root: Instance?): BasePart?
+		if not root then return nil end
+		for _, desc in ipairs(root:GetDescendants()) do
+			if desc:IsA("BasePart") then
+				local n = string.lower(desc.Name)
+				if string.find(n, "dino", 1, true) and string.find(n, "plac", 1, true) then
+					return desc
+				end
 			end
 		end
+		return nil
 	end
-	return nil
+
+	local island1 = Workspace:FindFirstChild("island1")
+	local onIsland1 = scan(island1)
+	if onIsland1 then return onIsland1 end
+
+	local anywhere = scan(Workspace)
+	if anywhere then
+		warn(("[NestingNook] no DinoPlacement marker on island1 -- falling back to '%s'. "
+			.. "The Mama Dino belongs on island1; add a 'DinoPlacement' part there.")
+			:format(anywhere:GetFullName()))
+	end
+	return anywhere
 end
 
 ----------------------------------------------------------------------
@@ -942,22 +1031,42 @@ end
 -- Wire the Talk prompts (attached to the real models)
 ----------------------------------------------------------------------
 
+-- These prompts are now CREATED if the model doesn't already have one.
+--
+-- They used to only be FOUND (`FindFirstChildWhichIsA`), and if the model had no
+-- ProximityPrompt sitting in it in Studio, the wiring was SILENTLY SKIPPED -- no error,
+-- no warning. For the miner that is fatal: talking to him is the only thing that sets
+-- questClaimed[player], and onEggTaken() refuses EVERY egg pickup without it. So a
+-- missing prompt on the miner = the island1 eggs can never be collected, with nothing
+-- in the log to say why.
 if babyAdornee then
 	local babyPrompt = babyAdornee:FindFirstChildWhichIsA("ProximityPrompt")
-	if babyPrompt then
-		wireDialogue(babyPrompt, babyAdornee, dinoPages)
+	if not babyPrompt then
+		babyPrompt = addPrompt(babyAdornee, "Talk", "Mama Dinosaur")
+		print("[NestingNook] dino1 had no ProximityPrompt -> created one")
 	end
+	wireDialogue(babyPrompt, babyAdornee, dinoPages)
+	print("[NestingNook] Mama Dino talk prompt wired.")
 end
 
 if archAdornee then
 	local archPrompt = archAdornee:FindFirstChildWhichIsA("ProximityPrompt")
-	if archPrompt then
-		-- Talking to the miner ("the Researcher") claims the quest for that player.
-		wireDialogue(archPrompt, archAdornee, minerPages, function(player)
-			questClaimed[player] = true
-			player:SetAttribute("NestingNookQuestClaimed", true) -- replicates to the client HUD
-		end)
+	if not archPrompt then
+		archPrompt = addPrompt(archAdornee, "Talk", "Researcher")
+		print("[NestingNook] miner had no ProximityPrompt -> created one")
 	end
+	-- Talking to the miner ("the Researcher") claims the quest for that player.
+	-- WITHOUT THIS, NO EGG ON ISLAND1 CAN BE PICKED UP (see onEggTaken's gate).
+	wireDialogue(archPrompt, archAdornee, minerPages, function(player)
+		questClaimed[player] = true
+		player:SetAttribute("NestingNookQuestClaimed", true) -- replicates to the client HUD
+		print(("[NestingNook] %s talked to the Researcher -> quest CLAIMED, eggs are now collectable")
+			:format(player.Name))
+	end)
+	print("[NestingNook] Researcher (miner) talk prompt wired -> talking to him unlocks egg pickup.")
+else
+	warn("[NestingNook] NO MINER FOUND -> the quest can never be claimed and the LostEggs "
+		.. "can NEVER be picked up. Island1 needs a model named 'miner'.")
 end
 
 ----------------------------------------------------------------------
@@ -1047,19 +1156,38 @@ local function setupIslandQuestNPC(islandName, npcName, title, pages, onTalk)
 			if d:IsA("BasePart") and d.Name == "Spawn" then spawn = d; break end
 		end
 	end
-	-- find the NPC marker. Accepts "NPCSpot<N>" OR "Island<N>NPC" (exact), then any island part whose
-	-- name contains "npc" and the island number (e.g. "Island8NPC", "NPCSpot5", "npc8").
+	-- Find the NPC marker. Search order (ISLAND-SCOPED FIRST -- a marker sitting on THIS
+	-- island always beats a same-named one somewhere else):
+	--   1. exact "NPCSpot<N>" / "Island<N>NPC" on this island
+	--   2. any part on this island named "...npc..." AND containing the island number
+	--   3. any part on this island named "...npc..." at all  <-- catches a marker whose
+	--      number is stale (e.g. AshWarden moved island8 -> island11, so its marker may
+	--      still be called "NPCSpot8"), or one just named "NPCSpot" / "npc".
+	--   4. exact name anywhere in Workspace (last resort)
 	local num = islandName:gsub("island", "")
 	local npcSpot = island:FindFirstChild("NPCSpot" .. num, true) or island:FindFirstChild("Island" .. num .. "NPC", true)
-		or Workspace:FindFirstChild("NPCSpot" .. num, true) or Workspace:FindFirstChild("Island" .. num .. "NPC", true)
 	if not (npcSpot and npcSpot:IsA("BasePart")) then
 		npcSpot = nil
+		local anyNpcPart -- step 3 candidate: has "npc" in the name but the wrong/no number
 		for _, d in ipairs(island:GetDescendants()) do
 			if d:IsA("BasePart") then
 				local n = d.Name:lower()
-				if n:find("npc", 1, true) and n:find(num, 1, true) then npcSpot = d; break end
+				if n:find("npc", 1, true) then
+					if n:find(num, 1, true) then npcSpot = d; break end -- step 2: exact number match wins
+					if not anyNpcPart then anyNpcPart = d end            -- step 3: remember the first
+				end
 			end
 		end
+		if not npcSpot and anyNpcPart then
+			npcSpot = anyNpcPart
+			warn(("[IslandNPC] %s: no 'NPCSpot%s' on %s -- using the marker '%s' found on that island instead. "
+				.. "Rename it to 'NPCSpot%s' to silence this.")
+				:format(npcName, num, islandName, anyNpcPart.Name, num))
+		end
+	end
+	if not (npcSpot and npcSpot:IsA("BasePart")) then -- step 4: anywhere in Workspace
+		npcSpot = Workspace:FindFirstChild("NPCSpot" .. num, true) or Workspace:FindFirstChild("Island" .. num .. "NPC", true)
+		if npcSpot and not npcSpot:IsA("BasePart") then npcSpot = nil end
 	end
 	local model = src:Clone()
 	model.Name = npcName
@@ -1071,16 +1199,31 @@ local function setupIslandQuestNPC(islandName, npcName, title, pages, onTalk)
 	-- else (no marker AND no spawn pad) fall back to the island centre so the NPC
 	-- always appears (e.g. island4 has a lake but no spawn pad / NPCSpot4 marker).
 	local spotX, spotZ, refY
+	local placedBy
 	if npcSpot then
 		spotX, spotZ, refY = npcSpot.Position.X, npcSpot.Position.Z, npcSpot.Position.Y
+		placedBy = ("marker '%s'"):format(npcSpot.Name)
 		print(("[IslandNPC] %s using marker '%s' at (%.0f,%.0f,%.0f)"):format(npcName, npcSpot.Name, npcSpot.Position.X, npcSpot.Position.Y, npcSpot.Position.Z))
-		pcall(function() npcSpot.Transparency = 1; npcSpot.CanCollide = false; npcSpot.CanQuery = false end) -- ghost the marker
+		-- GHOST THE MARKER so the placement block is never visible in-game.
+		-- Handles a Model marker too (ghost every BasePart inside it), not just a Part.
+		pcall(function()
+			if npcSpot:IsA("BasePart") then
+				npcSpot.Transparency = 1; npcSpot.CanCollide = false; npcSpot.CanQuery = false; npcSpot.CanTouch = false
+			end
+			for _, d in ipairs(npcSpot:GetDescendants()) do
+				if d:IsA("BasePart") then
+					d.Transparency = 1; d.CanCollide = false; d.CanQuery = false; d.CanTouch = false
+				end
+			end
+		end)
 	elseif spawn then
 		spotX, spotZ, refY = spawn.Position.X + 6, spawn.Position.Z + 6, spawn.Position.Y
+		placedBy = "the island spawn pad (~6 studs away)"
 	else
 		local bcf, bsize = island:GetBoundingBox()
 		spotX, spotZ, refY = bcf.Position.X, bcf.Position.Z, bcf.Position.Y + bsize.Y / 2
-		print(("[IslandNPC] %s: no spawn/marker on %s -> placing at island centre (%.0f,%.0f,%.0f). "
+		placedBy = "the island CENTRE (no marker!)"
+		warn(("[IslandNPC] %s: no spawn/marker on %s -> placing at island centre (%.0f,%.0f,%.0f). "
 			.. "Add a part named 'NPCSpot%s' on the island to set an exact spot.")
 			:format(npcName, islandName, spotX, refY, spotZ, num))
 	end
@@ -1091,9 +1234,22 @@ local function setupIslandQuestNPC(islandName, npcName, title, pages, onTalk)
 	local here = Vector3.new(spotX, refY, spotZ)
 	local rotation = ((faceTarget - here).Magnitude > 0.1) and CFrame.lookAt(here, faceTarget).Rotation or CFrame.new()
 	local rp = RaycastParams.new(); rp.FilterType = Enum.RaycastFilterType.Exclude
-	local excl = { model }; if spawn then excl[#excl+1] = spawn end; rp.FilterDescendantsInstances = excl
+	local excl = { model }; if spawn then excl[#excl+1] = spawn end
+	if npcSpot then excl[#excl+1] = npcSpot end -- never land ON the marker we're standing at
+	rp.FilterDescendantsInstances = excl
 	local hit = Workspace:Raycast(Vector3.new(spotX, refY + 40, spotZ), Vector3.new(0, -400, 0), rp)
 	local groundY = hit and hit.Position.Y or refY
+	-- WHEN WE HAVE A MARKER, THE MARKER WINS. Only let the ray settle the NPC onto the
+	-- surface if it broadly agrees with the marker. If the island's mesh isn't
+	-- raycast-queryable, the ray punches THROUGH the island and hits whatever is below,
+	-- which would bury the NPC ~200 studs underground (this is exactly what happened to
+	-- the island11 geysers). Clamping to the marker makes that impossible: worst case
+	-- the NPC stands precisely where the marker is.
+	if npcSpot and math.abs(groundY - refY) > 15 then
+		warn(("[IslandNPC] %s: ground ray landed %.0f studs from the marker (fell through the island?) -> standing AT the marker instead")
+			:format(npcName, groundY - refY))
+		groundY = refY
+	end
 	placeModelBottomAt(model, spotX, spotZ, groundY, rotation)
 
 	local adornee = pickAdornee(model)
@@ -1107,7 +1263,7 @@ local function setupIslandQuestNPC(islandName, npcName, title, pages, onTalk)
 		plr:SetAttribute(acceptAttr, true)
 		if onTalk then onTalk(plr) end
 	end)
-	print(("[IslandNPC] %s (Researcher) placed ~6 studs from the %s spawn point; talk sets %s."):format(npcName, islandName, acceptAttr))
+	print(("[IslandNPC] %s (Researcher) on %s placed by %s; talk sets %s."):format(npcName, islandName, placedBy, acceptAttr))
 end
 
 -- One quest-giver per island that has a spawn point (dialogue matches that island's quest).
@@ -1129,7 +1285,9 @@ local ISLAND_NPCS = {
 	} },
 	{ island = "island6", name = "RidgeWarden", title = "The Warden", pages = {
 		"Welcome to Redwood Ridge.",
-		"Watch out for raptors in the woods.",
+		"Five raptors prowl these woods.",
+		"Only ONE is hiding a secret egg.",
+		"Grab a sniper and hunt them down to find it!",
 	} },
 	{ island = "island7", name = "RaptorScout", title = "The Scout", pages = {
 		"This is Raptor Ridge.",
@@ -1138,7 +1296,7 @@ local ISLAND_NPCS = {
 		"Carry it back and feed the nest -- 5 pieces.",
 		"Do it, and a baby raptor will hatch for you!",
 	} },
-	{ island = "island8", name = "AshWarden", title = "The Ash Warden", pages = {
+	{ island = "island11", name = "AshWarden", title = "The Ash Warden", pages = {
 		"The volcano is about to blow!",
 		"Six geysers are building up pressure.",
 		"Plug every geyser to stop the eruption!",
@@ -1152,10 +1310,22 @@ end
 -- Put the player spawn on a chosen island AT THE SPAWN BLOCK THE USER PLACED there: find that block
 -- (a SpawnLocation, else a part named "Spawn"), put an invisible non-colliding spawn at its EXACT spot,
 -- and disable every other spawn so the player always spawns there.
-local function putSpawnOnIsland(islandName, label)
+-- `enabled` = may Roblox actually spawn players here on join.
+--
+-- ONLY ISLAND 1 MAY BE TRUE, and that is not a style choice: Roblox picks a RANDOM
+-- enabled Neutral SpawnLocation, so two enabled pads means a coin-flip start. Every
+-- other island gets its pad built and left DISABLED -- it exists as a POSITION ANCHOR
+-- that the Wormhole and the death-return read, not as a Roblox spawn point.
+local function putSpawnOnIsland(islandName, label, enabled)
 	local island = Workspace:FindFirstChild(islandName)
 	if not island then warn(("[Spawn] %s not found -- cannot place the %s spawn"):format(islandName, label)); return end
 	local cf, size, src
+	-- placedHow records which branch below actually decided the position, because `src` alone
+	-- cannot tell you: island7 and island1 both set `cf` WITHOUT setting `src`, so the old
+	-- `src and ... or ...` chain fell through to "no spawn block -> island centre" for them.
+	-- island7's own line said "placed ~16 studs from the RaptorScout" one line above the
+	-- summary claiming it went to the island centre -- two contradictory logs for one spawn.
+	local placedHow
 	-- island7: spawn a short way from the RaptorScout (the island7 "miner"), FACING him (body + camera)
 	if islandName == "island7" then
 		local npc = Workspace:FindFirstChild("RaptorScout", true) or Workspace:FindFirstChild("Island7NPC", true)
@@ -1170,6 +1340,7 @@ local function putSpawnOnIsland(islandName, label)
 			local y = (hit and hit.Position.Y or npcPos.Y) + 3
 			cf = CFrame.lookAt(Vector3.new(sx, y, sz), Vector3.new(npcPos.X, y, npcPos.Z)) -- face the NPC
 			size = Vector3.new(6, 1, 6)
+			placedHow = "(16 studs from the RaptorScout, facing him)"
 			print("[Spawn] island7 spawn placed ~16 studs from the RaptorScout, facing him")
 		end
 	end
@@ -1200,17 +1371,97 @@ local function putSpawnOnIsland(islandName, label)
 	local sp = Instance.new("SpawnLocation")
 	sp.Name = islandName .. "Spawn"; sp.Size = size; sp.CFrame = cf
 	sp.Anchored = true; sp.CanCollide = false; sp.CanQuery = false; sp.CanTouch = false
-	sp.Transparency = 1; sp.Neutral = true; sp.Duration = 0; sp.Enabled = true
+	sp.Transparency = 1; sp.Neutral = true; sp.Duration = 0; sp.Enabled = (enabled == true)
 	sp.Parent = island
 	if src then pcall(function() src:Destroy() end) end -- remove the user's visible spawn block
-	print(("[Spawn] %s '%s' spawn placed at the user's spawn block %s; other spawns disabled")
-		:format(islandName, label, src and "(found)" or "(NOT found -> centre)"))
+	-- NOTE: island1's pad is destroyed earlier (the miner is placed on it) and reused
+	-- from _G.island1SpawnCF, so `src` is nil there even though we did NOT fall back to
+	-- the centre. Report what actually happened instead of guessing from `src`.
+	local how = placedHow
+		or (src and "(user's spawn block)")
+		or (islandName == "island1" and _G.island1SpawnCF and "(reused the original island1 pad)")
+		or "(no spawn block -> island centre)"
+	print(("[Spawn] %s '%s' spawn placed %s; all other spawns disabled")
+		:format(islandName, label, how))
 end
--- disable every existing spawn ONCE, then place an invisible spawn on each chosen island
+-- ALWAYS START ON ISLAND 1.
+-- Roblox picks a RANDOM enabled (Neutral) SpawnLocation, so the only way to
+-- guarantee island1 is to leave exactly ONE enabled spawn in the whole Workspace.
+-- We disable every existing spawn, then place a single enabled one on island1.
+--
+-- (This used to enable spawns on island6 / island8 / island9 and NONE on island1,
+--  so players spawned at random on 6, 8 or 9 and never on island1.)
+--------------------------------------------------------------------
+-- GHOST EVERY SPAWN PAD: invisible + non-colliding.
+--------------------------------------------------------------------
+-- This used to ONLY do `d.Enabled = false`. That stops a pad SPAWNING you, but it stays
+-- VISIBLE AND SOLID -- so every island's original spawn block was still sitting there as
+-- a big block you could see and walk into. Kill the visuals and the collision too.
+--
+-- Decals/Textures are destroyed as well: setting a part's Transparency to 1 does NOT
+-- hide a Decal on its face, so the classic Roblox spawn-pad graphic would otherwise
+-- still be painted in mid-air.
+local function ghostSpawn(sp: BasePart)
+	sp.Transparency = 1
+	sp.CanCollide = false
+	sp.CanQuery = false
+	sp.CanTouch = false
+	for _, d in ipairs(sp:GetDescendants()) do
+		if d:IsA("Decal") or d:IsA("Texture") then
+			d:Destroy() -- a decal ignores the part's Transparency; it must go
+		end
+	end
+end
+
+local ghosted = 0
 for _, d in ipairs(Workspace:GetDescendants()) do
-	if d:IsA("SpawnLocation") then d.Enabled = false end
+	if d:IsA("SpawnLocation") then
+		d.Enabled = false
+		ghostSpawn(d)
+		ghosted += 1
+	end
 end
-putSpawnOnIsland("island6", "Island 6")
+print(("[Spawn] %d existing spawn pad(s) disabled + made invisible/non-colliding"):format(ghosted))
+
+-- EVERY ISLAND GETS ONE, island1's is the only one ENABLED.
+--
+-- island1 used to be the only island given a pad at all, so the other twelve kept their
+-- raw builder spawn block -- visible, solid, and walk-into-able -- until the ghosting
+-- sweep above merely hid it. Now each island gets the same treatment island1 got: the
+-- hand-placed block is replaced by a clean invisible SpawnLocation named
+-- "island<N>Spawn", parented to that island so it travels with it.
+--
+-- These are ANCHORS, not spawn points. WormholeService lands you on your destination's
+-- pad, and ReturnIsland puts you back on it when you die -- both read the pad's position
+-- rather than guessing at a bounding-box top, so a hand-placed pad is now the one place
+-- that decides where you arrive on an island, however you arrive.
+--
+-- Only island1 is Enabled, because Roblox picks a RANDOM enabled spawn on join and any
+-- second enabled pad reintroduces the exact "spawned on 6, 8 or 9 at random" bug noted
+-- below.
+for n = 1, 13 do
+	if Workspace:FindFirstChild("island" .. n) then
+		putSpawnOnIsland("island" .. n, "Island " .. n, n == 1)
+	end
+end
+
+-- FINAL SWEEP: catch any SpawnLocation created after the loop above (including the one
+-- putSpawnOnIsland just made, and island3's DigQuest replacement). The island1 spawn
+-- MUST stay Enabled -- we only strip its visuals, never its function.
+task.delay(3, function()
+	local n = 0
+	for _, d in ipairs(Workspace:GetDescendants()) do
+		if d:IsA("SpawnLocation") then
+			if d.Transparency < 1 or d.CanCollide then
+				ghostSpawn(d)
+				n += 1
+			end
+		end
+	end
+	if n > 0 then
+		print(("[Spawn] final sweep: ghosted %d more spawn pad(s)"):format(n))
+	end
+end)
 
 -- Ghost the island3 "Dig" marker blocks SERVER-SIDE (authoritative): invisible + non-colliding so
 -- players never run into the old marker blocks. (The dirt mounds are built on these positions client-side.)
@@ -1231,6 +1482,14 @@ end
 -- LostEgg collection: return each egg to the nest in a ring
 ----------------------------------------------------------------------
 
+-- Declared up here, not next to their first use: the EggCarry handler below closes over
+-- both, and a `local function` declared AFTER a closure is a different (global, nil)
+-- name inside it -- the claim would silently reject every egg.
+local function isLostEgg(inst: Instance): boolean
+	return inst.Name == "LostEgg" and (inst:IsA("BasePart") or inst:IsA("Model"))
+end
+local eggPromptOf: { [Instance]: ProximityPrompt } = {} -- egg -> its prompt, for onEggTaken
+
 local function placeEggInRing(egg: Instance, index: number)
 	local count = math.max(totalEggsValue.Value, 1)
 	local angle = (index - 1) * (math.pi * 2 / count)
@@ -1241,8 +1500,12 @@ local function placeEggInRing(egg: Instance, index: number)
 end
 
 local function onEggTaken(egg: Instance, prompt: ProximityPrompt, player: Player?)
-	-- Must claim the quest from the miner first.
+	-- Must claim the quest from the miner first. This is BY DESIGN -- the client shows a
+	-- "Talk To The Researcher First" banner + an arrow to him (QuestGate.client.luau).
+	-- Logged so that "the eggs won't pick up" is never a silent mystery again.
 	if player and not questClaimed[player] then
+		print(("[NestingNook] %s tried to take an egg but has NOT talked to the Researcher yet -> refused (talk to the miner first)")
+			:format(player.Name))
 		questGate:FireClient(player)
 		return
 	end
@@ -1280,26 +1543,88 @@ local function attachEggPrompt(egg: Instance)
 	if egg:IsA("BasePart") then
 		host = egg
 	else
-		host = egg:FindFirstChildWhichIsA("BasePart", true)
+		-- PrimaryPart FIRST. The egg is a stack of slabs, so FindFirstChildWhichIsA picks
+		-- up the bottom one and floats the prompt off the base of the egg; the primary is
+		-- the middle slab, which puts it on the egg itself.
+		host = (egg :: Model).PrimaryPart or egg:FindFirstChildWhichIsA("BasePart", true)
 	end
 	if not host then
 		warn("[NestingNook] LostEgg has no BasePart to host a prompt: " .. egg:GetFullName())
 		return
 	end
 
-	local prompt = addPrompt(host, "Take Egg", "Lost Egg")
+	-- "Rock Egg Free", not "Take Egg" -- the prompt opens the minigame, it does not
+	-- hand the egg over. HoldDuration 0.4 matches every other quest's opener.
+	local prompt = addPrompt(host, "Rock Egg Free", "Lost Egg")
 	prompt.MaxActivationDistance = 10
+	prompt.HoldDuration = 0.4
 	if egg:GetAttribute("Collected") then
 		prompt.Enabled = false
 	end
 	prompt.Triggered:Connect(function(player)
-		onEggTaken(egg, prompt, player)
+		if not player then return end
+		-- the Researcher gate still applies, and still applies FIRST -- an ungated
+		-- player should see the banner, not a minigame they can't cash in
+		if not questClaimed[player] then
+			print(("[NestingNook] %s tried to take an egg but has NOT talked to the Researcher yet -> refused (talk to the miner first)")
+				:format(player.Name))
+			questGate:FireClient(player)
+			return
+		end
+		if egg:GetAttribute("Collected") then return end
+		-- start this player's clock for this egg, then hand them the minigame
+		local mine = carryStartedAt[player]
+		if not mine then mine = {}; carryStartedAt[player] = mine end
+		mine[egg] = os.clock()
+		eggCarry:FireClient(player, egg)
 	end)
+	eggPromptOf[egg] = prompt
 end
 
-local function isLostEgg(inst: Instance): boolean
-	return inst.Name == "LostEgg" and (inst:IsA("BasePart") or inst:IsA("Model"))
-end
+----------------------------------------------------------------------
+-- The client finished rocking an egg loose -> validate and collect it.
+----------------------------------------------------------------------
+-- Everything here is checked server-side, because the client is the one claiming:
+--   * it is a real, uncollected LostEgg still in the world
+--   * this player was actually handed THIS egg's minigame
+--   * at least PickupFloor.SECONDS has passed since they were handed it
+--   * they are still standing next to it (no claiming from across the tower)
+eggCarry.OnServerEvent:Connect(function(player, egg)
+	if typeof(egg) ~= "Instance" or not isLostEgg(egg) or not egg:IsDescendantOf(Workspace) then return end
+	if not questClaimed[player] then return end
+	if egg:GetAttribute("Collected") then return end
+
+	local mine = carryStartedAt[player]
+	local startedAt = mine and mine[egg]
+	if not startedAt then
+		print(("[NestingNook] %s claimed '%s' without ever starting it -> refused")
+			:format(player.Name, egg.Name))
+		return
+	end
+
+	-- ISLAND1_EGG_SECONDS, not SECONDS: island 1's eggs run 30% short of the standard
+	-- floor. This MUST be the same constant the client builds its ceiling from -- a
+	-- server still holding out for the full 15s refuses every egg the panel completes.
+	local floor = PickupFloor.ISLAND1_EGG_SECONDS
+	local elapsed = os.clock() - startedAt
+	if elapsed < floor - CARRY_TOLERANCE then
+		print(("[NestingNook] %s claimed '%s' after %.1fs (floor is %.1fs) -> refused")
+			:format(player.Name, egg.Name, elapsed, floor))
+		return
+	end
+
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not hrp or not hrp:IsA("BasePart") then return end
+	if (getPivot(egg).Position - hrp.Position).Magnitude > 40 then
+		print(("[NestingNook] %s claimed '%s' from too far away -> refused"):format(player.Name, egg.Name))
+		return
+	end
+
+	mine[egg] = nil
+	local prompt = eggPromptOf[egg]
+	if prompt then onEggTaken(egg, prompt, player) end
+end)
 
 -- Attach to all LostEggs already present (the setup script ran first).
 local found = 0

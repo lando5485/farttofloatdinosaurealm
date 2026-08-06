@@ -14,7 +14,8 @@ print("[QuestGate] script loaded")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local HatchBurst = require(ReplicatedStorage:WaitForChild("DinosaurRealm"):WaitForChild("HatchBurst")) -- shared cool hatch FX
+local HatchBurst   = require(ReplicatedStorage:WaitForChild("DinosaurRealm"):WaitForChild("HatchBurst"))   -- shared cool hatch FX
+local ChevronTrail = require(ReplicatedStorage:WaitForChild("DinosaurRealm"):WaitForChild("ChevronTrail")) -- shared ground chevron guide
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -26,9 +27,25 @@ local BANNER_TIME = 4 -- seconds the banner stays up
 local GUIDE_TIME = 7  -- seconds the guide arrow points the way
 local ARROW_COLOR = Color3.fromRGB(50, 220, 80)
 
+-- Recursive WaitForChild: the island1 NPCs live one model deeper
+-- (Workspace.island1.island1.dino1 / .miner), so a plain WaitForChild on the
+-- outer island times out and the reward egg used to fall back to (0,5,0) --
+-- 250 studs below the island, where nobody could ever hatch it.
+local function waitForDescendant(root: Instance?, name: string, timeout: number): Instance?
+	if not root then return nil end
+	local deadline = os.clock() + timeout
+	repeat
+		local found = root:FindFirstChild(name, true)
+		if found then return found end
+		task.wait(0.25)
+	until os.clock() > deadline
+	warn(("[QuestGate] '%s' not found under %s after %ds"):format(name, root:GetFullName(), timeout))
+	return nil
+end
+
 -- Find the miner NPC so we can point at it.
 local island = workspace:WaitForChild("island1", 90)
-local miner = island and island:WaitForChild("miner", 90)
+local miner = waitForDescendant(island, "miner", 90)
 
 ----------------------------------------------------------------------
 -- Top-middle banner
@@ -379,84 +396,53 @@ do
 		local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, 12); c.Parent = lbl
 		local s = Instance.new("UIStroke"); s.Color = Color3.fromRGB(50,200,80); s.Thickness = 2; s.Parent = lbl
 		local szc = Instance.new("UITextSizeConstraint"); szc.MaxTextSize = 26; szc.Parent = lbl
+
+		-- HIDE IT OFF-ISLAND. This is a ScreenGui, so without a gate it stays stuck to the
+		-- screen the whole time you fly up the rest of the tower, still telling you to go
+		-- talk to a dinosaur 19,000 studs below. The chevron trail already hides itself
+		-- off-island (ChevronTrail); the banner has to do the same.
+		task.spawn(function()
+			local island1 = workspace:FindFirstChild("island1")
+			while sg.Parent do
+				local char = player.Character
+				local hrp = char and char:FindFirstChild("HumanoidRootPart")
+				local on = false
+				if hrp and island1 then
+					local ok, cf, size = pcall(function() return island1:GetBoundingBox() end)
+					if ok and cf and size and size.Magnitude > 1 then
+						local d = hrp.Position - cf.Position
+						on = math.abs(d.X) <= size.X / 2 + 80
+							and math.abs(d.Z) <= size.Z / 2 + 80
+							and math.abs(d.Y) <= size.Y / 2 + 150
+					end
+				end
+				sg.Enabled = on
+				task.wait(0.4)
+			end
+		end)
+
 		return sg
 	end
 
 	-- SLEEK GREEN CHEVRON RUNWAY on the ground -> the Mama Dino (same style as the island4 rod trail), plus the hint.
 	-- Appears once all 5 eggs are returned (completeNow) and clears as you reach her / once the reward egg is hatched.
+	-- The chevron runway itself now lives in the SHARED ChevronTrail module, so the
+	-- island11 geyser quest (and any future quest) points at its reward with the exact
+	-- same guide instead of re-implementing a different-looking arrow.
 	local function guideToDino(dino)
 		local hint = showMamaHint()
-		local BRIGHT = Color3.fromRGB(90, 200, 110)  -- friendly green
-		local EDGE   = Color3.fromRGB(40, 120, 60)   -- darker green outline
-		local SPACING, MAX_ARROWS, STOP_DIST = 6, 18, 12
-		local rayParams = RaycastParams.new(); rayParams.FilterType = Enum.RaycastFilterType.Exclude
-		local function cpart(model, name, sx,sy,sz, color, refl, cf)
-			local p = Instance.new("Part"); p.Name = name; p.Size = Vector3.new(sx,sy,sz); p.Color = color
-			p.Material = Enum.Material.SmoothPlastic; p.Reflectance = refl or 0
-			p.Anchored = true; p.CanCollide = false; p.CanQuery = false; p.CanTouch = false; p.CastShadow = false
-			p.TopSurface = Enum.SurfaceType.Smooth; p.BottomSurface = Enum.SurfaceType.Smooth
-			p.LeftSurface = Enum.SurfaceType.Smooth; p.RightSurface = Enum.SurfaceType.Smooth
-			p.FrontSurface = Enum.SurfaceType.Smooth; p.BackSurface = Enum.SurfaceType.Smooth
-			p.CFrame = cf; p.Parent = model; return p
-		end
-		local function buildChevron()
-			local m = Instance.new("Model"); m.Name = "MamaChevron"
-			local root = cpart(m, "Root", 0.2,0.2,0.2, BRIGHT, 0, CFrame.new()); root.Transparency = 1; m.PrimaryPart = root
-			local L, W, T, ANG = 2.6, 0.72, 0.22, math.rad(42)
-			local front = CFrame.new(0, 0, -0.9)
-			cpart(m, "EdgeR", W+0.20, T*0.65, L+0.20, EDGE, 0,  front * CFrame.Angles(0,  ANG, 0) * CFrame.new(0,-0.03,L/2))
-			cpart(m, "EdgeL", W+0.20, T*0.65, L+0.20, EDGE, 0,  front * CFrame.Angles(0, -ANG, 0) * CFrame.new(0,-0.03,L/2))
-			cpart(m, "ArmR",  W, T, L, BRIGHT, 0.14,           front * CFrame.Angles(0,  ANG, 0) * CFrame.new(0, 0.04,L/2))
-			cpart(m, "ArmL",  W, T, L, BRIGHT, 0.14,           front * CFrame.Angles(0, -ANG, 0) * CFrame.new(0, 0.04,L/2))
-			m.Parent = workspace
-			return m
-		end
-		local pool = {}
-		local function getNode(i) if not pool[i] then pool[i] = buildChevron() end; return pool[i] end
-		local function setShown(nd, on)
-			for _, p in ipairs(nd:GetDescendants()) do
-				if p:IsA("BasePart") and p.Name ~= "Root" then p.Transparency = on and 0 or 1 end
+		local trail = ChevronTrail.start(
+			function()
+				return (dino and dino.Parent) and dino:GetPivot().Position or nil
+			end,
+			function()
+				-- reward egg hatched, or the Mama Dino is gone -> tear down for good
+				local done = st.owns or not (dino and dino.Parent)
+				if done and hint then hint:Destroy(); hint = nil end
+				return done
 			end
-		end
-		local function hideFrom(n) for i = n, #pool do if pool[i] then setShown(pool[i], false) end end end
-		local conn
-		conn = RunService.RenderStepped:Connect(function()
-			-- reward egg hatched (st.owns) or the Mama Dino is gone -> tear down for good
-			if st.owns or not (dino and dino.Parent) then
-				for _, nd in ipairs(pool) do pcall(function() nd:Destroy() end) end; pool = {}
-				if hint then hint:Destroy(); hint = nil end
-				if conn then conn:Disconnect() end
-				return
-			end
-			local char = player.Character
-			local hrp = char and char:FindFirstChild("HumanoidRootPart")
-			if not hrp then hideFrom(1); return end
-			local target = dino:GetPivot().Position
-			local d = target - hrp.Position
-			local flat = Vector3.new(d.X, 0, d.Z)
-			local dist = flat.Magnitude
-			if dist <= STOP_DIST then hideFrom(1); return end -- reached the Mama Dino -> hide the trail (hint stays until hatch)
-			local dir = flat.Unit
-			local excl = { char }; for _, nd in ipairs(pool) do excl[#excl+1] = nd end
-			rayParams.FilterDescendantsInstances = excl
-			local maxAlong = dist - STOP_DIST
-			local placed = 0
-			for i = 1, MAX_ARROWS do
-				local along = i * SPACING
-				if along > maxAlong then break end
-				placed += 1
-				local px = hrp.Position.X + dir.X * along
-				local pz = hrp.Position.Z + dir.Z * along
-				local hit = workspace:Raycast(Vector3.new(px, hrp.Position.Y + 14, pz), Vector3.new(0, -240, 0), rayParams)
-				local gy = (hit and hit.Position.Y) or (hrp.Position.Y - 2.5)
-				local nd = getNode(placed)
-				local p0 = Vector3.new(px, gy + 0.12, pz)
-				pcall(function() nd:PivotTo(CFrame.lookAt(p0, p0 + dir)) end)
-				pcall(function() nd:ScaleTo(1 + 0.10 * math.sin(os.clock() * 5 - i * 0.8)) end)
-				setShown(nd, true)
-			end
-			hideFrom(placed + 1)
-		end)
+		)
+		return trail
 	end
 
 	-- trigger on quest completion (all eggs returned), or via the /done command
@@ -465,12 +451,17 @@ do
 		local total = nook and nook:WaitForChild("TotalEggs", 10)
 		local got = nook and nook:WaitForChild("EggsReturned", 10)
 		local island = workspace:WaitForChild("island1", 60)
-		local dino = island and island:WaitForChild("dino1", 60)
+		local dino = waitForDescendant(island, "dino1", 60)
 		local done = false
 		local function completeNow()
 			if done then return end
 			done = true
-			local pos = Vector3.new(0, 5, 0)
+			-- fallback: the nest centre (from the NestingNook attributes), never (0,5,0) in the void
+			local pos = Vector3.new(
+				tonumber(nook and nook:GetAttribute("NestX")) or 0,
+				(tonumber(nook and nook:GetAttribute("NestY")) or 0) + 5,
+				tonumber(nook and nook:GetAttribute("NestZ")) or 0
+			)
 			if dino then
 				local pivot = dino:GetPivot()
 				local cf, size = dino:GetBoundingBox()

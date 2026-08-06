@@ -30,7 +30,7 @@ do
 		if not hrp then return nil end
 		local pos = hrp.Position
 		local best, bestD = nil, math.huge
-		for i = 1, 14 do
+		for i = 1, 13 do
 			local isl = workspace:FindFirstChild("island" .. i)
 			if isl then
 				local ok, cf, size = pcall(function() return isl:GetBoundingBox() end)
@@ -47,11 +47,45 @@ do
 	task.spawn(function() while true do curIsland = detect(); task.wait(0.4) end end)
 end
 
+-- ONE SHOWING PER ISLAND: the arrow is for finding the NPC the FIRST time you land
+-- somewhere. Take off again and that island is done -- the arrow goes immediately, and
+-- it does NOT come back when you return, because by then you have been there and the
+-- arrow is just clutter pointing at someone you have already met.
+--
+-- Keyed on TAKEOFF, and only the island being LEFT is marked. The naive version --
+-- "while flying, dismiss curIsland" -- is wrong in a way that only shows up mid-climb:
+-- curIsland tracks the NEAREST island, so on the way up it flips to the island you are
+-- approaching while you are still airborne, and that island would be dismissed before
+-- you ever set foot on it. Only the rising edge of _G.isFlying counts, which is the
+-- moment you leave, and curIsland still reads the island under your feet then.
+--
+-- _G.isFlying is BottomHUD's flight flag (set in startFlying / stopFlying). Polled
+-- rather than signalled because it is a plain global; 0.1s is far finer than the 0.4s
+-- island detection it is read against, so the pairing can never land a frame late.
+local dismissed = {}
+do
+	local wasFlying = false
+	task.spawn(function()
+		while true do
+			local flying = (_G.isFlying == true)
+			if flying and not wasFlying and curIsland then
+				dismissed[curIsland] = true
+			end
+			wasFlying = flying
+			task.wait(0.1)
+		end
+	end)
+end
+
 -- One entry per NPC. `parent` is the Workspace descendant the NPC lives under,
 -- `npcName` is the NPC Model's name.
 local NPCS = {
 	{ parent = "island1", npcName = "miner", island = 1 },
-	{ parent = "island1", npcName = "dino1", island = 1 },
+	-- dino1 (the Mama Dino) deliberately has NO waypoint arrow. She is a large static
+	-- prop right beside the spawn, not something the player has to be led to, and the
+	-- arrow sat on top of her. The quest still guides you to her when it matters:
+	-- QuestGate puts an arrow above the PLAYER'S head pointing her way once all 5 eggs
+	-- are returned.
 	{ npcName = "DigMiner", island = 3 }, -- island3 Digger (parented directly under Workspace; no parent field = workspace)
 	-- other-island Researchers (parented under Workspace by NestingNook_NPCs.setupIslandQuestNPC)
 	{ npcName = "FrillRancher",  island = 2 },
@@ -59,7 +93,7 @@ local NPCS = {
 	{ npcName = "MireWatcher",   island = 5 },
 	{ npcName = "RidgeWarden",   island = 6 },
 	{ npcName = "RaptorScout",   island = 7 },
-	{ npcName = "AshWarden",     island = 8 },
+	{ npcName = "AshWarden",     island = 11 },  -- Volcanic Vista (geyser finale)
 }
 
 -- Arrow look / motion (tunable) ------------------------------------------------
@@ -88,11 +122,27 @@ local function findAnchorPart(npc: Instance): BasePart?
 	return npc:FindFirstChildWhichIsA("BasePart", true)
 end
 
+-- Wait for a DESCENDANT (not just a direct child) named `name` under `container`.
+-- WaitForChild only looks one level deep. The island1 models are nested inside
+-- themselves (Workspace.island1.island1.dino1), so `island1:WaitForChild("dino1")`
+-- never resolved -- it timed out after 90s and the miner/dino1 arrows never appeared.
+local function waitForDescendant(container: Instance, name: string, timeout: number): Instance?
+	local found = container:FindFirstChild(name, true)
+	if found then return found end
+	local deadline = os.clock() + timeout
+	while os.clock() < deadline do
+		task.wait(0.25)
+		found = container:FindFirstChild(name, true)
+		if found then return found end
+	end
+	return nil
+end
+
 local function setupArrow(spec)
 	local container = spec.parent and workspace:WaitForChild(spec.parent, 90) or workspace
-	local npc = container and container:WaitForChild(spec.npcName, 90)
+	local npc = container and waitForDescendant(container, spec.npcName, 90)
 	if not npc then
-		warn(("[NPCWaypointArrow] %s not found - no arrow."):format(spec.npcName))
+		warn(("[NPCWaypointArrow] %s not found under %s - no arrow."):format(spec.npcName, container and container:GetFullName() or "?"))
 		return
 	end
 
@@ -152,8 +202,9 @@ local function setupArrow(spec)
 		-- offset). Hide the arrow while the NPC's speech bubble is showing.
 		conn = RunService.Heartbeat:Connect(function()
 			if gui then
-				-- show this NPC's arrow ONLY while the player is on that NPC's island, and not while talking
-				gui.Enabled = (not bubbleShowing) and (curIsland == spec.island)
+				-- show this NPC's arrow ONLY while the player is on that NPC's island, not while
+				-- talking, and only until they have flown off it once (see `dismissed` above)
+				gui.Enabled = (not bubbleShowing) and (curIsland == spec.island) and not dismissed[spec.island]
 				gui.StudsOffsetWorldSpace = baseOffset + Vector3.new(0, math.sin(os.clock() * BOUNCE_SPEED) * BOUNCE_AMP, 0)
 			end
 		end)

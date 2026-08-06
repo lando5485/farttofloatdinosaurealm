@@ -23,7 +23,7 @@ local DSS       = game:GetService("DataStoreService")
 
 local PRODUCT  = { TwoXOneHour = 3600302990, MidAirRecharge = 3600303163, SkipIsland = 3600303265, MeteoriteExplosion = 3606893853 }
 local GAMEPASS = { TwoXForever = 1862015450, GlitterTrail = 1859714979, PrimalGut = 1860686821 }
-local MAX_ISLAND = 14
+local MAX_ISLAND = 13
 
 -- ===== perk effects =====
 local function triggerMidAirRecharge(plr)

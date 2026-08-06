@@ -23,6 +23,18 @@ local stands = {}
 local lastAwayTime = 0
 local STAND_TRIGGER_RADIUS = 12 -- studs: how close (horizontally) the player must walk to a stand before its shop opens (was 15 original -> 9 reduced -> 12 midpoint)
 
+-- Look a food up by the island it BELONGS to, never by its position in the array.
+-- _G.foods is ordered by CLIMB SLOT (Eggs, Chili Peppers, Lettuce, ...), so
+-- _G.foods[5] is the 5th food of the climb, NOT island5's food -- island5 sits at
+-- slot 3. Indexing by island number only worked back when the array happened to be
+-- in island order; it silently features the wrong food now.
+local function foodForIsland(islandNum)
+	for _, f in ipairs(_G.foods or {}) do
+		if f.island == islandNum then return f end
+	end
+	return nil
+end
+
 local function isUnlocked(islandNum)
 	if unlockedIslands[islandNum] then
 		return true
@@ -70,9 +82,9 @@ local sg
 sg=Instance.new("ScreenGui"); sg.Name="FoodShopGui"; sg.ResetOnSpawn=false; sg.Enabled=false; sg.DisplayOrder=100; sg.Parent=PlayerGui -- DisplayOrder 100 = definitively above the HUD (<=5) so the shop covers it
 local FoodShopGui=sg
 mkFrame(sg,{Size=UDim2.new(1,0,1,0),BackgroundColor3=Color3.new(0,0,0),BackgroundTransparency=1,Active=false}) -- invisible + Active=FALSE so clicks OUTSIDE the panel fall through to the HUD MENU BUTTONS (enables direct click-to-switch). The panel itself is Active so panel clicks don't leak to the HUD.
-local foodPanel=mkFrame(sg,{Size=UDim2.new(0.92,0,0.78,0),Position=UDim2.new(0.5,0,0.5,-45),AnchorPoint=Vector2.new(0.5,0.5),BackgroundColor3=Color3.fromRGB(240,248,255),Active=true}) -- nudged UP ~45px so its bottom clears the stomach/gut indicator below; Active=true blocks pass-through behind the panel
-mkCorner(foodPanel,16); mkStroke(foodPanel,Color3.fromRGB(100,180,255),4)
-local foodHeader=mkFrame(foodPanel,{Size=UDim2.new(1,0,0,55),BackgroundColor3=Color3.fromRGB(80,160,255)}); mkCorner(foodHeader,16)
+local foodPanel=mkFrame(sg,{Size=UDim2.new(0.92,0,0.78,0),Position=UDim2.new(0.5,0,0.5,-16),AnchorPoint=Vector2.new(0.5,0.5),BackgroundColor3=Color3.fromRGB(240,248,255),Active=true}) -- hub-parity spot: -16 lifts it like the hub's -45 without clipping phone tops; Active=true blocks pass-through behind the panel
+mkCorner(foodPanel,16); mkStroke(foodPanel,Color3.fromRGB(120, 196, 96),4)
+local foodHeader=mkFrame(foodPanel,{Size=UDim2.new(1,0,0,55),BackgroundColor3=Color3.fromRGB(86, 170, 78)}); mkCorner(foodHeader,16)
 local foodTitle=mkLabel(foodHeader,{Text="\xF0\x9F\x8F\x9D\xEF\xB8\x8F ISLAND 1 FOOD STAND",Font=Enum.Font.Gotham,TextSize=24,TextColor3=Color3.new(1,1,1),Size=UDim2.new(1,-60,1,0),RichText=true})
 mkStroke(foodTitle,Color3.new(0,0,0),2)
 local foodCloseBtn=mkButton(foodHeader,{Size=UDim2.new(0,40,0,40),Position=UDim2.new(1,-45,0,7),BackgroundColor3=Color3.fromRGB(255,60,60),Text="X",Font=Enum.Font.GothamBold,TextSize=20,TextColor3=Color3.new(1,1,1)}); mkCorner(foodCloseBtn,8)
@@ -143,151 +155,6 @@ for _,f in ipairs(_G.foods) do
 end
 print("ICON FIX DONE")
 
--- Premium Shop
-sg=Instance.new("ScreenGui"); sg.Name="PremiumShopGui"; sg.ResetOnSpawn=false; sg.Enabled=false; sg.DisplayOrder=100; sg.Parent=PlayerGui -- DisplayOrder 100 = definitively above the HUD (<=5) so the shop covers it
-local PremiumShopGui=sg
-mkFrame(sg,{Size=UDim2.new(1,0,1,0),BackgroundColor3=Color3.new(0,0,0),BackgroundTransparency=1,Active=false}) -- invisible + Active=FALSE so clicks OUTSIDE the panel fall through to the HUD MENU BUTTONS (direct click-to-switch)
-local premPanel=mkFrame(sg,{Size=UDim2.new(0.9,0,0.85,0),Position=UDim2.new(0.5,0,0.5,0),AnchorPoint=Vector2.new(0.5,0.5),BackgroundColor3=Color3.fromRGB(25,90,185),ClipsDescendants=true,Active=true})
-mkCorner(premPanel,20); mkStroke(premPanel,Color3.new(1,1,1),3)
-
-local premHeader=mkFrame(premPanel,{Size=UDim2.new(1,0,0,65),BackgroundColor3=Color3.fromRGB(15,60,140)})
-local premTitleLbl=mkLabel(premHeader,{Text="\xF0\x9F\x9B\x92 SHOP",Font=Enum.Font.GothamBold,TextSize=30,TextColor3=Color3.fromRGB(255,215,0),Size=UDim2.new(1,-60,0,40),Position=UDim2.new(0,14,0,5),TextXAlignment=Enum.TextXAlignment.Left,BackgroundTransparency=1})
-mkStroke(premTitleLbl,Color3.new(0,0,0),2)
-mkLabel(premHeader,{Text="Power up your farts!",Font=Enum.Font.Gotham,TextSize=14,TextColor3=Color3.new(1,1,1),Size=UDim2.new(1,-60,0,18),Position=UDim2.new(0,14,0,45),TextXAlignment=Enum.TextXAlignment.Left,BackgroundTransparency=1})
-local premClose=mkButton(premHeader,{Size=UDim2.new(0,40,0,40),Position=UDim2.new(1,-48,0,12),BackgroundColor3=Color3.fromRGB(220,50,50),Text="\xe2\x9c\x95",Font=Enum.Font.GothamBold,TextSize=20,TextColor3=Color3.new(1,1,1)})
-mkCorner(premClose,8)
-
--- ===== GAMEPASS SHOP CONTENTS -- proper LAYOUTS (no absolute positions): a vertical scroll holds two
--- sections; each section CENTERS its 3 cards with a horizontal UIListLayout; each card STACKS its content
--- with a vertical UIListLayout and pins the BUY button to the bottom. So every card is uniform, evenly
--- spaced, centered + aligned, comfortably sized, and the list scrolls so nothing is ever cut off. =====
-local premScroll=Instance.new("ScrollingFrame")
-premScroll.Name="PremiumScroll"; premScroll.BackgroundTransparency=1; premScroll.BorderSizePixel=0
-premScroll.Position=UDim2.new(0,0,0,65); premScroll.Size=UDim2.new(1,0,1,-92) -- below the 65px header, above the footer
-premScroll.ScrollBarThickness=6; premScroll.ScrollBarImageColor3=Color3.fromRGB(255,215,0)
-premScroll.CanvasSize=UDim2.new(0,0,0,0); premScroll.ScrollingDirection=Enum.ScrollingDirection.Y
-premScroll.AutomaticCanvasSize=Enum.AutomaticSize.None; premScroll.Parent=premPanel -- canvas is driven explicitly by syncCanvas below
-do
-	local sll=Instance.new("UIListLayout"); sll.FillDirection=Enum.FillDirection.Vertical
-	sll.HorizontalAlignment=Enum.HorizontalAlignment.Center; sll.Padding=UDim.new(0,10); sll.SortOrder=Enum.SortOrder.LayoutOrder; sll.Parent=premScroll
-	local slp=Instance.new("UIPadding"); slp.PaddingTop=UDim.new(0,8); slp.PaddingBottom=UDim.new(0,10); slp.Parent=premScroll
-	-- CANVAS = total content height so scrolling reaches every card. We drive CanvasSize EXPLICITLY from the
-	-- layout's measured content size (self-updating) -- the reliable equivalent of AutomaticCanvasSize=Y, so the
-	-- canvas always grows past the viewport and the scroll actually moves through ALL the items.
-	local function syncCanvas() premScroll.CanvasSize=UDim2.new(0,0,0, sll.AbsoluteContentSize.Y + 18) end
-	sll:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(syncCanvas); task.defer(syncCanvas)
-end
-local CARD_W, CARD_H = 208, 190
--- a gold section title + underline, sized to sit in the vertical scroll list
-local function sectionHeader(text,order)
-	local h=mkFrame(premScroll,{Size=UDim2.new(1,-16,0,28),BackgroundTransparency=1,LayoutOrder=order})
-	mkLabel(h,{Text=text,Font=Enum.Font.GothamBold,TextSize=16,TextColor3=Color3.fromRGB(255,215,0),Size=UDim2.new(1,-8,0,22),Position=UDim2.new(0,4,0,0),TextXAlignment=Enum.TextXAlignment.Left})
-	mkFrame(h,{Size=UDim2.new(1,-8,0,2),Position=UDim2.new(0,4,0,25),BackgroundColor3=Color3.fromRGB(255,215,0)})
-	return h
-end
--- a full-width row that evenly spaces + centers its cards
-local function mkSectionRow(order)
-	local row=mkFrame(premScroll,{Size=UDim2.new(1,-16,0,CARD_H),BackgroundTransparency=1,LayoutOrder=order})
-	local ll=Instance.new("UIListLayout"); ll.FillDirection=Enum.FillDirection.Horizontal
-	ll.HorizontalAlignment=Enum.HorizontalAlignment.Center; ll.VerticalAlignment=Enum.VerticalAlignment.Top
-	ll.Padding=UDim.new(0,18); ll.SortOrder=Enum.SortOrder.LayoutOrder; ll.Parent=row
-	return row
-end
--- a uniform card whose ENTIRE content is one vertical UIListLayout: icon -> name -> price -> [desc] -> BUY,
--- top to bottom in that order. The BUY button is the LAST list item, so it ALWAYS sits below the icon/text --
--- it can never overlap them. UIPadding leaves room at the top for card 1's "BEST VALUE" badge overlay.
-local function mkShopCard(parent,order)
-	local c=mkFrame(parent,{Size=UDim2.new(0,CARD_W,0,CARD_H),LayoutOrder=order,BackgroundColor3=Color3.fromRGB(20,70,160)})
-	mkCorner(c,16); mkStroke(c,Color3.new(1,1,1),2)
-	local holder=mkFrame(c,{Name="Content",Size=UDim2.new(1,0,1,0),BackgroundTransparency=1})
-	local hl=Instance.new("UIListLayout"); hl.FillDirection=Enum.FillDirection.Vertical
-	hl.HorizontalAlignment=Enum.HorizontalAlignment.Center; hl.VerticalAlignment=Enum.VerticalAlignment.Top
-	hl.Padding=UDim.new(0,3); hl.SortOrder=Enum.SortOrder.LayoutOrder; hl.Parent=holder
-	local hp=Instance.new("UIPadding"); hp.PaddingTop=UDim.new(0,18); hp.PaddingBottom=UDim.new(0,6); hp.PaddingLeft=UDim.new(0,8); hp.PaddingRight=UDim.new(0,8); hp.Parent=holder
-	return c
-end
-local function cH(card) return card:FindFirstChild("Content") or card end -- the content list holder
-local function cardIcon(card,txt)
-	mkLabel(cH(card),{Text=txt,Font=Enum.Font.Gotham,TextSize=40,TextColor3=Color3.new(1,1,1),Size=UDim2.new(1,0,0,42),LayoutOrder=1,RichText=false,TextXAlignment=Enum.TextXAlignment.Center,TextYAlignment=Enum.TextYAlignment.Center})
-end
-local function cardTitles(card,main,sub,subCol)
-	mkLabel(cH(card),{Text=main,Font=Enum.Font.GothamBold,TextSize=16,TextColor3=Color3.new(1,1,1),Size=UDim2.new(1,0,0,19),LayoutOrder=2,TextXAlignment=Enum.TextXAlignment.Center})
-	mkLabel(cH(card),{Text=sub,Font=Enum.Font.GothamBold,TextSize=12,TextColor3=subCol,Size=UDim2.new(1,0,0,15),LayoutOrder=3,TextXAlignment=Enum.TextXAlignment.Center})
-end
-local function cardPrice(card,price)
-	mkLabel(cH(card),{Text=price,Font=Enum.Font.GothamBold,TextSize=15,TextColor3=Color3.fromRGB(255,215,0),Size=UDim2.new(1,0,0,17),LayoutOrder=4,TextXAlignment=Enum.TextXAlignment.Center})
-end
-local function cardDesc(card,desc)
-	mkLabel(cH(card),{Text=desc,Font=Enum.Font.Gotham,TextSize=11,TextColor3=Color3.fromRGB(180,210,255),Size=UDim2.new(1,0,0,20),LayoutOrder=5,TextWrapped=true,TextXAlignment=Enum.TextXAlignment.Center,TextYAlignment=Enum.TextYAlignment.Top})
-end
--- BUY button: last list item (LayoutOrder 10) -> always rendered BELOW the icon/name/price, never overlapping
-local function cardBuyBtn(card,col,txt,onClick)
-	local btn=mkButton(cH(card),{Size=UDim2.new(1,0,0,32),LayoutOrder=10,BackgroundColor3=col,Text=txt,Font=Enum.Font.GothamBold,TextSize=13,TextColor3=Color3.new(1,1,1)})
-	mkCorner(btn,8); btn.MouseButton1Click:Connect(onClick); return btn
-end
-sectionHeader("\xe2\xad\x90 GAMEPASSES",1)
-local gamepassRow=mkSectionRow(2)
-
--- Card 1: 2x Power Forever
-local card1=mkShopCard(gamepassRow,1)
-local gpBadge=mkLabel(card1,{Text="BEST VALUE \xe2\xad\x90",Font=Enum.Font.GothamBold,TextSize=11,TextColor3=Color3.fromRGB(80,40,0),Size=UDim2.new(1,-16,0,16),Position=UDim2.new(0.5,0,0,3),AnchorPoint=Vector2.new(0.5,0),BackgroundColor3=Color3.fromRGB(255,180,0),TextXAlignment=Enum.TextXAlignment.Center,ZIndex=3})
-mkCorner(gpBadge,6)
-cardIcon(card1,"\xe2\x9a\xa1"); cardTitles(card1,"2x Power","FOREVER",Color3.fromRGB(100,220,100)); cardPrice(card1,"249 R$")
-local btn1=cardBuyBtn(card1,Color3.fromRGB(255,180,0),"BUY GAMEPASS",function()
-	if _G.playerGamepasses and _G.playerGamepasses.twoXForever then return end -- already owned: do nothing
-	pcall(function() MPS:PromptGamePassPurchase(player,GAMEPASS_IDS.TwoXForever) end)
-end)
-mkStroke(btn1,Color3.fromRGB(200,130,0),2)
-
--- Card 2: Glitter Trail
-local card2=mkShopCard(gamepassRow,2)
-cardIcon(card2,"\xe2\x9c\xa8"); cardTitles(card2,"Glitter Trail","PERMANENT",Color3.fromRGB(100,220,100)); cardPrice(card2,"49 R$")
-local btn2=cardBuyBtn(card2,Color3.fromRGB(220,80,180),"BUY GAMEPASS",function()
-	if _G.playerGamepasses and _G.playerGamepasses.glitterTrail then return end -- already owned: do nothing
-	pcall(function() MPS:PromptGamePassPurchase(player,GAMEPASS_IDS.GlitterTrail) end)
-end)
-
--- Card 3: 2x Power 1 Hour
-local card3=mkShopCard(gamepassRow,3)
-cardIcon(card3,"\xe2\x8f\xb0"); cardTitles(card3,"2x Power","1 HOUR",Color3.fromRGB(255,200,100)); cardPrice(card3,"59 R$")
-local twoXShopTimer=mkLabel(cH(card3),{Text="",Font=Enum.Font.GothamBold,TextSize=11,TextColor3=Color3.fromRGB(100,220,100),Size=UDim2.new(1,-8,0,14),LayoutOrder=6,TextXAlignment=Enum.TextXAlignment.Center,Visible=false})
-cardBuyBtn(card3,Color3.fromRGB(50,150,255),"BUY NOW",function() pcall(function() MPS:PromptProductPurchase(player,PRODUCT_IDS.TwoXOneHour) end) end)
-
-sectionHeader("\xF0\x9F\x8E\xAF ONE-TIME ITEMS",3)
-local productRow=mkSectionRow(4)
-
--- Card 4: Mid-Air Recharge
-local card4=mkShopCard(productRow,1)
-cardIcon(card4,"\xF0\x9F\x94\x8B"); cardTitles(card4,"Mid-Air","RECHARGE",Color3.fromRGB(100,220,100)); cardPrice(card4,"39 R$"); cardDesc(card4,"Refills gas to 100%!")
-cardBuyBtn(card4,Color3.fromRGB(50,200,50),"BUY NOW",function() pcall(function() MPS:PromptProductPurchase(player,PRODUCT_IDS.MidAirRecharge) end) end)
-
--- Card 5: Skip Island
-local card5=mkShopCard(productRow,2)
-cardIcon(card5,"\xF0\x9F\x8F\x9D\xEF\xB8\x8F"); cardTitles(card5,"Skip Island","ONE USE",Color3.fromRGB(255,200,100)); cardPrice(card5,"69 R$"); cardDesc(card5,"Jump to next island!")
-cardBuyBtn(card5,Color3.fromRGB(255,140,0),"BUY NOW",function() pcall(function() MPS:PromptProductPurchase(player,PRODUCT_IDS.SkipIsland) end) end)
-
--- Card 6: Meteorite Explosion
-local card6=mkShopCard(productRow,3)
-cardIcon(card6,"\xE2\x98\x84\xEF\xB8\x8F"); cardTitles(card6,"Meteorite Explosion","CHAOS MODE",Color3.fromRGB(255,140,80)); cardPrice(card6,"79 R$"); cardDesc(card6,"Rain meteorites down on everyone!")
-cardBuyBtn(card6,Color3.fromRGB(232,108,40),"BUY NOW",function() pcall(function() MPS:PromptProductPurchase(player,PRODUCT_IDS.MeteoriteExplosion) end) end)
-
-mkLabel(premPanel,{Text="Purchases support the game! Thank you! \xF0\x9F\x99\x8F",Font=Enum.Font.Gotham,TextSize=12,TextColor3=Color3.fromRGB(150,180,255),Size=UDim2.new(1,-20,0,18),Position=UDim2.new(0,10,1,-22),TextXAlignment=Enum.TextXAlignment.Center,BackgroundTransparency=1})
-
-task.spawn(function()
-	while true do
-		task.wait(1)
-		local gp=_G.playerGamepasses
-		if gp and gp.twoXHourExpiry and gp.twoXHourExpiry>os.time() then
-			local rem=gp.twoXHourExpiry-os.time()
-			twoXShopTimer.Text="\xe2\x9a\xa1 Active: "..math.floor(rem/60).."m "..rem%60 .."s"
-			twoXShopTimer.Visible=true
-		else
-			twoXShopTimer.Visible=false
-		end
-	end
-end)
-print("CHUNK 2 DONE")
-
 -- Hotbar REMOVED: the bottom-right consumable boxes (Mid-Air Recharge "RCHRG" + Skip Island "SKIP"
 -- slots/badges, the HotbarGui ScreenGui, and updateHotbar) are gone. Those items are used IMMEDIATELY
 -- on purchase by the server (ProcessReceipt -> triggerMidAirRecharge / triggerSkipIsland), so their
@@ -302,7 +169,7 @@ local featuredFood
 
 local function updateFoodShop(islandNum)
 	nearIslandNumber=islandNum
-	if not featuredFood then featuredFood = _G.foods[islandNum] end  -- safety net; shop OPEN resets to the main food
+	if not featuredFood then featuredFood = foodForIsland(islandNum) end  -- safety net; shop OPEN resets to the main food
 	foodTitle.Text="\xF0\x9F\x8F\x9D\xEF\xB8\x8F ISLAND "..islandNum.." FOOD STAND"
 
 	-- ===== BIG FEATURED DISPLAY =====
@@ -405,198 +272,9 @@ local function updateFoodShop(islandNum)
 	end
 end
 
-for _,v in ipairs(premPanel:GetDescendants()) do
-	if v:IsA("TextLabel") or v:IsA("TextButton") then v.TextScaled=true end
-end
 for _,v in ipairs(foodPanel:GetDescendants()) do
 	if v:IsA("TextLabel") or v:IsA("TextButton") then v.TextScaled=true end
 end
-
--- ===== PREMIUM SHOP STYLE =====
-;(function()
-	-- FredokaOne + white text + black stroke on everything in premPanel
-	for _, v in ipairs(premPanel:GetDescendants()) do
-		if v:IsA("TextLabel") or v:IsA("TextButton") then
-			v.Font = Enum.Font.FredokaOne
-			v.TextScaled = true
-			v.TextColor3 = Color3.fromRGB(255,255,255)
-			local s = v:FindFirstChildOfClass("UIStroke") or Instance.new("UIStroke")
-			s.Color = Color3.fromRGB(0,0,0); s.Thickness = 2; s.Parent = v
-		end
-	end
-
-	-- Main panel
-	premPanel.BackgroundColor3 = Color3.fromRGB(30,120,220)
-	local panelS = premPanel:FindFirstChildOfClass("UIStroke") or Instance.new("UIStroke")
-	panelS.Color = Color3.fromRGB(20,60,160); panelS.Thickness = 3; panelS.Parent = premPanel
-
-	-- Close button + shop title gold
-	premClose.BackgroundColor3 = Color3.fromRGB(255,60,60)
-	premTitleLbl.TextColor3 = Color3.fromRGB(255,220,0)
-
-	-- Cards: dark blue bg, white stroke
-	for _, card in ipairs({card1, card2, card3, card4, card5, card6}) do
-		card.BackgroundColor3 = Color3.fromRGB(20,90,200)
-		local cs = card:FindFirstChildOfClass("UIStroke") or Instance.new("UIStroke")
-		cs.Color = Color3.fromRGB(255,255,255); cs.Thickness = 2; cs.Parent = card
-	end
-
-	-- Buy buttons + price labels + section headers by content
-	for _, v in ipairs(premPanel:GetDescendants()) do
-		if v:IsA("TextButton") then
-			if v.Text:find("BUY GAMEPASS") then
-				v.BackgroundColor3 = Color3.fromRGB(255,160,20)
-				local bs = v:FindFirstChildOfClass("UIStroke") or Instance.new("UIStroke")
-				bs.Color = Color3.fromRGB(180,80,0); bs.Thickness = 2; bs.Parent = v
-			elseif v.Text:find("BUY NOW") then
-				v.BackgroundColor3 = Color3.fromRGB(50,220,50)
-				local bs = v:FindFirstChildOfClass("UIStroke") or Instance.new("UIStroke")
-				bs.Color = Color3.fromRGB(30,130,30); bs.Thickness = 2; bs.Parent = v
-			end
-		end
-		if v:IsA("TextLabel") then
-			if v.Text:find("R%$") then
-				v.TextColor3 = Color3.fromRGB(100,255,100)
-			end
-			if v.Text:find("GAMEPASSES") or v.Text:find("ONE%-TIME") then
-				v.TextColor3 = Color3.fromRGB(255,220,0)
-			end
-		end
-	end
-
-	-- gpBadge: dark text on gold, no outline
-	gpBadge.TextColor3 = Color3.fromRGB(80,40,0)
-	gpBadge.BackgroundColor3 = Color3.fromRGB(255,200,0)
-	local gbS = gpBadge:FindFirstChildOfClass("UIStroke")
-	if gbS then gbS:Destroy() end
-end)()
-
--- ===== PREMIUM SHOP LAYOUT =====
-;(function()
-	-- Panel taller to fit bigger cards
-	premPanel.Size = UDim2.new(0,700,0,520) -- matches the FOOD SHOP panel exactly (700x520); cards below were re-laid-out to fit
-	premPanel.Position = UDim2.new(0.5,0,0.5,-45) -- POSITION matched to the food shop (centered, nudged up 45px)
-	premPanel.AnchorPoint = Vector2.new(0.5,0.5)
-
-	-- Keep the cards in their ORIGINAL section rows (gamepassRow / productRow). Those rows live INSIDE premScroll,
-	-- right under their section headers, so the headers AND the cards scroll TOGETHER. (The bug: these cards used to be
-	-- re-parented onto the FIXED premPanel, so only the headers -- still in the scroll -- moved, sliding over the pinned
-	-- cards.) Just resize the rows to the card heights, then size + order the cards inside them.
-	gamepassRow.Size = UDim2.new(1,-16,0,190)
-	productRow.Size  = UDim2.new(1,-16,0,220)
-	for i, c in ipairs({card1, card2, card3}) do
-		c.Parent = gamepassRow; c.LayoutOrder = i; c.Size = UDim2.new(0.31,0,0,190)
-	end
-	for i, c in ipairs({card4, card5, card6}) do
-		c.Parent = productRow; c.LayoutOrder = i; c.Size = UDim2.new(0.31,0,0,220)
-	end
-
-	-- Layout card content using UIListLayout inside a _Content sub-frame.
-	-- Badge (card1 only) stays as an absolute overlay on the card itself.
-	local function layoutCard(card, isProduct)
-		-- Collect direct children BEFORE creating _Content frame
-		local iconLbl, buyBtn, timer = nil, nil, nil
-		local textLbls = {}
-		for _, child in ipairs(card:GetChildren()) do
-			if child == gpBadge then
-				-- handled below as absolute overlay
-			elseif child == twoXShopTimer then
-				timer = child
-			elseif child:IsA("TextButton") then
-				buyBtn = child
-			elseif child:IsA("TextLabel") then
-				if child.TextSize >= 40 then
-					iconLbl = child
-				else
-					table.insert(textLbls, child)
-				end
-			end
-		end
-		-- Preserve title→subtitle→price→desc order
-		table.sort(textLbls, function(a, b)
-			return a.Position.Y.Offset < b.Position.Y.Offset
-		end)
-
-		-- Content frame fills the card; UIListLayout stacks children vertically
-		local cf = Instance.new("Frame")
-		cf.Name = "_Content"
-		cf.Size = UDim2.new(1,0,1,0)
-		cf.BackgroundTransparency = 1
-		cf.Parent = card
-
-		local ll = Instance.new("UIListLayout")
-		ll.FillDirection = Enum.FillDirection.Vertical
-		ll.Padding = UDim.new(0,4)
-		ll.HorizontalAlignment = Enum.HorizontalAlignment.Center
-		ll.VerticalAlignment = Enum.VerticalAlignment.Top
-		ll.SortOrder = Enum.SortOrder.LayoutOrder
-		ll.Parent = cf
-
-		local pad = Instance.new("UIPadding")
-		pad.PaddingTop = UDim.new(0,4)
-		pad.PaddingBottom = UDim.new(0,4)
-		pad.PaddingLeft = UDim.new(0,4)
-		pad.PaddingRight = UDim.new(0,4)
-		pad.Parent = cf
-
-		-- Icon
-		if iconLbl then
-			iconLbl.Size = UDim2.new(0, isProduct and 50 or 55, 0, isProduct and 50 or 55)
-			iconLbl.LayoutOrder = 1
-			iconLbl.TextScaled = true
-			iconLbl.Parent = cf
-		end
-
-		-- Name / Type / Price / Desc labels
-		local gpSz = {UDim2.new(1,-8,0,26), UDim2.new(1,-8,0,22), UDim2.new(1,-8,0,22)}
-		local pdSz = {UDim2.new(1,-8,0,24), UDim2.new(1,-8,0,20), UDim2.new(1,-8,0,20), UDim2.new(1,-8,0,28)}
-		local szList = isProduct and pdSz or gpSz
-		for i, lbl in ipairs(textLbls) do
-			lbl.Size = szList[i] or UDim2.new(1,-8,0,20)
-			lbl.LayoutOrder = i + 1
-			lbl.TextScaled = true
-			lbl.Parent = cf
-		end
-
-		-- twoXShopTimer (card3): shows between price and buy when active
-		if timer then
-			timer.Size = UDim2.new(1,-8,0,18)
-			timer.LayoutOrder = 5
-			timer.TextScaled = true
-			timer.Parent = cf
-		end
-
-		-- Buy button: last in stack
-		if buyBtn then
-			buyBtn.Size = UDim2.new(1,-12,0,40)
-			buyBtn.LayoutOrder = 10
-			buyBtn.TextScaled = true
-			buyBtn.Parent = cf
-		end
-
-		-- Badge: absolute overlay on card (NOT inside _Content)
-		if card == card1 then
-			gpBadge.Size = UDim2.new(1,-8,0,18)
-			gpBadge.Position = UDim2.new(0,4,0,2)
-			gpBadge.ZIndex = 10
-		end
-	end
-
-	layoutCard(card1, false)
-	layoutCard(card2, false)
-	layoutCard(card3, false)
-	layoutCard(card4, true)
-	layoutCard(card5, true)
-	layoutCard(card6, true)
-end)()
-
--- Explicitly style the shop close button
-premClose.Text = "X"
-premClose.Font = Enum.Font.FredokaOne
-premClose.TextScaled = true
-premClose.TextColor3 = Color3.fromRGB(255,255,255)
-local pcs = premClose:FindFirstChildOfClass("UIStroke") or Instance.new("UIStroke")
-pcs.Color = Color3.fromRGB(0,0,0); pcs.Thickness = 2; pcs.Parent = premClose
 
 -- ===== FOOD SHOP STYLE & LAYOUT =====
 ;(function()
@@ -611,13 +289,13 @@ pcs.Color = Color3.fromRGB(0,0,0); pcs.Thickness = 2; pcs.Parent = premClose
 
 	-- FIX 2: Main panel
 	foodPanel.Size = UDim2.new(0,700,0,520)
-	foodPanel.Position = UDim2.new(0.5,0,0.5,-45) -- nudged UP ~45px so the panel's bottom clears the bottom-center stomach/gut indicator below it
+	foodPanel.Position = UDim2.new(0.5,0,0.5,-16) -- hub-parity spot (-45 equivalent; no phone clipping)
 	foodPanel.AnchorPoint = Vector2.new(0.5,0.5)
-	foodPanel.BackgroundColor3 = Color3.fromRGB(30,120,220)
+	foodPanel.BackgroundColor3 = Color3.fromRGB(78, 158, 72)
 	local fpC = foodPanel:FindFirstChildOfClass("UICorner") or Instance.new("UICorner")
 	fpC.CornerRadius = UDim.new(0,20); fpC.Parent = foodPanel
 	local fpS = foodPanel:FindFirstChildOfClass("UIStroke") or Instance.new("UIStroke")
-	fpS.Color = Color3.fromRGB(20,60,160); fpS.Thickness = 3; fpS.Parent = foodPanel
+	fpS.Color = Color3.fromRGB(28, 64, 34); fpS.Thickness = 3; fpS.Parent = foodPanel
 
 	-- FIX 3: Header + title
 	foodHeader.BackgroundColor3 = Color3.fromRGB(15,60,140)
@@ -652,7 +330,7 @@ pcs.Color = Color3.fromRGB(0,0,0); pcs.Thickness = 2; pcs.Parent = premClose
 
 	-- Restyle each food cell
 	for _, cell in pairs(foodCells) do
-		cell.BackgroundColor3 = Color3.fromRGB(20,90,200)
+		cell.BackgroundColor3 = Color3.fromRGB(40, 86, 44)
 		local cs = cell:FindFirstChildOfClass("UICorner") or Instance.new("UICorner")
 		cs.CornerRadius = UDim.new(0,10); cs.Parent = cell
 		local css = cell:FindFirstChildOfClass("UIStroke") or Instance.new("UIStroke")
@@ -697,7 +375,7 @@ pcs.Color = Color3.fromRGB(0,0,0); pcs.Thickness = 2; pcs.Parent = premClose
 	-- FIX 5: Left preview panel
 	foodLeftPanel.Size = UDim2.new(0,160,1,-80)
 	foodLeftPanel.Position = UDim2.new(0,10,0,60)
-	foodLeftPanel.BackgroundColor3 = Color3.fromRGB(20,90,200)
+	foodLeftPanel.BackgroundColor3 = Color3.fromRGB(40, 86, 44)
 	local flpC = foodLeftPanel:FindFirstChildOfClass("UICorner") or Instance.new("UICorner")
 	flpC.CornerRadius = UDim.new(0,14); flpC.Parent = foodLeftPanel
 	local flpS = foodLeftPanel:FindFirstChildOfClass("UIStroke") or Instance.new("UIStroke")
@@ -785,18 +463,6 @@ end
 -- the food-STAND menu fully hides here (also clears shopOpen so the proximity loop knows it's closed)
 _G.MainMenuManager.register("FoodShop", function() FoodShopGui.Enabled = false; shopOpen = false end)
 
--- [UIFix] print the SHOP panel's REAL final layout + any size-controlling constraints (so the menus can copy them exactly),
--- then its RESOLVED on-screen size each time it opens (compare against the Pet Hub / Seasonal Pets prints).
-print("[UIFix] SHOP size=" .. tostring(premPanel.Size) .. " pos=" .. tostring(premPanel.Position) .. " anchor=" .. tostring(premPanel.AnchorPoint))
-for _, c in ipairs(premPanel:GetChildren()) do
-	if c:IsA("UIScale") then print("[UIFix] SHOP UIScale=" .. tostring(c.Scale))
-	elseif c:IsA("UISizeConstraint") then print("[UIFix] SHOP UISizeConstraint min=" .. tostring(c.MinSize) .. " max=" .. tostring(c.MaxSize))
-	elseif c:IsA("UIAspectRatioConstraint") then print("[UIFix] SHOP UIAspectRatioConstraint ratio=" .. tostring(c.AspectRatio) .. " type=" .. tostring(c.AspectType)) end
-end
-PremiumShopGui:GetPropertyChangedSignal("Enabled"):Connect(function()
-	if PremiumShopGui.Enabled then task.defer(function() print("[UIFix] SHOP AbsoluteSize=" .. tostring(premPanel.AbsoluteSize) .. " AbsolutePosition=" .. tostring(premPanel.AbsolutePosition)) end) end
-end)
-premClose.MouseButton1Click:Connect(function() if _G.playUIClick then _G.playUIClick() end; PremiumShopGui.Enabled=false; _G.MainMenuManager.notifyClosed("Premium") end)
 foodCloseBtn.MouseButton1Click:Connect(function()
 	FoodShopGui.Enabled = false
 	shopOpen = false
@@ -840,13 +506,17 @@ foodBuyMaxBtn.MouseButton1Click:Connect(function()
 		local sm=_G.leaderstats:FindFirstChild("StomachMax"); if sm then stomMax=sm.Value end
 	end end)
 	-- Fill as full as possible using current + lower UNLOCKED foods, biggest power first, capped
-	-- by BOTH remaining stomach space AND money on hand. _G.foods is ordered by power ascending
-	-- (island N == index N), so iterating nearIslandNumber -> 1 is largest -> smallest. We never
-	-- spend more coins than we have and never exceed stomachMax (qty floored by remaining space).
+	-- by BOTH remaining stomach space AND money on hand. _G.foods is ordered by CLIMB SLOT with
+	-- power ascending, so walking the array downward is largest -> smallest. We never spend more
+	-- coins than we have and never exceed stomachMax (qty floored by remaining space).
 	local remaining = stomMax - curPower
 	local coinsLeft = coins
 	local totalPower = 0
-	for i = feat.island, 1, -1 do  -- fill from the FEATURED food downward (its max), biggest power first
+	-- Start from the featured food's ARRAY INDEX. feat.island is a MODEL number, not an index --
+	-- island9 is the 2nd food of the climb, so `for i = feat.island, 1, -1` walked the wrong range.
+	local featIdx = 1
+	for i, ff in ipairs(_G.foods) do if ff.island == feat.island then featIdx = i; break end end
+	for i = featIdx, 1, -1 do  -- fill from the FEATURED food downward (its max), biggest power first
 		local f = _G.foods[i]
 		if f and isUnlocked(f.island) then
 			local qty = math.min(math.floor(remaining / f.power), math.floor(coinsLeft / f.price))
@@ -990,7 +660,7 @@ task.spawn(function()
 				-- only auto-open if no OTHER main menu is open (proximity yields to a deliberately-opened menu)
 				if not shopOpen and not playerClosedShop and not _G.MainMenuManager.isOtherOpen("FoodShop") then
 					nearIslandNumber = foundIsland
-					featuredFood = _G.foods[foundIsland]  -- big display defaults to the island's MAIN food on open
+					featuredFood = foodForIsland(foundIsland)  -- big display defaults to the island's MAIN food on open
 					updateFoodShop(foundIsland)
 					_G.MainMenuManager.notifyOpened("FoodShop") -- becomes the one open main menu
 					FoodShopGui.Enabled = true
@@ -1016,50 +686,11 @@ print("FIXES DONE")
 print("REMOVED 2 OLD BUTTONS (orange Shop + purple Invite from ShopClient SidebarGui)")
 print("OLD BUTTONS REMOVED")
 
--- ===== GAMEPASS "OWNED" STATE =====
--- For the two REAL permanent gamepasses only (2x Power Forever, Glitter Trail), show a non-clickable
--- "✓ OWNED" button instead of "BUY GAMEPASS" once the player owns it. Ownership comes from
--- _G.playerGamepasses (twoXForever / glitterTrail), which the server sets on join and on a live
--- purchase (PromptGamePassPurchaseFinished -> GamepassEvent). The developer products (Meteorite Explosion,
--- Skip Island, Mid-Air Recharge, 2x 1-Hour) are repeatable and intentionally NOT affected here.
-do
-	local function setOwned(btn, owned, buyColor)
-		if not btn then return end
-		if owned then
-			btn.Text = "\xe2\x9c\x93 OWNED"            -- ✓ OWNED
-			btn.BackgroundColor3 = Color3.fromRGB(70,70,70)
-			btn.AutoButtonColor = false
-			btn.Active = false                          -- not clickable (purchase is also guarded in onClick)
-		else
-			btn.Text = "BUY GAMEPASS"
-			btn.BackgroundColor3 = buyColor
-			btn.AutoButtonColor = true
-			btn.Active = true
-		end
-	end
-	local function refreshOwned()
-		local gp = _G.playerGamepasses
-		-- Both "BUY GAMEPASS" buttons are orange after the shop restyle, so restore to that when not owned.
-		setOwned(btn1, gp and gp.twoXForever == true, Color3.fromRGB(255,160,20))
-		setOwned(btn2, gp and gp.glitterTrail == true, Color3.fromRGB(255,160,20))
-	end
-	refreshOwned() -- initial (covers ownership already received on join)
-	-- Live: CoreClient's GamepassEvent handler updates _G.playerGamepasses first; defer so we read the
-	-- updated value, then flip the card to OWNED immediately (e.g. right after a purchase grant).
-	local GamepassEvent = game:GetService("ReplicatedStorage"):FindFirstChild("GamepassEvent")
-		or game:GetService("ReplicatedStorage"):WaitForChild("GamepassEvent", 10)
-	if GamepassEvent then
-		GamepassEvent.OnClientEvent:Connect(function() task.defer(refreshOwned) end)
-	end
-	-- Safety net: also re-check every second so the card stays correct regardless of event timing.
-	task.spawn(function() while true do task.wait(1); refreshOwned() end end)
-end
-
 -- ===== EXTERNAL OPEN/CLOSE: a workspace "Shop" part (wired in ShopGlue.client.luau) opens this UI =====
 _G.OpenFoodShop = function(island)
 	island = island or nearIslandNumber or 1
 	nearIslandNumber = island
-	featuredFood = _G.foods[island] or _G.foods[1]
+	featuredFood = foodForIsland(island) or _G.foods[1]
 	pcall(function() updateFoodShop(island) end)
 	if _G.MainMenuManager then _G.MainMenuManager.notifyOpened("FoodShop") end
 	FoodShopGui.Enabled = true
@@ -1072,26 +703,12 @@ _G.CloseFoodShop = function()
 	shopOpen = false
 	if _G.MainMenuManager then _G.MainMenuManager.notifyClosed("FoodShop") end
 end
-_G.OpenPremiumShop = function()
-	if _G.MainMenuManager then _G.MainMenuManager.notifyOpened("Premium") end
-	PremiumShopGui.Enabled = true
-end
-print("[Shop] external hooks ready: _G.OpenFoodShop / _G.CloseFoodShop / _G.OpenPremiumShop")
+print("[Shop] external hooks ready: _G.OpenFoodShop / _G.CloseFoodShop")
 
--- ===== JUNGLE CHROME -- make the SHOP match the Pet Hub EXACTLY (olive panel, bamboo border, =====
--- corner leaf vines, wooden plaque header, glossy buttons). Same shared module the look comes from.
-task.spawn(function()
-	local okMod, JC = pcall(function()
-		return require(game:GetService("ReplicatedStorage"):WaitForChild("DinosaurRealm"):WaitForChild("JungleChrome", 10))
-	end)
-	if not okMod or not JC then warn("[Shop] JungleChrome module missing -- SHOP keeps its default style"); return end
-	JC.buildShell(PremiumShopGui)        -- bamboo border + corner/edge vines behind the panel
-	JC.stylePanel(premPanel)             -- olive-green panel + gradient + stroke (exact Pet Hub values)
-	local subLbl; for _, c in ipairs(premHeader:GetChildren()) do if c:IsA("TextLabel") and c ~= premTitleLbl then subLbl = c; break end end
-	JC.plaqueHeader(premHeader, premTitleLbl, subLbl, premClose) -- wooden plaque header (keeps the "SHOP" title)
-	for _, v in ipairs(premPanel:GetDescendants()) do if v:IsA("TextButton") and v ~= premClose then JC.styleButton(v) end end -- glossy buy buttons
-	for _, card in ipairs({ card1, card2, card3, card4, card5, card6 }) do -- cards -> Pet Hub card green (matching set)
-		if card then card.BackgroundColor3 = Color3.fromRGB(34,74,40); local cs = card:FindFirstChildOfClass("UIStroke") or Instance.new("UIStroke"); cs.Color = Color3.fromRGB(22,44,26); cs.Thickness = 2; cs.Parent = card end
-	end
-	print("[Shop] jungle chrome applied -- SHOP now matches the Pet Hub")
-end)
+-- ===== THE PREMIUM (\xF0\x9F\x9B\x92 SHOP) PANEL NO LONGER LIVES HERE =====
+-- This file used to build a second ScreenGui called "PremiumShopGui" -- the gamepass/product
+-- panel -- alongside the food shop. Bootstrap built a third one of its own under the same name,
+-- so PlayerGui held two, and the SHOP button toggled whichever FindFirstChild happened to return.
+-- Both are gone: ShopKit.client.luau builds the one PremiumShopGui now, and provides
+-- _G.OpenPremiumShop / _G.toggleShopKit. This file owns the FOOD shop and nothing else.
+

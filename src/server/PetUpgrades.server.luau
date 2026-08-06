@@ -28,6 +28,7 @@ local PetUpgradeEvent   = ev("PetUpgradeEvent")        -- c->s: free / test leve
 local PetProgressEvent  = ev("PetProgressEvent")       -- c->s: (petId, peakHeight, addTime)
 local PetPendingUpgrade = ev("PetPendingUpgradeEvent") -- c->s: (petId) declared before a Robux prompt
 local PetEquipEvent     = ev("PetEquipEvent")          -- c->s: the Pet Hub EQUIP/UNEQUIP button (created here so the hub finds it)
+local PetEquipBroadcast = ev("PetEquipBroadcast")      -- s->c (ALL): a player's equipped-pet info -> RemotePets renders OTHER players' followers
 local StegoHatched      = ev("StegoHatched")           -- c->s: the player hatched the Stego -> grant it
 
 -- ============================================================================
@@ -47,6 +48,11 @@ local PETS = {
 	TyrannosaurusPet = { displayName = "T-Rex", maxLevel = 25 },
 }
 local RARE_NAMES = { StegoPet = "Cosmic Stegosaurus", RaptorPet = "Alpha Velociraptor", SharkPet = "Ancient Megalodon", TriceratopsPet = "Elder Triceratops", SpinosaurusPet = "Swamp King Spinosaurus", TyrannosaurusPet = "Volcano Tyrant Rex" }
+-- RARE hatch variants: rolled only the FIRST time a player ever hatches each pet. Re-hatching is
+-- always a guaranteed normal. Odds = 1/N. T-Rex is the ultra-rare 1/500 "Mythical"; the rest are 1/99 "Exotic".
+local RARE_ODDS = { TyrannosaurusPet = 500 } -- default 99 (see rollRare)
+local PetRareEvent = ev("PetRareEvent")   -- s->c: (petId, rareName) a RARE hatched -> client plays the fanfare
+_G.playerEverHatched = _G.playerEverHatched or {} -- [player][petId] = true (first-time gate; the rare roll only happens once)
 
 -- ROBUX TIER-SKIP products (placeholder ids -- REPLACE with real Developer Products before launch)
 local PET_SKIP_PRODUCTS = {
@@ -103,12 +109,24 @@ local function getPetData(player, petId)
 end
 
 -- ===== resync to the client =====
+-- CROSS-PLAYER: broadcast this player's equipped-pet info to EVERY client so RemotePets can
+-- render their follower for everyone (userId, petId|false, level, isRare).
+local function equipInfo(player)
+	local petId = _G.playerEquippedPet[player]
+	local d = petId and getPetData(player, petId)
+	return { userId = player.UserId, petId = petId or false, level = (d and d.level) or 1, isRare = (d and d.rare) or false }
+end
+local function broadcastEquip(player)
+	pcall(function() PetEquipBroadcast:FireAllClients(equipInfo(player)) end)
+end
+
 local function sendState(player)
 	local petId = _G.playerEquippedPet[player]
 	local d = petId and getPetData(player, petId)
 	pcall(function() PetStateEvent:FireClient(player, {
 		[petId or "none"] = d and { owns = true, equipped = true, level = d.level, rare = d.rare or false } or nil,
 	}) end)
+	broadcastEquip(player) -- keep other players' view of this pet in sync (equip / level / rare)
 end
 local function sendInventory(player)
 	local payload = { owned = {}, totalPets = 0 }
@@ -256,8 +274,18 @@ local function grantPet(player, petId)
 	if not PETS[petId] then return end
 	_G.playerOwnedPets[player] = _G.playerOwnedPets[player] or {}
 	if not _G.playerOwnedPets[player][petId] then
-		_G.playerOwnedPets[player][petId] = { level = 1, xp = 0, height = 0, time = 0 }
-		print(("[PetUpgrades] granted %s to %s (Lv1)"):format(petId, player.Name))
+		-- FIRST-EVER hatch of this pet -> roll the rare variant (1/odds). Re-hatches never roll.
+		_G.playerEverHatched[player] = _G.playerEverHatched[player] or {}
+		local firstEver = not _G.playerEverHatched[player][petId]
+		_G.playerEverHatched[player][petId] = true
+		local isRare = firstEver and (math.random(1, RARE_ODDS[petId] or 99) == 1)
+		_G.playerOwnedPets[player][petId] = { level = isRare and PET_MAX_LEVEL or 1, xp = 0, height = 0, time = 0, rare = isRare or nil }
+		if isRare then
+			print(("[PetUpgrades] *** RARE *** %s hatched for %s -> %s (pre-maxed Lv%d)"):format(petId, player.Name, RARE_NAMES[petId] or petId, PET_MAX_LEVEL))
+			pcall(function() PetRareEvent:FireClient(player, petId, RARE_NAMES[petId]) end)
+		else
+			print(("[PetUpgrades] granted %s to %s (Lv1)"):format(petId, player.Name))
+		end
 	end
 	_G.playerEquippedPet[player] = petId
 	sendState(player); sendInventory(player)
@@ -271,7 +299,7 @@ local TriceratopsHatched = ev("TriceratopsHatched") -- c->s: the player complete
 TriceratopsHatched.OnServerEvent:Connect(function(player) grantPet(player, "TriceratopsPet") end)
 local SpinosaurusHatched = ev("SpinosaurusHatched") -- c->s: the player completed the island5 mosquito quest -> grant it
 SpinosaurusHatched.OnServerEvent:Connect(function(player) grantPet(player, "SpinosaurusPet") end)
-local TyrannosaurusHatched = ev("TyrannosaurusHatched") -- c->s: the player plugged all island8 geysers -> grant it
+local TyrannosaurusHatched = ev("TyrannosaurusHatched") -- c->s: the player plugged all island11 geysers -> grant it
 TyrannosaurusHatched.OnServerEvent:Connect(function(player) grantPet(player, "TyrannosaurusPet") end)
 
 -- ===== EQUIP from the Pet Hub: set the equipped pet, refresh the hub badge, and tell the client to spawn
@@ -289,6 +317,60 @@ PetEquipEvent.OnServerEvent:Connect(function(player, arg)
 	print(("[PetUpgrades] %s equipped: %s"):format(player.Name, tostring(_G.playerEquippedPet[player] or "(none)")))
 end)
 
+-- ============================================================================
+-- CROSS-PLACE ARRIVAL (called by ArrivalReceiver.server.luau)
+-- ============================================================================
+-- A player teleported in from the SPACE REALM carries their pet table in TeleportData. That table is
+-- keyed by the SPACE catalog -- BroccoliPet, CoconutCrab, ButterDuck, BurritoArmadillo -- which shares
+-- NOT ONE id with the PETS catalog above.
+--
+-- So it has to be FILTERED, and the filter has to live here, because this is where the catalog lives.
+-- Merging it raw (which is what the stock receiver did) is not merely useless, it is DESTRUCTIVE:
+--
+--   * ownsPet() only checks that table, so it returns TRUE for "BroccoliPet" -> awardXP pours every
+--     point of XP into it, and no real dino pet can gain a single point while it stays equipped.
+--   * sendInventory() iterates PETS, so the Hub still reads "No Pets Unlocked" -- the pet eating the
+--     XP is invisible.
+--   * PetFollow's EQUIP_TMPL has no entry for it, so no follower ever spawns.
+--
+-- An arriving player would have looked, to themselves, like their pets simply vanished -- while one of
+-- them quietly ate the entire session's progression.
+--
+-- Returns (kept, dropped) so the receiver can log what actually crossed.
+_G.petsRestoreFromArrival = function(player, ownedPets, equippedPet)
+	local kept, dropped = 0, 0
+	_G.playerOwnedPets[player]   = _G.playerOwnedPets[player]   or {}
+	_G.playerEverHatched[player] = _G.playerEverHatched[player] or {}
+
+	if type(ownedPets) == "table" then
+		for storageKey, d in pairs(ownedPets) do
+			local baseId = tostring(storageKey):gsub("#R$", "") -- rare variants live under "<petId>#R"
+			if PETS[baseId] and type(d) == "table" then
+				_G.playerOwnedPets[player][storageKey] = d
+				-- They already hatched it once, in another place. Never re-roll its rare.
+				_G.playerEverHatched[player][baseId] = true
+				kept = kept + 1
+			else
+				dropped = dropped + 1 -- a space pet. ArrivalReceiver keeps it in _G.arrivedSpacePets.
+			end
+		end
+	end
+
+	-- Only ever equip something they own HERE. Equipping a space pet id is the exact bug described
+	-- above, so an unknown id equips NOTHING and they simply arrive petless -- which is honest, and is
+	-- what a fresh Dino Realm session looks like anyway (this game does not persist pets).
+	local baseEquipped = equippedPet and tostring(equippedPet):gsub("#R$", "") or nil
+	if baseEquipped and PETS[baseEquipped] and ownsPet(player, equippedPet) then
+		_G.playerEquippedPet[player] = equippedPet
+		pcall(function() PetEquipEvent:FireClient(player, equippedPet) end) -- PetFollow builds the follower
+	else
+		_G.playerEquippedPet[player] = nil
+	end
+
+	sendState(player); sendInventory(player)
+	return kept, dropped
+end
+
 -- ===== /allpets : DEV command -- grant BOTH pets via the normal grant path (de-duped + Hub refresh) =====
 local function giveAllPets(player)
 	grantPet(player, "StegoPet")   -- same path as the NestingNook/hatch grant
@@ -296,7 +378,7 @@ local function giveAllPets(player)
 	grantPet(player, "SharkPet")   -- same path as the ButterLake/island4 fishing grant
 	grantPet(player, "TriceratopsPet") -- same path as the Triceratops island grant
 	grantPet(player, "SpinosaurusPet") -- same path as the island5 mosquito grant
-	grantPet(player, "TyrannosaurusPet") -- same path as the island8 geyser grant
+	grantPet(player, "TyrannosaurusPet") -- same path as the island11 geyser grant
 	local owned = {}
 	for id in pairs(_G.playerOwnedPets[player] or {}) do owned[#owned+1] = id end
 	print(("[/allpets] granted Stego + Raptor + Megalodon + Triceratops + Spinosaurus + T-Rex to %s; hub refreshed"):format(player.Name))
@@ -314,5 +396,18 @@ Players.PlayerRemoving:Connect(function(p) _G.playerOwnedPets[p] = nil; _G.playe
 local function initInv(p) task.delay(2.5, function() if p.Parent then sendInventory(p) end end) end
 Players.PlayerAdded:Connect(initInv)
 for _, p in ipairs(Players:GetPlayers()) do initInv(p) end
+
+-- CROSS-PLAYER: when someone joins, replay every CURRENT player's equipped pet to them so their
+-- RemotePets renders all existing followers (not just ones equipped after they joined).
+local function replayEquipsTo(newP)
+	task.delay(3.5, function()
+		if not newP.Parent then return end
+		for _, p in ipairs(Players:GetPlayers()) do
+			if p ~= newP then pcall(function() PetEquipBroadcast:FireClient(newP, equipInfo(p)) end) end
+		end
+	end)
+end
+Players.PlayerAdded:Connect(replayEquipsTo)
+for _, p in ipairs(Players:GetPlayers()) do replayEquipsTo(p) end
 
 print("[PetUpgrades] loaded -- Stegosaurus XP/level/evolve (grant on hatch, ] to level, _G.petOn* for XP)")

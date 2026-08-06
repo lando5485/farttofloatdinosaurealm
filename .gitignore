@@ -1,6 +1,9 @@
 # Claude Code local settings
 .claude/
 
+# Local tooling binaries
+rojo.exe
+
 # OS junk
 Thumbs.db
 .DS_Store

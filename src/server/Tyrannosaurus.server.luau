@@ -1,7 +1,7 @@
 --======================================================================
 -- Tyrannosaurus.server.luau  (server Script -- CSG/UnionAsync is server-only)
 --======================================================================
--- A T-REX pet (island8 "Volcanic Vista" reward) on the EXACT same pipeline as
+-- A T-REX pet (island11 "Volcanic Vista" reward -- the FINALE geyser quest) on the EXACT same pipeline as
 -- the other pets: rounded-cube BodyUnion (PSW/PSH/PSD/PSR/PSS), flat-disc eyes
 -- (whitepartofeye/blackpartofeye/Glint), 4 stubby feet, matte/smooth, same publish.
 -- FEATURES: a BIG toothy head + jaws, the signature tiny arms, brow ridges,

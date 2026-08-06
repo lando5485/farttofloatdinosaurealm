@@ -25,6 +25,9 @@ local RedwoodHatch  = RS:WaitForChild("RedwoodRaptorHatch", 30)
 local RaptorHatched = RS:FindFirstChild("RaptorHatched") or RS:WaitForChild("RaptorHatched", 30)
 
 local BASE_FOV, SCOPE_FOV = 70, 22
+-- Aim sensitivity down the scope. Lower = steadier/less twitchy (was effectively 1.0).
+-- Roughly matches the zoom ratio so the reticle doesn't fly across a zoomed-in target.
+local SCOPE_SENSITIVITY = 0.28
 
 -- ===== scope overlay GUI =====
 local sg = Instance.new("ScreenGui"); sg.Name = "SniperScope"; sg.ResetOnSpawn = false; sg.IgnoreGuiInset = true
@@ -83,14 +86,19 @@ local function setScope(on)
 	local ch = player.Character; local t0 = ch and ch:FindFirstChild("Sniper")
 	if t0 then for _, d in ipairs(t0:GetDescendants()) do if d:IsA("BasePart") then d.LocalTransparencyModifier = on and 1 or 0 end end end
 	TS:Create(cam, TweenInfo.new(0.18), { FieldOfView = on and SCOPE_FOV or BASE_FOV }):Play()
+	-- steady the aim while scoped; restore full sensitivity when un-scoped
+	UIS.MouseDeltaSensitivity = on and SCOPE_SENSITIVITY or 1
 	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
 	if hum then hum.WalkSpeed = on and 8 or 16 end
 end
 
-local function isMama(inst)
+-- Return the raptor MODEL that `inst` belongs to, or nil. Raptors are tagged with
+-- the "RedwoodRaptor" attribute (their names vary), so we detect by that -- and we
+-- must tell the server WHICH raptor was hit, so we pass this model.
+local function mamaModelOf(inst)
 	local m = inst
-	while m do if m.Name == "MamaRaptor" then return true end; m = m.Parent end
-	return false
+	while m do if m:IsA("Model") and m:GetAttribute("RedwoodRaptor") then return m end; m = m.Parent end
+	return nil
 end
 
 -- bright tracer round from the muzzle to the impact
@@ -156,8 +164,9 @@ local function shoot()
 		TS:Create(fl, TweenInfo.new(0.12), { BackgroundTransparency = 1 }):Play(); Debris:AddItem(fl, 0.2)
 	end
 	pcall(function() local s = Instance.new("Sound"); s.SoundId = "rbxassetid://9114065998"; s.Volume = 0.7; s.Parent = cam; s:Play(); Debris:AddItem(s, 1) end)
-	if hit and hit.Instance and isMama(hit.Instance) then
-		RaptorShot:FireServer()
+	local hitMama = hit and hit.Instance and mamaModelOf(hit.Instance)
+	if hitMama then
+		RaptorShot:FireServer(hitMama) -- tell the server WHICH raptor was hit
 	end
 end
 
@@ -177,7 +186,56 @@ task.spawn(function()
 		task.wait(0.3)
 	end
 end)
-player.CharacterAdded:Connect(function() scoped = false; sg.Enabled = false; cam.FieldOfView = BASE_FOV; player.CameraMode = Enum.CameraMode.Classic; hideHUD(false) end)
+player.CharacterAdded:Connect(function() scoped = false; sg.Enabled = false; cam.FieldOfView = BASE_FOV; player.CameraMode = Enum.CameraMode.Classic; UIS.MouseDeltaSensitivity = 1; hideHUD(false) end)
+
+-- ===== TARGET LOCK: outline the Mama Raptor + light up the reticle when your
+-- aim is actually on her, so it's obvious what you're about to shoot. =====
+local RunSvc = game:GetService("RunService")
+local lockHL = Instance.new("Highlight")
+lockHL.Name = "RaptorTargetLock"
+lockHL.FillColor = Color3.fromRGB(255, 55, 55)
+lockHL.FillTransparency = 0.55
+lockHL.OutlineColor = Color3.fromRGB(255, 30, 30)
+lockHL.OutlineTransparency = 0
+lockHL.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop -- readable even through brush
+lockHL.Enabled = false
+lockHL.Parent = PlayerGui
+
+local DOT_IDLE, DOT_LOCK = Color3.fromRGB(255, 60, 60), Color3.fromRGB(60, 255, 90)
+
+-- Raycast down the current aim (scope center or mouse) and return the hit.
+local function aimHit()
+	local char = player.Character
+	local origin, dirv
+	if scoped then
+		origin = cam.CFrame.Position; dirv = cam.CFrame.LookVector * 1000
+	else
+		local mp = UIS:GetMouseLocation(); local ray = cam:ViewportPointToRay(mp.X, mp.Y)
+		origin = ray.Origin; dirv = ray.Direction * 1000
+	end
+	local rp = RaycastParams.new(); rp.FilterType = Enum.RaycastFilterType.Exclude
+	rp.FilterDescendantsInstances = { char }
+	return workspace:Raycast(origin, dirv, rp)
+end
+
+RunSvc.RenderStepped:Connect(function()
+	if not holdingSniper() then
+		if lockHL.Enabled then lockHL.Enabled = false; lockHL.Adornee = nil end
+		return
+	end
+	local hit = aimHit()
+	local mdl = hit and hit.Instance and mamaModelOf(hit.Instance) -- the SPECIFIC raptor under the aim
+	if mdl then
+		lockHL.Adornee = mdl
+		lockHL.Enabled = true
+		dot.BackgroundColor3 = DOT_LOCK
+		dot.Size = UDim2.fromOffset(11, 11)
+	else
+		lockHL.Enabled = false; lockHL.Adornee = nil
+		dot.BackgroundColor3 = DOT_IDLE
+		dot.Size = UDim2.fromOffset(6, 6)
+	end
+end)
 
 -- ===== hatch -> the PET =====
 RedwoodHatch.OnClientEvent:Connect(function(cf)
@@ -192,44 +250,82 @@ RedwoodHatch.OnClientEvent:Connect(function(cf)
 	print("[Redwood] hatched the Velociraptor -> follower + Pet Hub")
 end)
 
--- ===== LIVING RAPTOR: animate the Mama Raptor's bones locally (server only moves its body;
--- Bone.Transform doesn't replicate, so each client must drive it) -- tail swish + leg walk + head bob =====
+-- ===== LIVING RAPTORS: animate EVERY raptor's bones locally (server only moves the
+-- bodies; Bone.Transform doesn't replicate, so each client must drive it) -- tail
+-- swish + leg walk + head bob. Runs for all 5 raptors, current and future. =====
 task.spawn(function()
 	local RunService = game:GetService("RunService")
-	local mama = workspace:WaitForChild("MamaRaptor", 90)
-	if not mama then return end
-	local function bone(n) local b = mama:FindFirstChild(n, true); return (b and b:IsA("Bone")) and b or nil end
-	local tailB = {}; for i = 1, 5 do tailB[i] = bone("Tail" .. i) end
-	-- diagonal gait: front-right + back-left in phase, front-left + back-right opposite
-	local legB = {
-		{ bone("FrontUpLeg.R"), 0.0 }, { bone("FrontLowLeg.R"), 0.5 },
-		{ bone("BackUpLeg.L"),  0.0 }, { bone("BackLowLeg.L"),  0.5 },
-		{ bone("FrontUpLeg.L"), math.pi }, { bone("FrontLowLeg.L"), math.pi + 0.5 },
-		{ bone("BackUpLeg.R"),  math.pi }, { bone("BackLowLeg.R"),  math.pi + 0.5 },
-	}
-	local neckB, headB, torsoB = bone("Neck"), bone("Head"), bone("Torso")
-	local t, walkT, moveTimer = 0, 0, 0
-	local prev = mama:GetPivot().Position
-	RunService.RenderStepped:Connect(function(dt)
-		if not mama.Parent then return end
-		t += dt
-		local now = mama:GetPivot().Position
-		if (Vector3.new(now.X - prev.X, 0, now.Z - prev.Z)).Magnitude > 0.02 then moveTimer = 0.4 end
-		prev = now
-		moveTimer = math.max(0, moveTimer - dt)
-		local moving = moveTimer > 0 -- stays true between throttled position updates so the legs keep walking
-		if moving then walkT += dt * 9 end
-		-- tail: travelling side-to-side wave
-		for i, b in ipairs(tailB) do if b then b.Transform = CFrame.Angles(0, math.sin(t * 4 - i * 0.7) * math.rad(13), 0) end end
-		-- head + neck: gentle scan/bob
-		if neckB then neckB.Transform = CFrame.Angles(math.sin(t * 1.6) * math.rad(4), math.sin(t * 1.1) * math.rad(7), 0) end
-		if headB then headB.Transform = CFrame.Angles(math.sin(t * 2.2) * math.rad(4), 0, 0) end
-		if torsoB then torsoB.Transform = CFrame.Angles(0, 0, math.sin(walkT) * (moving and math.rad(4) or 0)) end
-		-- legs: walk cycle (only while moving)
-		local amp = moving and math.rad(34) or 0
-		for _, e in ipairs(legB) do local b, ph = e[1], e[2]; if b then b.Transform = CFrame.Angles(math.sin(walkT + ph) * amp, 0, 0) end end
-	end)
-	print("[Redwood] mama bone animation running (tail/legs/head)")
+
+	-- Drive one raptor model's bones. Same motion for every raptor, with a per-raptor
+	-- phase offset so they don't all sway in robotic lockstep.
+	local function animateRaptor(mama)
+		local function bone(n) local b = mama:FindFirstChild(n, true); return (b and b:IsA("Bone")) and b or nil end
+		local tailB = {}; for i = 1, 5 do tailB[i] = bone("Tail" .. i) end
+		-- diagonal gait: front-right + back-left in phase, front-left + back-right opposite
+		local legB = {
+			{ bone("FrontUpLeg.R"), 0.0 }, { bone("FrontLowLeg.R"), 0.5 },
+			{ bone("BackUpLeg.L"),  0.0 }, { bone("BackLowLeg.L"),  0.5 },
+			{ bone("FrontUpLeg.L"), math.pi }, { bone("FrontLowLeg.L"), math.pi + 0.5 },
+			{ bone("BackUpLeg.R"),  math.pi }, { bone("BackLowLeg.R"),  math.pi + 0.5 },
+		}
+		local neckB, headB, torsoB = bone("Neck"), bone("Head"), bone("Torso")
+		local t, walkT, moveTimer, gaitW = math.random() * 10, 0, 0, 0 -- random start phase = desync
+		local prev = mama:GetPivot().Position
+		local conn
+		conn = RunService.RenderStepped:Connect(function(dt)
+			if not mama.Parent then conn:Disconnect(); return end
+			dt = math.min(dt, 1/30) -- clamp so a frame hitch can't jolt the pose
+			t += dt
+			local now = mama:GetPivot().Position
+			if (Vector3.new(now.X - prev.X, 0, now.Z - prev.Z)).Magnitude > 0.02 then moveTimer = 0.4 end
+			prev = now
+			moveTimer = math.max(0, moveTimer - dt)
+			local moving = moveTimer > 0 -- stays true between throttled position updates so the legs keep walking
+			-- ease the walk<->idle blend so the gait starts and stops smoothly (no snapping)
+			gaitW += ((moving and 1 or 0) - gaitW) * math.min(dt * 7, 1)
+			walkT += dt * (5 + 4 * gaitW)             -- stride a touch quicker at full walk
+			local breath = math.sin(t * 1.5)          -- slow idle breathing
+
+			-- tail: a travelling wave (vertical + horizontal), livelier while walking for balance
+			local tailAmp = math.rad(10 + 9 * gaitW)
+			for i, b in ipairs(tailB) do
+				if b then b.Transform = CFrame.Angles(
+					math.sin(t * (2 + gaitW) - i * 0.6) * math.rad(3),
+					math.sin(t * (3 + gaitW) - i * 0.7) * tailAmp, 0) end
+			end
+			-- neck + head: organic scanning; dips slightly forward-down as she walks
+			if neckB then neckB.Transform = CFrame.Angles(
+				math.sin(t * 1.3) * math.rad(3) + gaitW * math.rad(5),
+				math.sin(t * 0.9) * math.rad(8), math.sin(t * 1.1) * math.rad(2)) end
+			if headB then headB.Transform = CFrame.Angles(
+				math.sin(t * 2.0) * math.rad(3) - gaitW * math.rad(4),
+				math.sin(t * 0.7) * math.rad(5), 0) end
+			-- torso: subtle vertical stride-bob + roll sway, plus gentle idle breathing
+			if torsoB then
+				local bob = math.sin(walkT * 2) * 0.05 * gaitW + breath * 0.015 * (1 - gaitW)
+				torsoB.Transform = CFrame.new(0, bob, 0) * CFrame.Angles(0, 0, math.sin(walkT) * math.rad(3 + 3 * gaitW))
+			end
+			-- legs: diagonal walk cycle, amplitude eased in/out by the gait blend
+			local amp = math.rad(32) * gaitW
+			for _, e in ipairs(legB) do
+				local b, ph = e[1], e[2]
+				if b then b.Transform = CFrame.Angles(math.sin(walkT + ph) * amp, 0, 0) end
+			end
+		end)
+	end
+
+	-- Discover every raptor (each tagged with the "RedwoodRaptor" attribute, parented
+	-- to Workspace) as it streams in, and animate it once.
+	local seen = {}
+	local function tryAnimate(inst)
+		if inst:IsA("Model") and inst:GetAttribute("RedwoodRaptor") and not seen[inst] then
+			seen[inst] = true
+			task.spawn(function() task.wait(0.2); animateRaptor(inst) end) -- let bones replicate first
+		end
+	end
+	for _, c in ipairs(workspace:GetChildren()) do tryAnimate(c) end
+	workspace.ChildAdded:Connect(tryAnimate)
+	print("[Redwood] raptor bone animation running for all raptors (tail/legs/head)")
 end)
 
 print("[Redwood] client ready -- RIGHT-CLICK to scope, LEFT-CLICK to fire")

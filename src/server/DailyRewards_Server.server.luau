@@ -24,7 +24,7 @@ local Players             = game:GetService("Players")
 --======================================================================
 local Constants = {
 	CRATE = {
-		COOLDOWN_SECONDS = 21600, -- 6 hours between free claims
+		COOLDOWN_SECONDS = 28800, -- 8 hours between free claims
 		FALLBACK_COINS = 500,     -- coins when every owned pet is already maxed
 		PET_MAX_LEVEL = 25,
 		RARITY_WEIGHTS = { Uncommon = 55, Rare = 28, Epic = 13, Mythical = 4 },

@@ -1,0 +1,669 @@
+<title>Dinosaur Realm — Island Placement</title>
+<style>
+  :root {
+    color-scheme: light;
+    --plane:        #f4f5f2;
+    --surface:      #fcfcfb;
+    --ink:          #0b0b0b;
+    --ink-2:        #52514e;
+    --muted:        #898781;
+    --grid:         #e1e0d9;
+    --axis:         #c3c2b7;
+    --hairline:     rgba(11,11,11,0.10);
+    --quest:        #2a78d6;
+    --blank:        #898781;
+    --summit:       #eb6834;
+    --threshold:    #a9a7a0;
+    --chip:         rgba(11,11,11,0.05);
+    --shadow:       0 1px 2px rgba(11,11,11,0.05), 0 8px 24px -16px rgba(11,11,11,0.30);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --plane:      #0d0d0d;
+      --surface:    #1a1a19;
+      --ink:        #ffffff;
+      --ink-2:      #c3c2b7;
+      --muted:      #898781;
+      --grid:       #2c2c2a;
+      --axis:       #383835;
+      --hairline:   rgba(255,255,255,0.10);
+      --quest:      #3987e5;
+      --blank:      #898781;
+      --summit:     #d95926;
+      --threshold:  #6d6b66;
+      --chip:       rgba(255,255,255,0.06);
+      --shadow:     0 1px 2px rgba(0,0,0,0.5), 0 8px 24px -16px rgba(0,0,0,0.9);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --plane:      #0d0d0d;
+    --surface:    #1a1a19;
+    --ink:        #ffffff;
+    --ink-2:      #c3c2b7;
+    --muted:      #898781;
+    --grid:       #2c2c2a;
+    --axis:       #383835;
+    --hairline:   rgba(255,255,255,0.10);
+    --quest:      #3987e5;
+    --blank:      #898781;
+    --summit:     #d95926;
+    --threshold:  #6d6b66;
+    --chip:       rgba(255,255,255,0.06);
+    --shadow:     0 1px 2px rgba(0,0,0,0.5), 0 8px 24px -16px rgba(0,0,0,0.9);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--plane);
+    color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 40px 24px 80px;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+  }
+
+  /* ---------- header ---------- */
+  .eyebrow {
+    font-size: 11px;
+    font-weight: 650;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 8px;
+  }
+  h1 {
+    font-size: clamp(28px, 4.2vw, 42px);
+    font-weight: 700;
+    letter-spacing: -0.022em;
+    line-height: 1.1;
+    text-wrap: balance;
+    margin: 0 0 10px;
+  }
+  .lede {
+    margin: 0;
+    max-width: 62ch;
+    color: var(--ink-2);
+    font-size: 15.5px;
+  }
+  .lede code {
+    font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+    font-size: 0.9em;
+    background: var(--chip);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+
+  .kpis {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+  }
+  .kpi {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: 10px;
+    padding: 14px 16px;
+    box-shadow: var(--shadow);
+  }
+  .kpi .k-label {
+    font-size: 10.5px;
+    font-weight: 650;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .kpi .k-value {
+    font-size: 27px;
+    font-weight: 680;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+    margin-top: 3px;
+  }
+  .kpi .k-sub {
+    font-size: 12.5px;
+    color: var(--ink-2);
+  }
+
+  /* ---------- cards ---------- */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: 12px;
+    padding: 20px 22px 22px;
+    box-shadow: var(--shadow);
+    min-width: 0;
+  }
+  .card > h2 {
+    font-size: 16px;
+    font-weight: 660;
+    letter-spacing: -0.008em;
+    margin: 0 0 3px;
+  }
+  .card > .sub {
+    font-size: 13px;
+    color: var(--ink-2);
+    margin: 0 0 16px;
+    max-width: 58ch;
+  }
+
+  .cols {
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    gap: 20px;
+    align-items: start;
+  }
+  .side {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    position: sticky;
+    top: 20px;
+  }
+  @media (max-width: 900px) {
+    .cols { grid-template-columns: 1fr; }
+    .side { position: static; }
+  }
+
+  /* ---------- legend ---------- */
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    margin: 0 0 16px;
+    padding: 0;
+    list-style: none;
+    font-size: 12.5px;
+    color: var(--ink-2);
+  }
+  .legend li { display: flex; align-items: center; gap: 7px; }
+  .swatch { width: 11px; height: 11px; border-radius: 3px; flex: none; }
+  .swatch.hollow { background: transparent; box-shadow: inset 0 0 0 1.5px var(--blank); }
+  /* matches the dotted threshold rule it stands for */
+  .swatch.line {
+    width: 18px; height: 1px; border-radius: 0;
+    background: repeating-linear-gradient(to right,
+      var(--threshold) 0 1px, transparent 1px 5px);
+  }
+
+  svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .scroller { overflow-x: auto; }
+
+  text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  /* stroke-then-fill keeps labels legible where a threshold hairline passes behind them */
+  .t-name, .t-meta { paint-order: stroke; stroke: var(--surface); stroke-width: 3px; stroke-linejoin: round; }
+  .t-name  { font-size: 12.5px; font-weight: 600; fill: var(--ink); }
+  .t-meta  { font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+  .t-axis  { font-size: 10.5px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+  .t-thr   { font-size: 10px; font-weight: 620; fill: var(--muted); letter-spacing: 0.03em; }
+  .t-slot  { font-size: 10.5px; font-weight: 700; fill: var(--surface); font-variant-numeric: tabular-nums; }
+
+  .isle { cursor: default; }
+  .isle .slab { transition: opacity 120ms ease; }
+  .isle:hover .slab, .isle:focus-visible .slab { opacity: 0.78; }
+  .isle:focus-visible { outline: none; }
+  .isle:focus-visible .halo { opacity: 1; }
+  .halo { opacity: 0; fill: none; stroke: var(--quest); stroke-width: 2; }
+
+  /* ---------- tooltip ---------- */
+  #tip {
+    position: fixed;
+    z-index: 50;
+    pointer-events: none;
+    opacity: 0;
+    transform: translate(-50%, calc(-100% - 12px));
+    background: var(--surface);
+    color: var(--ink);
+    border: 1px solid var(--hairline);
+    border-radius: 9px;
+    padding: 9px 12px;
+    box-shadow: 0 4px 20px -6px rgba(0,0,0,0.35);
+    font-size: 12.5px;
+    line-height: 1.5;
+    white-space: nowrap;
+    transition: opacity 90ms ease;
+  }
+  #tip .tt-name { font-weight: 660; display: flex; align-items: center; gap: 7px; }
+  #tip .tt-row { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  #tip .tt-row b { color: var(--ink); font-weight: 600; }
+
+  /* ---------- table ---------- */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+  caption {
+    caption-side: top;
+    text-align: left;
+    font-size: 13px;
+    color: var(--ink-2);
+    padding-bottom: 14px;
+  }
+  th, td {
+    text-align: right;
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--grid);
+    white-space: nowrap;
+  }
+  th {
+    font-size: 10.5px;
+    font-weight: 650;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border-bottom: 1px solid var(--axis);
+  }
+  th:first-child, td:first-child,
+  th.l, td.l { text-align: left; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr.is-summit td { background: var(--chip); }
+  tbody tr.is-new td { color: var(--ink-2); }
+  .dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 2px;
+    margin-right: 8px;
+    vertical-align: 0;
+  }
+  .dot-new { background: transparent; box-shadow: inset 0 0 0 1.5px var(--blank); }
+  .model {
+    font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+    font-size: 12px;
+    color: var(--ink-2);
+  }
+
+  .note {
+    font-size: 12.5px;
+    color: var(--ink-2);
+    margin: 14px 0 0;
+    padding-top: 14px;
+    border-top: 1px solid var(--grid);
+    max-width: 78ch;
+  }
+  .note b { color: var(--ink); font-weight: 620; }
+
+  footer {
+    font-size: 12px;
+    color: var(--muted);
+    border-top: 1px solid var(--grid);
+    padding-top: 16px;
+  }
+  footer code {
+    font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+    font-size: 0.92em;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition-duration: 0.01ms !important; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <p class="eyebrow">Fart to Float · Dinosaur Realm · proposed 14-slot tower</p>
+    <h1>Island placement &amp; the climb</h1>
+    <p class="lede">
+      The Dinosaur Realm islands re-laid onto the original 14-slot coordinate ladder — Y 150 at the
+      base up to <strong>24,017</strong> at the summit, where Volcanic Vista now sits. Filling 14 slots
+      with 13 built islands leaves one gap, shown hollow at slot 12. Slot is the climb position; the
+      <code>island&lt;N&gt;</code> model number is not.
+    </p>
+  </header>
+
+  <section class="kpis" id="kpis"></section>
+
+  <div class="cols">
+
+    <section class="card">
+      <h2>The tower, to scale</h2>
+      <p class="sub">
+        Side elevation. Vertical axis is true world Y; horizontal position is true world X, so the
+        zig-zag is the real offset. Gut ceilings are drawn where <code>50 + maxPower × 14</code> lands.
+      </p>
+      <ul class="legend">
+        <li><span class="swatch" style="background:var(--quest)"></span>Quest island</li>
+        <li><span class="swatch" style="background:var(--blank)"></span>Blank scenery</li>
+        <li><span class="swatch" style="background:var(--summit)"></span>Summit finale</li>
+        <li><span class="swatch hollow"></span>Slot to build</li>
+        <li><span class="swatch line"></span>Gut height ceiling</li>
+      </ul>
+      <div class="scroller"><svg id="tower" viewBox="0 0 720 1640" role="img"
+        aria-label="Side elevation of the 14-slot tower from Y 150 at the bottom to Y 24,017 at the summit."></svg></div>
+    </section>
+
+    <div class="side">
+
+      <section class="card">
+        <h2>Footprint from above</h2>
+        <p class="sub">The X/Z zig-zag. Each island sits on the opposite side of the one below it, widening 20 studs per slot.</p>
+        <svg id="plan" viewBox="0 0 420 420" role="img"
+          aria-label="Top-down plot of island X and Z coordinates, zig-zagging outward from the origin."></svg>
+      </section>
+
+      <section class="card">
+        <h2>Vertical gap per slot</h2>
+        <p class="sub">Studs to climb from the island below. The gap grows the whole way up — 640 at the base, 3,811 to the summit.</p>
+        <svg id="gaps" viewBox="0 0 420 400" role="img"
+          aria-label="Bar chart of the vertical gap in studs between each island and the one below it."></svg>
+      </section>
+
+    </div>
+  </div>
+
+  <section class="card">
+    <table>
+      <caption>Every slot: world coordinate, island model, and the food that stand sells. Slot 12 is the island still to build.</caption>
+      <thead>
+        <tr>
+          <th class="l">Slot</th>
+          <th class="l">Island</th>
+          <th class="l">Model</th>
+          <th>X</th><th>Y</th><th>Z</th>
+          <th>ΔY</th>
+          <th class="l">Food</th>
+          <th>Price</th><th>Power</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <p class="note">
+      <b>This layout is a proposal, not the live game.</b> Dinosaur Realm currently runs 13 slots
+      topping out at Y 19,200. Going to 14 needs an <code>island14</code> model in Workspace, a 14th
+      entry in <code>SLOT_POS</code> and <code>SLOT_TO_ISLAND</code>, a food for model 14, and the
+      hard-coded <code>13</code> updated in Bootstrap, AnchorIslands, IslandTeleport, MonsoonRain,
+      MeteoriteExplosion and WormholeService.
+    </p>
+    <p class="note">
+      <b>Food power still does not ramp with the climb.</b> The <code>foods</code> table is keyed by
+      island <em>model</em> number while the tower reorders the islands, so along this route power runs
+      8 → 300 → 25 → 540 → 45 → 640 → 70 → 370 → 100 → 240 → 140 → ? → 185 → 450. Chili Peppers, Grapes
+      and Popcorn each unlock on a slot where your tank is too small to hold one serving, so the
+      purchase is rejected outright until several guts later.
+    </p>
+  </section>
+
+  <footer>
+    Sources: <code>src/server/IslandLayout.server.luau:41</code> ·
+    <code>src/shared/IslandOrder.luau:22</code> ·
+    <code>src/server/Shop.server.luau:50,70</code>.
+    Coordinates are the island model's pivot; players stand a little above it.
+  </footer>
+</div>
+
+<div id="tip" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+  "use strict";
+
+  // ── Data: read from the live source, slot 1 = bottom of the tower ──────────
+  // 14-slot tower on the original Fart to Float coordinate ladder (150 → 24,017),
+  // with Volcanic Vista pinned to the new top slot. island14 is the extra blank
+  // needed to fill 14 slots — it does not exist in Workspace yet.
+  const ISLANDS = [
+    { slot:1,  x:   0, y:  150, z:   0, model:1,  name:"Nesting Nook",     type:"quest",  food:"Eggs",          price:5,   power:8   },
+    { slot:2,  x: 120, y:  790, z:  60, model:9,  name:"Jungle Junction",  type:"blank",  food:"Chili Peppers", price:500, power:300 },
+    { slot:3,  x:-160, y: 1680, z: 100, model:2,  name:"Fern Frontier",    type:"quest",  food:"Lettuce",       price:24,  power:25  },
+    { slot:4,  x: 180, y: 2480, z:-120, model:12, name:"Sunscorch Sands",  type:"blank",  food:"Grapes",        price:405, power:540 },
+    { slot:5,  x:-200, y: 3580, z: 160, model:3,  name:"Fossil Frontier",  type:"quest",  food:"Bananas",       price:85,  power:45  },
+    { slot:6,  x: 220, y: 4820, z:-180, model:13, name:"Glacier Gulch",    type:"blank",  food:"Popcorn",       price:700, power:640 },
+    { slot:7,  x:-240, y: 6460, z: 200, model:4,  name:"Coastal Crossing", type:"quest",  food:"Fish",          price:94,  power:70  },
+    { slot:8,  x: 260, y: 8202, z:-220, model:10, name:"Petrified Pass",   type:"blank",  food:"Potatoes",      price:400, power:370 },
+    { slot:9,  x:-280, y: 9732, z: 240, model:5,  name:"Misty Mire",       type:"quest",  food:"Ribs",          price:142, power:100 },
+    { slot:10, x: 300, y:11978, z:-260, model:8,  name:"Inferno Isle",     type:"blank",  food:"Chicken",       price:600, power:240 },
+    { slot:11, x:-320, y:14194, z: 280, model:6,  name:"Redwood Ridge",    type:"quest",  food:"Mushrooms",     price:138, power:140 },
+    { slot:12, x: 340, y:17138, z:-300, model:14, name:"New blank island", type:"new",    food:null,            price:null,power:null},
+    { slot:13, x:-360, y:20206, z: 320, model:7,  name:"Raptor Ridge",     type:"quest",  food:"Apples",        price:202, power:185 },
+    { slot:14, x: 380, y:24017, z:-340, model:11, name:"Volcanic Vista",   type:"summit", food:"Steak",         price:560, power:450 }
+  ];
+
+  // Gut tiers whose ceiling (50 + maxPower*14) falls inside the tower.
+  const GUTS = [
+    { name:"Hatchling Belly", ceiling: 1450 },
+    { name:"Raptor Gut",      ceiling: 2598 },
+    { name:"Stego Stomach",   ceiling: 7330 },
+    { name:"Bronto Belly",    ceiling:15100 }
+  ];
+
+  // "new" reuses the blank hue but renders hollow — it is a slot to build, not a built island
+  const COLOR = { quest:"var(--quest)", blank:"var(--blank)", summit:"var(--summit)", new:"var(--blank)" };
+  const NS = "http://www.w3.org/2000/svg";
+  const fmt = n => n.toLocaleString("en-US");
+
+  const el = (tag, attrs, text) => {
+    const n = document.createElementNS(NS, tag);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    if (text != null) n.textContent = text;
+    return n;
+  };
+
+  // ── Tooltip ───────────────────────────────────────────────────────────────
+  const tip = document.getElementById("tip");
+  function showTip(d, cx, cy) {
+    tip.innerHTML =
+      '<div class="tt-name"><span class="dot" style="background:' + COLOR[d.type] + '"></span>' +
+      "Slot " + d.slot + " — " + d.name + "</div>" +
+      '<div class="tt-row">X <b>' + fmt(d.x) + "</b>  ·  Y <b>" + fmt(d.y) + "</b>  ·  Z <b>" + fmt(d.z) + "</b></div>" +
+      '<div class="tt-row">model <b>island' + d.model + "</b>  ·  " +
+      (d.food ? d.food + " <b>" + fmt(d.price) + "</b>c / <b>" + fmt(d.power) + "</b>p"
+              : "no food assigned yet") + "</div>";
+    tip.style.left = cx + "px";
+    tip.style.top = cy + "px";
+    tip.style.opacity = "1";
+  }
+  const hideTip = () => { tip.style.opacity = "0"; };
+
+  function wire(group, d) {
+    const at = ev => {
+      const r = group.getBoundingClientRect();
+      showTip(d, ev ? ev.clientX : r.left + r.width / 2, (ev ? ev.clientY : r.top) - 4);
+    };
+    group.addEventListener("mouseenter", at);
+    group.addEventListener("mousemove", at);
+    group.addEventListener("mouseleave", hideTip);
+    group.addEventListener("focus", () => at(null));
+    group.addEventListener("blur", hideTip);
+    group.setAttribute("tabindex", "0");
+    group.setAttribute("role", "img");
+    group.setAttribute("aria-label",
+      "Slot " + d.slot + ", " + d.name + ", island" + d.model +
+      ", at X " + d.x + ", Y " + d.y + ", Z " + d.z + ".");
+  }
+
+  // ── KPI row ───────────────────────────────────────────────────────────────
+  const top = ISLANDS[ISLANDS.length - 1];
+  const totalClimb = top.y - ISLANDS[0].y;
+  const gapsAll = ISLANDS.slice(1).map((d, i) => d.y - ISLANDS[i].y);
+  document.getElementById("kpis").innerHTML = [
+    ["Islands",      String(ISLANDS.length), "8 quest · 6 blank (1 to build)"],
+    ["Total climb",  fmt(totalClimb),        "studs, slot 1 → " + top.slot],
+    ["Summit",       fmt(top.y),             top.name + " (island" + top.model + ")"],
+    ["Widest gap",   fmt(Math.max(...gapsAll)), "slot 13 → 14"]
+  ].map(([l, v, s]) =>
+    '<div class="kpi"><div class="k-label">' + l + '</div><div class="k-value">' + v +
+    '</div><div class="k-sub">' + s + "</div></div>").join("");
+
+  // ── Chart 1: the tower ────────────────────────────────────────────────────
+  (function tower() {
+    const svg = document.getElementById("tower");
+    const W = 720, H = 1640;
+    const M = { top: 26, right: 168, bottom: 46, left: 168 };
+    const plotW = W - M.left - M.right;      // world X: -400 .. 400
+    const plotH = H - M.top - M.bottom;      // world Y: 0 .. 24,600
+    const yMax = 24600;
+    const sx = v => M.left + plotW / 2 + (v / 400) * (plotW / 2);
+    const sy = v => M.top + plotH - (v / yMax) * plotH;
+    const SLAB_W = 78, SLAB_H = 11;
+
+    // horizontal gridlines every 2,500 studs — solid hairlines, one shade off the surface.
+    // Starts at 2,500: a zero line would land on top of the x-axis rule.
+    // Axis labels sit at the far left edge: island names on the west side of the tower
+    // reach back to about x = 58, so hugging the plot would collide with them.
+    for (let v = 2500; v <= yMax; v += 2500) {
+      svg.appendChild(el("line", { x1: 46, y1: sy(v), x2: W - M.right + 22, y2: sy(v),
+        stroke: "var(--grid)", "stroke-width": 1 }));
+      svg.appendChild(el("text", { x: 40, y: sy(v) + 3.5, "text-anchor": "end", class: "t-axis" }, fmt(v)));
+    }
+    svg.appendChild(el("text", { x: 40, y: M.top - 10, "text-anchor": "end", class: "t-axis" }, "world Y"));
+
+    // centre plumb line — the tower's axis
+    svg.appendChild(el("line", { x1: sx(0), y1: sy(0), x2: sx(0), y2: M.top,
+      stroke: "var(--grid)", "stroke-width": 1 }));
+
+    // gut-ceiling thresholds — dotted so they read as a limit, never mistaken for the grid
+    GUTS.forEach(g => {
+      const y = sy(g.ceiling);
+      svg.appendChild(el("line", { x1: 46, y1: y, x2: W - 122, y2: y,
+        stroke: "var(--threshold)", "stroke-width": 1, "stroke-dasharray": "1 4", "stroke-linecap": "round" }));
+      svg.appendChild(el("text", { x: W - 6, y: y - 3, "text-anchor": "end", class: "t-thr" },
+        g.name.toUpperCase()));
+      svg.appendChild(el("text", { x: W - 6, y: y + 10, "text-anchor": "end", class: "t-axis" },
+        "ceiling " + fmt(g.ceiling)));
+    });
+
+    // the climb path, drawn behind the slabs
+    let dPath = "";
+    ISLANDS.forEach((d, i) => { dPath += (i ? " L" : "M") + sx(d.x) + " " + sy(d.y); });
+    svg.appendChild(el("path", { d: dPath, fill: "none", stroke: "var(--axis)", "stroke-width": 1.5,
+      "stroke-linejoin": "round", "stroke-opacity": 0.55 }));
+
+    ISLANDS.forEach(d => {
+      const cx = sx(d.x), cy = sy(d.y);
+      const g = el("g", { class: "isle" });
+
+      g.appendChild(el("rect", { class: "halo", x: cx - SLAB_W / 2 - 4, y: cy - SLAB_H / 2 - 4,
+        width: SLAB_W + 8, height: SLAB_H + 8, rx: 8 }));
+      const slab = { class: "slab", x: cx - SLAB_W / 2, y: cy - SLAB_H / 2,
+        width: SLAB_W, height: SLAB_H, rx: 4, fill: COLOR[d.type] };
+      if (d.type === "new") {                       // hollow: a slot to build, not a built island
+        slab.fill = "var(--surface)";
+        slab.stroke = COLOR.new;
+        slab["stroke-width"] = 1.5;
+        slab["stroke-dasharray"] = "3 3";
+      }
+      g.appendChild(el("rect", slab));
+      g.appendChild(el("text", { x: cx, y: cy + 3.6, "text-anchor": "middle",
+        class: "t-slot", fill: d.type === "new" ? "var(--muted)" : "var(--surface)" }, d.slot));
+
+      // label falls on the outboard side, so it follows the zig-zag instead of fighting it
+      const left = d.x < 0;
+      const tx = left ? cx - SLAB_W / 2 - 12 : cx + SLAB_W / 2 + 12;
+      const anchor = left ? "end" : "start";
+      g.appendChild(el("text", { x: tx, y: cy - 1, "text-anchor": anchor, class: "t-name" }, d.name));
+      g.appendChild(el("text", { x: tx, y: cy + 12, "text-anchor": anchor, class: "t-meta" },
+        "Y " + fmt(d.y) + "  ·  island" + d.model));
+
+      wire(g, d);
+      svg.appendChild(g);
+    });
+
+    // x axis
+    svg.appendChild(el("line", { x1: M.left, y1: H - M.bottom + 4, x2: W - M.right, y2: H - M.bottom + 4,
+      stroke: "var(--axis)", "stroke-width": 1 }));
+    [-400, -200, 0, 200, 400].forEach(v => {
+      svg.appendChild(el("text", { x: sx(v), y: H - M.bottom + 20, "text-anchor": "middle", class: "t-axis" }, v));
+    });
+    svg.appendChild(el("text", { x: sx(0), y: H - M.bottom + 36, "text-anchor": "middle", class: "t-axis" }, "world X"));
+  })();
+
+  // ── Chart 2: top-down footprint ───────────────────────────────────────────
+  (function plan() {
+    const svg = document.getElementById("plan");
+    const S = 420, pad = 34, R = 400;
+    const c = v => pad + ((v + R) / (2 * R)) * (S - 2 * pad);
+
+    [-400, -200, 0, 200, 400].forEach(v => {
+      const strong = v === 0;
+      svg.appendChild(el("line", { x1: c(v), y1: pad, x2: c(v), y2: S - pad,
+        stroke: strong ? "var(--axis)" : "var(--grid)", "stroke-width": 1 }));
+      svg.appendChild(el("line", { x1: pad, y1: c(v), x2: S - pad, y2: c(v),
+        stroke: strong ? "var(--axis)" : "var(--grid)", "stroke-width": 1 }));
+      if (!strong) {
+        svg.appendChild(el("text", { x: c(v), y: S - pad + 15, "text-anchor": "middle", class: "t-axis" }, v));
+        svg.appendChild(el("text", { x: pad - 8, y: c(v) + 3.5, "text-anchor": "end", class: "t-axis" }, -v));
+      }
+    });
+    // axis titles sit clear of the outermost ticks, which share their x/y
+    svg.appendChild(el("text", { x: S - pad, y: S - pad + 30, "text-anchor": "end", class: "t-axis" }, "world X →"));
+    svg.appendChild(el("text", { x: pad - 8, y: pad - 12, "text-anchor": "end", class: "t-axis" }, "world Z ↑"));
+
+    // No connecting polyline here: consecutive slots sit on opposite sides, so the path
+    // crosses the origin twelve times and collapses into one meaningless diagonal smear.
+    // The slot number on each dot carries the order instead.
+    ISLANDS.forEach(d => {
+      const cx = c(d.x), cy = c(-d.z);
+      const g = el("g", { class: "isle" });
+      // 2px surface ring keeps overlapping markers separate without a border
+      g.appendChild(el("circle", { cx: cx, cy: cy, r: 7,
+        fill: COLOR[d.type], stroke: "var(--surface)", "stroke-width": 2 }));
+      g.appendChild(el("circle", { class: "halo", cx: cx, cy: cy, r: 12 }));
+      // generous invisible hit area — the visible dot is only 14px across
+      g.appendChild(el("circle", { cx: cx, cy: cy, r: 14, fill: "transparent" }));
+      // slot number, pushed outboard so it never sits on a neighbouring dot
+      g.appendChild(el("text", { x: cx + (d.x < 0 ? -13 : 13), y: cy + 3.5,
+        "text-anchor": d.x < 0 ? "end" : "start", class: "t-meta" }, d.slot));
+      wire(g, d);
+      svg.appendChild(g);
+    });
+  })();
+
+  // ── Chart 3: vertical gap per slot ────────────────────────────────────────
+  (function gaps() {
+    const svg = document.getElementById("gaps");
+    const W = 420, H = 400, M = { top: 8, right: 54, bottom: 26, left: 30 };
+    const rows = ISLANDS.slice(1).map((d, i) => ({ slot: d.slot, name: d.name, gap: d.y - ISLANDS[i].y }));
+    const max = 4000;
+    const bw = W - M.left - M.right;
+    const step = (H - M.top - M.bottom) / rows.length;
+    const bh = Math.min(14, step - 2);   // 2px surface gap between adjacent bars
+
+    [0, 1000, 2000, 3000, 4000].forEach(v => {
+      const x = M.left + (v / max) * bw;
+      svg.appendChild(el("line", { x1: x, y1: M.top, x2: x, y2: H - M.bottom,
+        stroke: "var(--grid)", "stroke-width": 1 }));
+      svg.appendChild(el("text", { x: x, y: H - M.bottom + 15, "text-anchor": "middle", class: "t-axis" }, fmt(v)));
+    });
+    svg.appendChild(el("text", { x: M.left, y: H - 4, class: "t-axis" }, "studs to the island below"));
+
+    rows.forEach((r, i) => {
+      const y = M.top + i * step + (step - bh) / 2;
+      const w = (r.gap / max) * bw;
+      svg.appendChild(el("text", { x: M.left - 7, y: y + bh / 2 + 3.5, "text-anchor": "end", class: "t-axis" }, r.slot));
+      svg.appendChild(el("rect", { x: M.left, y: y, width: w, height: bh, rx: 4, fill: "var(--quest)" }));
+      svg.appendChild(el("text", { x: M.left + w + 7, y: y + bh / 2 + 3.5, class: "t-meta" }, fmt(r.gap)));
+    });
+  })();
+
+  // ── Table view ────────────────────────────────────────────────────────────
+  document.getElementById("tbody").innerHTML = ISLANDS.map((d, i) => {
+    const gap = i === 0 ? "—" : fmt(d.y - ISLANDS[i - 1].y);
+    const dot = d.type === "new"
+      ? '<span class="dot dot-new"></span>'
+      : '<span class="dot" style="background:' + COLOR[d.type] + '"></span>';
+    return '<tr class="' + (d.type === "summit" ? "is-summit" : d.type === "new" ? "is-new" : "") + '">' +
+      "<td>" + d.slot + "</td>" +
+      '<td class="l">' + dot + d.name + "</td>" +
+      '<td class="l"><span class="model">island' + d.model + "</span></td>" +
+      "<td>" + fmt(d.x) + "</td><td>" + fmt(d.y) + "</td><td>" + fmt(d.z) + "</td>" +
+      "<td>" + gap + "</td>" +
+      '<td class="l">' + (d.food || "—") + "</td>" +
+      "<td>" + (d.price == null ? "—" : fmt(d.price)) + "</td>" +
+      "<td>" + (d.power == null ? "—" : fmt(d.power)) + "</td></tr>";
+  }).join("");
+})();
+</script>

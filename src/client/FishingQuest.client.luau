@@ -10,7 +10,8 @@
 --   3. Press the "[E] Fish" prompt (it follows you, only enabled at the edge).
 --   4. CAST -> a red/white bobber arcs out onto the water with a line beam.
 --   5. BITE -> the bobber dips + "!" -> TAP TO HOOK within ~1.3s.
---   6. REEL-IN -> the hold/release tension minigame (fill the bar).
+--   6. REEL-IN -> the hold/release tension minigame (fill the bar). A rising
+--      ceiling holds every reel-in to a flat 15s -- see PickupFloor.
 --   7. The catch is ROLLED (pity-ramped egg chance + funny junk for misses).
 --      An egg -> appears IN FRONT of you -> Hatch. Junk -> a popup, recast.
 --
@@ -30,6 +31,9 @@ local RS         = game:GetService("ReplicatedStorage")
 local Debris     = game:GetService("Debris")
 local player     = Players.LocalPlayer
 local prefix     = "Fish"
+local ChevronTrail = require(RS:WaitForChild("DinosaurRealm"):WaitForChild("ChevronTrail")) -- shared ground chevron guide
+local DoneCommand  = require(RS:WaitForChild("DinosaurRealm"):WaitForChild("DoneCommand"))  -- "/done" -> skip to the reward egg
+local PickupFloor  = require(RS:WaitForChild("DinosaurRealm"):WaitForChild("PickupFloor")) -- the 15s-per-collectible floor
 
 -- ============================================================================
 -- CONFIG -- points at YOUR water + barrel by name.
@@ -169,7 +173,7 @@ local function ensureReelUI()
 	local panel = Instance.new("Frame"); panel.Size = UDim2.new(0,300,0,360); panel.Position = UDim2.new(0.5,0,0.5,0); panel.AnchorPoint = Vector2.new(0.5,0.5)
 	panel.BackgroundColor3 = Color3.fromRGB(25,90,185); panel.Parent = g
 	Instance.new("UICorner", panel).CornerRadius = UDim.new(0,16); local ps = Instance.new("UIStroke", panel); ps.Color = Color3.new(1,1,1); ps.Thickness = 3
-	local titl = Instance.new("TextLabel"); titl.Size = UDim2.new(1,-20,0,30); titl.Position = UDim2.new(0,10,0,10); titl.BackgroundTransparency = 1
+	local titl = Instance.new("TextLabel"); titl.Size = UDim2.new(1,-56,0,30); titl.Position = UDim2.new(0,10,0,10); titl.BackgroundTransparency = 1
 	titl.Font = Enum.Font.GothamBold; titl.TextSize = 22; titl.TextColor3 = Color3.fromRGB(255,215,0); titl.Text = "REEL IT IN!"; titl.Parent = panel
 	local track = Instance.new("Frame"); track.Size = UDim2.new(0,90,0,250); track.Position = UDim2.new(0,40,0,90)
 	track.BackgroundColor3 = Color3.fromRGB(12,34,76); track.Parent = panel; Instance.new("UICorner", track).CornerRadius = UDim.new(0,12)
@@ -190,7 +194,12 @@ local function ensureReelUI()
 	Instance.new("UIStroke", ready).Thickness = 2
 	local hintL = Instance.new("TextLabel"); hintL.Size = UDim2.new(1,-20,0,20); hintL.Position = UDim2.new(0,10,1,-28); hintL.BackgroundTransparency = 1
 	hintL.Font = Enum.Font.Gotham; hintL.TextSize = 13; hintL.TextColor3 = Color3.new(1,1,1); hintL.Text = "HOLD to rise \xE2\x80\xA2 RELEASE to drop \xE2\x80\x94 keep \xF0\x9F\x90\x9F in the zone"; hintL.Parent = panel
-	reelUI = { gui = g, zone = zone, fish = fish, pb = pb, hint = hintL, ready = ready }
+	-- House rule: the X closes it, a backdrop tap NEVER does. `dim` above is Modal with no
+	-- click handler on purpose. Each run of the minigame hangs its own bail-out on ui.onClose.
+	PickupFloor.addCloseButton(panel, function()
+		if reelUI and reelUI.onClose then reelUI.onClose() end
+	end)
+	reelUI = { gui = g, zone = zone, fish = fish, pb = pb, hint = hintL, ready = ready, onClose = nil }
 	return reelUI
 end
 local function openReelMinigame(onDone)
@@ -201,6 +210,16 @@ local function openReelMinigame(onDone)
 	local zone, zoneVel = 0.45, 0
 	local fishF, fishTarget, fishTimer = 0.5, 0.5, 0
 	local progress = 0.45
+	-- RISING CEILING (PickupFloor pattern 1). Perfect tracking used to fill this bar in
+	-- 1.2s -- one catch was over before the bobber had stopped rocking. A ceiling now
+	-- climbs from 0.45 to 1.0 over exactly 15s and the fill is clamped to it, so the
+	-- reel-in cannot end early however well the player tracks the fish.
+	--
+	-- The out-of-zone drain drops 0.22 -> 0.10/s to match the longer game: keeping pace
+	-- with the ceiling needs the fish in the zone only ~24% of the time, and a lapse
+	-- takes 4.5s to empty the bar instead of 2. Forgiving, not punishing -- losing is
+	-- still possible, it just takes real inattention.
+	local ceiling = PickupFloor.newCeiling(progress)
 	ui.zone.Size = UDim2.new(1,-10,ZONE_H,0)
 	ui.pb.Size = UDim2.new(1,0,progress,0)
 	local done, holding = false, false
@@ -212,9 +231,10 @@ local function openReelMinigame(onDone)
 	local function finish(success)
 		if done then return end
 		done = true; if c1 then c1:Disconnect() end; if c2 then c2:Disconnect() end
-		ui.gui.Enabled = false; reelBusy = false
+		ui.gui.Enabled = false; reelBusy = false; ui.onClose = nil
 		if onDone then onDone(success) end
 	end
+	ui.onClose = function() finish(false) end -- X = bail out, and the fish gets away
 	task.spawn(function()
 		local introT = 1.2
 		ui.ready.Visible = true
@@ -229,7 +249,12 @@ local function openReelMinigame(onDone)
 			fishF = fishF + (fishTarget - fishF) * math.min(dt * 1.6, 1)
 			local inZone = math.abs(fishF - zone) <= (ZONE_H/2)
 			if introT > 0 then introT = introT - dt; if introT <= 0 then ui.ready.Visible = false end
-			else progress = math.clamp(progress + (inZone and 0.46 or -0.22) * dt, 0, 1) end
+			else
+				-- the ceiling only starts climbing once "GET READY" clears, so the 15s is
+				-- 15s of actual reeling rather than 13.8s plus an intro card
+				ceiling:step(dt)
+				progress = math.clamp(ceiling:clamp(progress + (inZone and 0.46 or -0.10) * dt), 0, 1)
+			end
 			ui.zone.Position = UDim2.new(0.5, 0, 1 - zone, 0)
 			ui.zone.BackgroundColor3 = inZone and Color3.fromRGB(70,225,95) or Color3.fromRGB(90,150,110)
 			ui.fish.Position = UDim2.new(0.5, 0, 1 - fishF, 0)
@@ -468,12 +493,22 @@ local function buildFishingWorld(lakePos, lakeSize, barrelPos, existingBarrel)
 	end
 
 	-- ===== the EGG (caught) -> appears IN FRONT of the player, with a Hatch prompt =====
+	-- NOTE: published on `st` at the end of this function so the /done command (bound out
+	-- in BOOT, where this local isn't in scope) can skip straight to it.
 	local function spawnEgg()
 		if st.egg then return end
 		local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart"); if not hrp then return end
 		local fwd = hrp.CFrame.LookVector; fwd = Vector3.new(fwd.X, 0, fwd.Z); if fwd.Magnitude < 0.1 then fwd = Vector3.new(0,0,-1) end
 		local center = hrp.Position + fwd.Unit * 6 + Vector3.new(0, -1.0, 0)
 		st.eggPos = center; st.eggCaught = true
+
+		-- same green chevron runway island1 / island11 use -> leads back to the egg if the
+		-- player walks away from the shore before hatching it
+		ChevronTrail.guideToEgg(
+			function() return center end,
+			function() return st.owns end,
+			"You reeled in the egg! Press E to hatch it!"
+		)
 		local egg = Instance.new("Model"); egg.Name = prefix.."Egg"
 		local visual = Instance.new("Model"); visual.Name = "Visual"; visual.Parent = egg
 		local shell = newPart(visual, "Shell", Enum.PartType.Ball, Vector3.new(1,1,1), CONFIG.eggShell, nil)
@@ -496,6 +531,7 @@ local function buildFishingWorld(lakePos, lakeSize, barrelPos, existingBarrel)
 		end)
 		print("[Fish] egg caught -> appeared in front of "..player.Name)
 	end
+	st.spawnEgg = spawnEgg -- handle for the /done command bound out in BOOT
 
 	-- ===== shore-edge probe: is the player at the exposed water's edge? =====
 	local EDGE_REACH = 7
@@ -654,7 +690,36 @@ task.spawn(function()
 		end
 		return nil
 	end
-	-- find the lake (retry ~10s in case it streams in late)
+	--------------------------------------------------------------------
+	-- WAIT FOR ISLAND 4 TO STREAM IN before hunting for the lake.
+	--------------------------------------------------------------------
+	-- The place has StreamingEnabled. island4's MODEL replicates at join, but its PARTS
+	-- (ButterLake included) are only sent once the player is near it -- and island4 sits
+	-- 6,400 studs up the tower. At spawn it is an EMPTY SHELL on this client:
+	-- GetBoundingBox() returns size (0,0,0) and the lake genuinely is not there yet.
+	--
+	-- The old code retried for 10s, gave up, and reported the lake "missing" -- telling
+	-- the dev to go rename a part that was there all along. Wait for real geometry.
+	local isl4 = Workspace:FindFirstChild("island4") or Workspace:WaitForChild("island4", 60)
+	local function island4Streamed()
+		if not isl4 then return false end
+		local ok, _, size = pcall(function() return isl4:GetBoundingBox() end)
+		return ok and size ~= nil and size.Magnitude > 1
+	end
+	if isl4 and not island4Streamed() then
+		print("[Fish] island4 has not streamed in yet (0 parts on this client) -- waiting until the player reaches it...")
+		local waited = 0
+		while not island4Streamed() do
+			task.wait(1)
+			waited += 1
+			if waited % 30 == 0 then
+				print(("[Fish]   still waiting for island4 to stream in (%ds)"):format(waited))
+			end
+		end
+		print(("[Fish] island4 streamed in after %ds -> looking for the lake"):format(waited))
+	end
+
+	-- now the island's parts really are here, so a miss is a REAL miss
 	local lake
 	for _ = 1, 20 do
 		lake = findNamed(CONFIG.lakeName, { "butter", "lake" })
@@ -662,7 +727,7 @@ task.spawn(function()
 		task.wait(0.5)
 	end
 	if not lake then
-		warn("[Fish] could not find a lake (looked for '"..CONFIG.lakeName.."', or any part/model whose name contains 'butter'/'lake'). Name your water part 'ButterLake'.")
+		warn("[Fish] island4 IS streamed in, but there is still no lake (looked for '"..CONFIG.lakeName.."', or any part/model whose name contains 'butter'/'lake'). Name your water part 'ButterLake'.")
 		return
 	end
 	CONFIG.lakeName = lake.Name -- use the ACTUAL name so the shore-edge + cast rays detect it
@@ -691,4 +756,11 @@ task.spawn(function()
 	end
 
 	buildFishingWorld(lakePos, lakeSize, barrelPos, existingBarrel)
+
+	-- /done -> skip the fishing, drop the Megalodon egg in front of you.
+	-- spawnEgg lives inside buildFishingWorld, so it publishes itself on `st` (see
+	-- st.spawnEgg there) -- that's the only handle we have on it out here.
+	DoneCommand.bind(isl4, "Fish", function()
+		if st.spawnEgg then st.spawnEgg() else warn("[Fish] /done: spawnEgg not ready yet") end
+	end)
 end)
