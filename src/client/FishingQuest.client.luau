@@ -29,6 +29,38 @@ local TS         = game:GetService("TweenService")
 local UIS        = game:GetService("UserInputService")
 local RS         = game:GetService("ReplicatedStorage")
 local Debris     = game:GetService("Debris")
+local SoundService = game:GetService("SoundService")
+
+-- ===== ROD SFX =====
+-- Both of these are YOUR OWN rod, and this whole file is a LocalScript, so they are 2D
+-- (parented to SoundService / the reel GUI) rather than positional. A rolloff would only
+-- make your own cast quieter than it should be -- you are always standing at the rod when
+-- they fire, and nobody else can hear them anyway.
+local SFX = {
+	cast = "rbxassetid://119135010875996",
+	reel = "rbxassetid://79404754846319",
+	bite = "rbxassetid://115878657073501",
+	splash = "rbxassetid://124279162156159",
+	pullOut = "rbxassetid://93360393539898",
+}
+
+-- One-shot 2D cue. Debris timeout is generous so a long clip is never cut off; these
+-- never overlap in practice because the cast -> bite -> reel beats are seconds apart.
+local function playRodSfx(name, id, volume)
+	local s = Instance.new("Sound")
+	s.Name = name
+	s.SoundId = id
+	s.Volume = volume
+	s.Parent = SoundService
+	pcall(function() s:Play() end)
+	Debris:AddItem(s, 8)
+end
+
+-- VERBOSE: per-item boot spam (one line per part/island/pet/serving). OFF by default --
+-- it buried the progression telemetry in hundreds of lines. Flip to true to debug THIS
+-- system specifically; every file that had a noisy loop uses the same flag name.
+local VERBOSE = false
+
 local player     = Players.LocalPlayer
 local prefix     = "Fish"
 local ChevronTrail = require(RS:WaitForChild("DinosaurRealm"):WaitForChild("ChevronTrail")) -- shared ground chevron guide
@@ -224,13 +256,39 @@ local function openReelMinigame(onDone)
 	ui.pb.Size = UDim2.new(1,0,progress,0)
 	local done, holding = false, false
 	local c1, c2
+
+	-- THE REEL. Looped, and driven by `holding` rather than by the minigame being open --
+	-- the reel only turns while you are actually cranking it, so it starts on press and
+	-- stops on release, the same as the bar it is driving. ensureReelUI CACHES ui.gui
+	-- across catches, so this Sound has to be destroyed in finish() or a new one leaks
+	-- onto the same GUI every time you hook a fish.
+	local reelSnd = Instance.new("Sound")
+	reelSnd.Name = "FishReel"
+	reelSnd.SoundId = SFX.reel
+	reelSnd.Volume = 1.0
+	reelSnd.Looped = true
+	reelSnd.Parent = ui.gui
+
 	local function isHold(t) return t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch end
-	c1 = UIS.InputBegan:Connect(function(i) if isHold(i.UserInputType) then holding = true end end)
-	c2 = UIS.InputEnded:Connect(function(i) if isHold(i.UserInputType) then holding = false end end)
+	c1 = UIS.InputBegan:Connect(function(i)
+		if isHold(i.UserInputType) then
+			holding = true
+			-- guard: InputBegan can fire again mid-hold (second finger on touch), and
+			-- Play() would restart the loop from zero and click.
+			if not reelSnd.IsPlaying then pcall(function() reelSnd:Play() end) end
+		end
+	end)
+	c2 = UIS.InputEnded:Connect(function(i)
+		if isHold(i.UserInputType) then
+			holding = false
+			pcall(function() reelSnd:Stop() end)
+		end
+	end)
 	ui.gui.Enabled = true
 	local function finish(success)
 		if done then return end
 		done = true; if c1 then c1:Disconnect() end; if c2 then c2:Disconnect() end
+		pcall(function() reelSnd:Stop(); reelSnd:Destroy() end)
 		ui.gui.Enabled = false; reelBusy = false; ui.onClose = nil
 		if onDone then onDone(success) end
 	end
@@ -253,7 +311,7 @@ local function openReelMinigame(onDone)
 				-- the ceiling only starts climbing once "GET READY" clears, so the 15s is
 				-- 15s of actual reeling rather than 13.8s plus an intro card
 				ceiling:step(dt)
-				progress = math.clamp(ceiling:clamp(progress + (inZone and 0.46 or -0.10) * dt), 0, 1)
+				progress = math.clamp(ceiling:clamp(progress + (inZone and 0.46 or -0.06) * dt), 0, 1)
 			end
 			ui.zone.Position = UDim2.new(0.5, 0, 1 - zone, 0)
 			ui.zone.BackgroundColor3 = inZone and Color3.fromRGB(70,225,95) or Color3.fromRGB(90,150,110)
@@ -614,6 +672,25 @@ local function buildFishingWorld(lakePos, lakeSize, barrelPos, existingBarrel)
 				local nv = Instance.new("NumberValue"); nv.Value = 0; nv.Parent = bob
 				nv:GetPropertyChangedSignal("Value"):Connect(function() local t = nv.Value; bob.CFrame = CFrame.new(startP:Lerp(target, t) + Vector3.new(0, math.sin(t*math.pi)*6, 0)) end)
 				TS:Create(nv, TweenInfo.new(0.6, Enum.EasingStyle.Quad), {Value = 1}):Play()
+				playRodSfx("FishCast", SFX.cast, 1.2) -- fires with the bobber leaving the rod tip, not the prompt
+
+				-- THE LINE HITTING THE WATER. The bobber arc above is a 0.6s tween, so this
+				-- waits it out rather than firing with the cast -- the splash belongs to the
+				-- landing, not the throw. POSITIONAL on the bobber (unlike the cast/bite/reel,
+				-- which are your own rod in your own hands): the splash happens out on the
+				-- lake, often 20+ studs away, so it should come from there.
+				task.delay(0.6, function()
+					if not bob.Parent then return end -- walked off / quest ended mid-arc
+					local sp = Instance.new("Sound")
+					sp.Name = "FishSplash"
+					sp.SoundId = SFX.splash
+					sp.Volume = 1.4
+					sp.RollOffMode = Enum.RollOffMode.Linear
+					sp.RollOffMinDistance = 10
+					sp.RollOffMaxDistance = 120
+					sp.Parent = bob
+					pcall(function() sp:Play() end)
+				end)
 				print("[Fish] "..player.Name.." cast"); setStatus("Waiting for a bite...")
 				local floating = true
 				task.spawn(function()
@@ -623,6 +700,10 @@ local function buildFishingWorld(lakePos, lakeSize, barrelPos, existingBarrel)
 				task.wait(0.65 + 1 + math.random() * 3)
 				floating = false
 				if st.owns or not isNearEdge() then pcall(function() bob:Destroy() end) break end
+				-- THE BITE ALERT. This is the cue the whole beat hangs on: you get ~1.3s to tap
+				-- (waitForTap below) and until now nothing but a small "!" told you the clock
+				-- had started. Fires with the billboard so sound and picture land together.
+				playRodSfx("FishBite", SFX.bite, 1.6)
 				print("[Fish] "..player.Name.." bite")
 				local bb = Instance.new("BillboardGui"); bb.Size = UDim2.new(0,36,0,36); bb.StudsOffset = Vector3.new(0,2.4,0); bb.AlwaysOnTop = true; bb.Parent = bob
 				local bl = Instance.new("TextLabel"); bl.Size = UDim2.new(1,0,1,0); bl.BackgroundTransparency = 1; bl.Font = Enum.Font.GothamBold; bl.TextSize = 34; bl.TextColor3 = Color3.fromRGB(255,70,70); bl.Text = "!"; bl.Parent = bb
@@ -643,6 +724,15 @@ local function buildFishingWorld(lakePos, lakeSize, barrelPos, existingBarrel)
 						print("[Fish] reeled in")
 						pushQuestProg(prefix, { started = true, found = ((localQuestProg[prefix] and localQuestProg[prefix].found) or 0) + 1 })
 						local res = rollCatch()
+
+						-- SOMETHING BREAKS THE SURFACE. Guarded on rollCatch returning a TABLE,
+						-- which is the difference between landing it and not: an egg and junk are
+						-- both tables (and both things you physically haul out), while the third
+						-- branch below returns a non-table and only sets "It got away!" -- nothing
+						-- leaves the water there, so nothing should sound. Fires before the status
+						-- text so the sound leads the message rather than trailing it.
+						if type(res) == "table" then playRodSfx("FishPullOut", SFX.pullOut, 1.5) end
+
 						if type(res) == "table" and res.egg then
 							setStatus("You reeled in... an EGG! \xF0\x9F\xA5\x9A"); keepGoing = false; pushQuestProg(prefix, { complete = true })
 							task.wait(0.6); spawnEgg(); task.wait(1.4)
@@ -713,7 +803,7 @@ task.spawn(function()
 			task.wait(1)
 			waited += 1
 			if waited % 30 == 0 then
-				print(("[Fish]   still waiting for island4 to stream in (%ds)"):format(waited))
+				if VERBOSE then print(("[Fish]   still waiting for island4 to stream in (%ds)"):format(waited)) end
 			end
 		end
 		print(("[Fish] island4 streamed in after %ds -> looking for the lake"):format(waited))

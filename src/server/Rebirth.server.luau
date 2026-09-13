@@ -17,10 +17,14 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
 local IslandOrder = require(ReplicatedStorage:WaitForChild("DinosaurRealm"):WaitForChild("IslandOrder"))
+local StomachTiers = require(ReplicatedStorage:WaitForChild("DinosaurRealm"):WaitForChild("StomachTiers"))
 local TOP_SLOT = IslandOrder.COUNT       -- summit slot (13)
+-- The gut a fresh climb starts on. Read from the table rather than hardcoded, because
+-- StomachMax IS the record of which gut you own -- there is no separate tier field.
+local START_MAX = StomachTiers.LIST[1].maxPower   -- Hatchling Belly (120)
 local LANDING_OFFSET = 8                  -- studs above island1's top (matches IslandTeleport / Wormhole)
 local BONUS_PER_REBIRTH = 0.25            -- +25% RebirthMult per rebirth
-local COIN_BONUS_PER_REBIRTH = 250        -- lump-sum coins granted, scaled by rebirth count
+local COIN_BONUS_PER_REBIRTH = 125        -- lump-sum coins granted, scaled by rebirth count
 
 -- ===== remote =====
 local folder = ReplicatedStorage:FindFirstChild("RebirthRemotes")
@@ -75,6 +79,31 @@ DoRebirth.OnServerInvoke = function(player)
 		local islv = ls:FindFirstChild("Island"); if islv then islv.Value = 1 end
 		local coins = ls:FindFirstChild("Coins")
 		if coins then coins.Value = coins.Value + COIN_BONUS_PER_REBIRTH * n end -- tangible reward each rebirth
+
+		-- RESET THE GUT TOO. THIS WAS MISSING AND IT MADE THE WHOLE NEXT CLIMB FREE.
+		--
+		-- Island progress reset but StomachMax did not, so a rebirthed player stood on
+		-- Nesting Nook holding the Colossus Gut. One full tank of that climbs 10,417 studs
+		-- and Nesting Nook -> Glacier Gulch is 9,346, so the first launch after every
+		-- rebirth skipped FIVE islands in a single flight. Every tank does some version of
+		-- this: Titan reaches slot 5, Rex slot 4, Dilo slot 3.
+		--
+		-- The unlockSlot gate cannot catch it -- that gate only stops you BUYING a gut too
+		-- early, and this player already owns it. StomachMax is the only record of which
+		-- gut you have, so resetting the climb has to reset it or the climb is not reset.
+		--
+		-- Coins are deliberately NOT reset (they are the rebirth reward, and unlockSlot
+		-- still forces you to re-earn each tier's island before you can re-buy it).
+		local sm = ls:FindFirstChild("StomachMax")
+		local cp = ls:FindFirstChild("CurrentPower")
+		if sm then sm.Value = START_MAX end
+		if cp then cp.Value = 0 end
+		-- Push it to the HUD the same way a gut purchase does, or the meter keeps showing
+		-- the old tank until something else happens to refresh it.
+		local su = ReplicatedStorage:FindFirstChild("StomachUpdateEvent")
+		if su and sm then pcall(function() su:FireClient(player, sm.Value, StomachTiers.LIST[1].name) end) end
+		local re = ReplicatedStorage:FindFirstChild("RegenEvent")
+		if re and sm then pcall(function() re:FireClient(player, 0, 0, sm.Value) end) end
 	end
 	landIsland1(player)
 

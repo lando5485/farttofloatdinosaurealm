@@ -6,34 +6,33 @@
 -- sets _G.islandsPositioned, which the island-dependent scripts (NestingNook_*,
 -- RedwoodRaptor) wait on so their NPCs / eggs / spawns land at the NEW positions.
 --
--- TOWER ORDER = QUEST, NO-QUEST, QUEST, NO-QUEST, ... island1 pinned to the bottom,
--- and island11 "VOLCANIC VISTA" PINNED TO THE TOP as the ending island.
---   slot 1 (bottom): island1  (QUEST)     slot 8 : island2  (QUEST)
---   slot 2         : island9  (blank)     slot 9 : island10 (blank)
---   slot 3         : island5  (QUEST)     slot 10: island7  (QUEST)
---   slot 4         : island12 (blank)     slot 11: island6  (QUEST)  <- see note
---   slot 5         : island3  (QUEST)     slot 12: island8  (blank)
---   slot 6         : island13 (blank)     slot 13 (top): island11 (QUEST) <- FINALE
---   slot 7         : island4  (QUEST)
+-- TOWER ORDER LIVES IN IslandOrder.SLOT_TO_ISLAND, NOT HERE. This script only applies
+-- it. The order and the reasoning behind it are documented there -- read that, not this.
 --
--- (island5 Misty Mire and island2 Fern Frontier were SWAPPED by request -- slots 3 and 8.
--- This table was ALSO stale before that swap: it listed slot 9 as island5 and slot 12 as
--- island7, which matched no version of SLOT_TO_ISLAND. IslandOrder is the only authority.)
+--   slot  1  island1   Nesting Nook       QUEST  Stegosaurus   Common     <- spawn
+--   slot  2  island9   Frostbite Flats    --  (snow island)
+--   slot  3  island5   Misty Mire         QUEST  Spinosaurus   Common
+--   slot  4  island12  Sunscorch Sands    --
+--   slot  5  island3   Fossil Frontier    QUEST  Velociraptor  Rare
+--   slot  6  island13  Glacier Gulch      --
+--   slot  7  island7   Claw Cliffs       QUEST  Baby Raptor   (RaptorPet again)
+--   slot  8  island4   Coastal Crossing   QUEST  Megalodon     Rare
+--   slot  9  island10  Petrified Pass     --
+--   slot 10  island2   Fern Frontier      QUEST  Triceratops   Epic
+--   slot 11  island8   Inferno Isle       --
+--   slot 12  island6   Redwood Ridge      QUEST  Velociraptor  (RaptorPet again)
+--   slot 13  island11  Volcanic Vista     QUEST  T-Rex         Legendary  <- FINALE
 --
--- QUEST islands: 1, 2, 3, 4, 5, 6, 7, 11  (8 of them).
--- BLANK islands: 8, 9, 10, 12, 13         (5 of them).
---   NOTE island8 is a BLANK now -- its geyser quest MOVED to island11, so island8
---   is just scenery ("Inferno Isle"). The quest islands are NOT 1-8 any more.
+-- THE MODEL NUMBER IS NOT THE SLOT. island11 is the summit, island9 is slot 2 -- the
+-- numbers are the order the islands were BUILT. Renaming the models in Studio to match
+-- the slots was tried and reverted: the code was renumbered, the models were not, and
+-- the tower came out with Glacier Gulch on top running the volcano quest, because this
+-- loop puts the model literally named island13 into slot 13 while GeyserQuest binds to
+-- a model NAME. If you ever do renumber, the Studio rename and the code change must
+-- land together, and roughly 340 call sites move with them.
 --
--- THE ENDING ISLAND IS island11 "Volcanic Vista" (top slot): the volcano / geyser
--- FINALE quest, and it grants the T-Rex. Whatever else changes about this layout,
--- Volcanic Vista must stay in the TOP slot.
---
--- NOTE -- why slots 11/12/13 are three quests back-to-back:
---   Perfectly alternating 8 quest islands requires 7 blanks (one between each
---   pair). We only have 5, so the alternation runs out after slot 10 and the last
---   three quest islands stack. To alternate the WHOLE tower, add 2 more blank
---   islands (island14, island15) -- see the note at the bottom of this file.
+-- This header USED to carry its own copy of the order and had drifted out of date
+-- twice. It is now a comment ONLY -- IslandOrder is the authority.
 --======================================================================
 local Workspace = game:GetService("Workspace")
 
@@ -54,11 +53,23 @@ local Workspace = game:GetService("Workspace")
 -- parts, so its pivot reads as the origin. Edit them there; this script applies them.
 local IslandOrder = require(game:GetService("ReplicatedStorage")
 	:WaitForChild("DinosaurRealm"):WaitForChild("IslandOrder"))
+
+-- VERBOSE: the per-slot "slot N -> islandN @ (x,y,z)" placement lines. OFF by default --
+-- fourteen of them at every boot, and the tower positions are already in IslandOrder if
+-- you need to read them. Flip to true when you are actually debugging the layout.
+-- (Kept BELOW the require above on purpose: that statement wraps onto a second line, and
+-- an earlier pass inserted this flag between the two halves, which silently broke the
+-- whole script -- no island got positioned and the tower collapsed to its authored spots.)
+local VERBOSE = false
 local SLOT_POS       = IslandOrder.SLOT_POS
 local SLOT_TO_ISLAND = IslandOrder.SLOT_TO_ISLAND
 
--- Highest slot that gets an island. Must not exceed #IslandOrder.SLOT_TO_ISLAND.
-local TOP_SLOT = 13
+-- Highest slot that gets an island. DERIVED, never typed: it was hardcoded to 14 while
+-- IslandOrder had 14 slots and Workspace had 13 models, so every boot warned
+-- "island14 not found (slot 14)" and the top of the tower was empty sky. Reading the
+-- ladder's own length makes that impossible -- add or remove a slot in IslandOrder and
+-- this follows it.
+local TOP_SLOT = IslandOrder.COUNT
 
 -- SLOT_TO_ISLAND (slot bottom=1 .. top=13 -> island MODEL number) is arranged QUEST/blank
 -- so no 3 quest islands sit in a row; island11 "Volcanic Vista" stays the summit finale.
@@ -72,8 +83,8 @@ for slot = 1, TOP_SLOT do
 			isl:PivotTo(CFrame.new(pos) * (cur - cur.Position)) -- move to target, keep current rotation
 		end)
 		if ok then
-			print(("[IslandLayout] slot %d -> island%d @ (%d, %d, %d)")
-				:format(slot, islandNum, pos.X, pos.Y, pos.Z))
+			if VERBOSE then print(("[IslandLayout] slot %d -> island%d @ (%d, %d, %d)")
+				:format(slot, islandNum, pos.X, pos.Y, pos.Z)) end
 		else
 			warn(("[IslandLayout] island%d move FAILED: %s"):format(islandNum, tostring(err)))
 		end
@@ -83,24 +94,15 @@ for slot = 1, TOP_SLOT do
 end
 
 _G.islandsPositioned = true
-print(("[IslandLayout] %d islands spaced into the tower (quest / no-quest alternating)."):format(TOP_SLOT))
+print(("[IslandLayout] %d islands spaced into the tower, bottom to top."):format(TOP_SLOT))
 
 --======================================================================
--- FUTURE: perfect alternation, all the way to the top.
--- 8 quest islands need 7 blanks to fully separate them; we have 5. Add TWO more
--- blank islands (island14, island15) and swap in this 15-slot order + the two
--- extra slot positions. Then no two quest islands are ever adjacent, and
--- Volcanic Vista is still the ending island at the summit.
---
---   [14] = Vector3.new( 380, 21900, -340),
---   [15] = Vector3.new(-400, 24800,  360),
---
---   [1] = 1,   -- QUEST  Nesting Nook       [9]  = 5,   -- QUEST  Misty Mire
---   [2] = 9,   -- blank  Jungle Junction    [10] = 8,   -- blank  Inferno Isle
---   [3] = 2,   -- QUEST  Fern Frontier      [11] = 6,   -- QUEST  Redwood Ridge
---   [4] = 12,  -- blank  Sunscorch Sands    [12] = 14,  -- blank  (NEW)
---   [5] = 3,   -- QUEST  Fossil Frontier    [13] = 7,   -- QUEST  Raptor Ridge
---   [6] = 13,  -- blank  Glacier Gulch      [14] = 15,  -- blank  (NEW)
---   [7] = 4,   -- QUEST  Coastal Crossing   [15] = 11,  -- QUEST  VOLCANIC VISTA (summit)
---   [8] = 10,  -- blank  Petrified Pass
+-- FUTURE: TRUE perfect alternation needs 15 slots, not a reorder.
+-- 8 quest islands need 7 blanks to fully separate them; we have 5. Five blanks make
+-- six gaps and eight quests into six gaps means two gaps hold two, so two adjacent
+-- quest pairs is the FLOOR -- the current order already hits it and no reshuffle can
+-- beat it. Build island14 and island15 as BLANKS, insert them at slots 9 and 13, and
+-- re-solve FlightTuning for the two extra gaps. Do not add slots without the models:
+-- a 14th slot was added once to match the food realm, had no island14 to put in it,
+-- and left empty sky above the finale with an unbuyable food.
 --======================================================================

@@ -138,6 +138,96 @@ local function restorePets(player, data)
 	end)
 end
 
+-- ===== COSMETICS COME WITH THEM =====
+-- The pets used to arrive UNDRESSED. This receiver only ever read `ownedPets` / `equippedPet`, but the
+-- payload the other realms send also carries the whole cosmetic bundle -- `petSkins`, `equippedSkins`,
+-- `collection`, `petMilestones`, `title` -- so a player who walked in from the Food Realm lost every skin
+-- and trait they owned the moment they got here, and got them back only when they went home. That is the
+-- one thing a shared universe must not do.
+--
+-- MERGE, NEVER ASSIGN -- the same rule their RealmReturnReceiver uses on the way back:
+--   * skin counts take the MAX, never the sum (summing doubles a duplicate on every round trip);
+--   * equipped skins are honoured only if the entry is actually owned after the merge;
+--   * collection/milestone flag maps union (true wins, numbers max);
+--   * a title only fills an EMPTY slot -- it never overwrites one earned here.
+-- Legacy skin/trait ids ride through untouched: PetSkins.LEGACY / PetTraits.LEGACY resolve them wherever
+-- they are read, and SkinCrateService upgrades them for good the next time the player equips.
+--
+-- CRATE TOKENS ARE DELIBERATELY NOT MERGED. They are an absolute balance owned by each place's own save;
+-- assigning an incoming number here would either wipe what was earned in this realm or duplicate currency
+-- on every hop. Their receiver takes a DELTA on the return trip and this realm should do the same.
+local function restoreCosmetics(player, data)
+	if type(data.petSkins) ~= "table" and type(data.equippedSkins) ~= "table"
+		and type(data.collection) ~= "table" then return end
+	task.spawn(function()
+		local t0 = os.clock()
+		while not _G.playerPetSkins and os.clock() - t0 < 15 do task.wait(0.1) end
+		if not _G.playerPetSkins then
+			warn("[DinoRealm] SkinCrateService never came up -> arriving skins/traits not restored")
+			return
+		end
+		if not player.Parent then return end
+
+		local skins = _G.playerPetSkins[player]
+		if not skins then skins = {}; _G.playerPetSkins[player] = skins end
+		local added = 0
+		for key, count in pairs(data.petSkins or {}) do
+			local n = tonumber(count) or 0
+			if type(key) == "string" and n > 0 then
+				local have = tonumber(skins[key]) or 0
+				if n > have then skins[key] = n; added += 1 end   -- MAX, not sum
+			end
+		end
+
+		local eq = _G.playerEquippedSkins and _G.playerEquippedSkins[player]
+		if eq == nil and _G.playerEquippedSkins then eq = {}; _G.playerEquippedSkins[player] = eq end
+		local worn = 0
+		if eq then
+			for petId, e in pairs(data.equippedSkins or {}) do
+				if type(petId) == "string" and type(e) == "table" and e.skin then
+					eq[petId] = { skin = e.skin, trait = e.trait }   -- rendering re-validates ownership
+					worn += 1
+				end
+			end
+		end
+
+		if _G.playerCollection and type(data.collection) == "table" then
+			local col = _G.playerCollection[player]
+			if not col then col = {}; _G.playerCollection[player] = col end
+			for k, v in pairs(data.collection) do
+				if type(v) == "boolean" then
+					if v then col[k] = true end
+				elseif type(v) == "number" then
+					if (tonumber(col[k]) or 0) < v then col[k] = v end
+				elseif col[k] == nil then
+					col[k] = v
+				end
+			end
+		end
+
+		-- TITLES: nothing in THIS realm publishes _G.playerTitle yet (the Food Realm's PetSystem owns
+		-- titles over there), so this branch is inert here by design rather than by accident -- it is
+		-- guarded, costs nothing, and starts working the day this place grows a title system. The
+		-- attribute is set either way, so a visiting player's earned title can still be displayed.
+		if type(data.title) == "string" and data.title ~= "" then
+			pcall(function()
+				if player:GetAttribute("Title") == nil or player:GetAttribute("Title") == "" then
+					player:SetAttribute("Title", data.title)
+				end
+			end)
+			if _G.playerTitle and (_G.playerTitle[player] == nil or _G.playerTitle[player] == "") then
+				_G.playerTitle[player] = data.title
+			end
+		end
+
+		-- repaint + push the new state to their client so the pet is wearing it immediately
+		if _G.skinCrateApplyOnJoin then pcall(_G.skinCrateApplyOnJoin, player) end
+		if _G.skinPushState then pcall(_G.skinPushState, player) end
+		print(("[DinoRealm] %s's cosmetics: %d skin entr(ies) merged, %d equipped look(s) carried over")
+			:format(player.Name, added, worn))
+	end)
+end
+
 local function intake(player)
 	local data
 	pcall(function()
@@ -168,6 +258,7 @@ local function intake(player)
 		        countKeys(data.ownedPets), tostring(data.equippedPet)))
 
 	restorePets(player, data)
+	restoreCosmetics(player, data)   -- their skins + traits come with them, not just the pets
 
 	-- They came through the TIME RIFT -> their client is holding a black screen and fading up out of
 	-- it. Keep them still until that lands, so the reveal is a reveal and not a stumble.

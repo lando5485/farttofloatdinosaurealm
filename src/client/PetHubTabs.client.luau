@@ -2,21 +2,34 @@
 -- PetHubTabs_DinoRealm.client.luau
 -- LocalScript -> StarterPlayer > StarterPlayerScripts
 --======================================================================
--- THE PET HUB TOP TAB BAR: a horizontal row of tabs sitting directly under the hub
--- header -- PETS / CRATES / TOKENS / TRADE / QUESTS -- each with its own icon.
+-- THE PET HUB TOP TAB BAR -- the first realm's current HubNav (Fart to Float push 8a5041b, the same bar
+-- Space Realm's hub uses), in this realm's jungle colours:
 --
---   ACTIVE    gold fill, dark text, thicker gold stroke
---   INACTIVE  dark blue fill, gold text, thin white stroke
+--   PETS · FOOD · SPACE · QUESTS · CRATES · TRADE      six tabs, 106px each, 8px apart, bar at y=66, 38 tall
 --
--- Same geometry, colours and behaviour as the main game's HubNav (PetFollow.client.lua
--- :3948 for the bar, :5387 for the router), rewritten to be self-contained: no remotes,
--- no pet system, no dependencies beyond stock services. Point it at your panel, hand it
--- a callback, done.
+-- TAB MAPPING (first realm -> Dino):
+--   PETS    -> this realm's own dino pets (the hub's pets grid)
+--   SPACE / DINO (the first realm's "other realm collection" tabs) -> FOOD, the one other-realm collection
+--            this realm carries (the Food Realm pets that ride the rift teleport, read-only)
+--   QUESTS  -> kept in the realm slot the second collection tab would use: the Dino hub has a real pet-quest
+--            page and the first realm simply has no equivalent, so dropping it would lose a working feature
+--   CRATES  -> the crate panel (SkinCrateClient). TOKENS is no longer a tab: like the first realm's tickets,
+--            it is a sub-page of CRATES reached from the GET TOKENS banner (select("tokens") still works)
+--   TRADE   -> the hub's trade page
+--
+--   ACTIVE    gold fill, dark ink, thicker gold-brown edge
+--   INACTIVE  deep jungle fill, gold word, the header's own edge colour
+--
+-- THE WORD IS A CHILD LABEL, NOT THE BUTTON'S OWN TEXT (the first realm's trick): a UIStroke on a FILLED text
+-- object outlines the object's border, so the only way to outline the letters is a transparent label on top.
 --
 -- ===== IT IS A ROUTER, NOT A SET OF TOGGLES =====
--- The original tabs were independent toggles, which let you end up with the pet grid
--- showing while the nav claimed you were on Quests. This SETS state instead of flipping
--- it, so the highlighted tab and the visible page cannot drift apart. Keep that.
+-- select() SETS state instead of flipping it, so the highlighted tab and the visible page cannot drift apart.
+--
+-- API (unchanged -- PetHub and SkinCrateClient call it):
+--   _G.HubTabs.build(panel, onSelect) -> tabs      tabs.select(id), tabs.setActive(id), tabs.buttons, tabs.active
+--   _G.PetHubTabs                                  the hub's instance
+--   _G.PetHub.showPage(id) / .navButtons / .panel  the first realm's contract names, for parity with the other realms
 --======================================================================
 
 local Players      = game:GetService("Players")
@@ -24,42 +37,31 @@ local TweenService = game:GetService("TweenService")
 local player       = Players.LocalPlayer
 local PlayerGui    = player:WaitForChild("PlayerGui")
 
---======================================================================
--- CONFIG
---======================================================================
 local CONFIG = {
-	-- ---- WHERE THE BAR GOES ----
-	-- Leave AUTO_ATTACH true and set these two names to have the bar find your hub and
-	-- attach itself. Set it false to drive everything manually through _G.HubTabs.build.
 	AUTO_ATTACH = true,
 	GUI_NAME    = "PetInventoryUI", -- the ScreenGui holding the hub
 	PANEL_NAME  = "Panel",          -- the panel frame inside it that the bar parents to
 
-	-- ---- THE TABS ----
-	-- id is what your callback receives. Order here is the order on screen.
 	TABS = {
-		{ id = "pets",   label = "\xF0\x9F\x90\xBE PETS"   }, -- 🐾
-		{ id = "food",   label = "\xF0\x9F\x8D\x94 PETS"   }, -- 🍔 first-realm (Food Realm) pet collection -- the burger tells the two PETS tabs apart
-		{ id = "crates", label = "\xF0\x9F\x93\xA6 CRATES" }, -- 📦
-		{ id = "tokens", label = "\xF0\x9F\x8E\x9F TOKENS" }, -- 🎟
-		{ id = "trade",  label = "\xF0\x9F\x94\x84 TRADE"  }, -- 🔄
+		{ id = "pets",   label = "\xF0\x9F\x90\xBE PETS"   }, -- 🐾 this realm's dinos
+		{ id = "food",   label = "\xF0\x9F\x8D\x94 FOOD"   }, -- 🍔 the Food Realm collection
+		{ id = "space",  label = "\xF0\x9F\x9A\x80 SPACE"  }, -- 🚀 the Space Realm collection (read-only, like FOOD)
 		{ id = "quests", label = "\xF0\x9F\x93\x9C QUESTS" }, -- 📜
+		{ id = "crates", label = "\xF0\x9F\x93\xA6 CRATES" }, -- 📦 (tokens live inside)
+		{ id = "trade",  label = "\xF0\x9F\x94\x84 TRADE"  }, -- 🔄
 	},
+	-- ids that are pages of another tab: selecting one lights its parent
+	PARENT = { tokens = "crates" },
 
-	-- ---- GEOMETRY ----
-	-- 6 x 106 + 5 x 8 padding = 676, which fills a 676-wide panel body exactly. Change
-	-- BTN_W if you add or remove a tab: (panelWidth - 20 - PADDING*(n-1)) / n
+	-- SIX tabs now (SPACE added): 6 x 106 + 5 x 8 = 676, inside the same 680px bar the first realm's five use
 	BAR_HEIGHT = 38,
-	BAR_Y      = 64,   -- directly under this hub's 60px header
-	                   -- NOTE: PetHub's content band was moved from y=68 to y=108 to
-	                   -- make room. If you change BAR_Y/BAR_HEIGHT, move it to match.
-	BAR_INSET  = 10,   -- left/right margin inside the panel
+	BAR_Y      = 66,
+	BAR_INSET  = 10,
 	BTN_W      = 106,
 	PADDING    = 8,
 	CORNER     = 10,
 	TEXT_SIZE  = 15,
 
-	-- ---- COLOURS ----
 	ACTIVE_BG      = Color3.fromRGB(255, 215,   0), -- gold
 	ACTIVE_TEXT    = Color3.fromRGB( 92,  58,   8), -- dark brown-on-gold
 	ACTIVE_STROKE  = Color3.fromRGB(180, 122,  20),
@@ -69,27 +71,13 @@ local CONFIG = {
 	IDLE_STROKE    = Color3.fromRGB( 74,  94,  68), -- the header's own stroke colour
 	IDLE_THICK     = 1.5,
 
-	-- ---- BEHAVIOUR ----
 	DEFAULT_TAB = "pets",
-	HOVER_LIFT  = true,  -- a subtle 1.03 scale on hover
+	HOVER_LIFT  = true,
 }
 
---======================================================================
 local function corner(o, r) local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, r); c.Parent = o; return c end
 local function stroke(o, col, t) local s = Instance.new("UIStroke"); s.Color = col; s.Thickness = t; s.Parent = o; return s end
 
---======================================================================
--- THE API
---
--- local tabs = _G.HubTabs.build(panel, onSelect)
---     onSelect(id) fires on every click AND once on build for the default tab, so your
---     page-showing code lives in ONE place instead of being duplicated at startup.
---
--- tabs.setActive(id)  -- highlight a tab without firing the callback
--- tabs.select(id)     -- highlight AND fire the callback (same as a click)
--- tabs.buttons        -- { [id] = TextButton }
--- tabs.active         -- the current id
---======================================================================
 _G.HubTabs = _G.HubTabs or {}
 
 function _G.HubTabs.build(parent, onSelect)
@@ -105,6 +93,7 @@ function _G.HubTabs.build(parent, onSelect)
 	bar.Size = UDim2.new(1, -(CONFIG.BAR_INSET * 2), 0, CONFIG.BAR_HEIGHT)
 	bar.Position = UDim2.new(0, CONFIG.BAR_INSET, 0, CONFIG.BAR_Y)
 	bar.BackgroundTransparency = 1
+	bar.ZIndex = 3
 	bar.Parent = parent
 
 	local ll = Instance.new("UIListLayout")
@@ -113,12 +102,12 @@ function _G.HubTabs.build(parent, onSelect)
 	ll.SortOrder = Enum.SortOrder.LayoutOrder
 	ll.Parent = bar
 
-	-- HIGHLIGHT. Sets every button from one source of truth (api.active) rather than
-	-- toggling the one that was clicked -- so two tabs can never both look selected.
+	-- HIGHLIGHT from one source of truth (api.active), so two tabs can never both look selected.
 	function api.setActive(id)
 		api.active = id
+		local lit = CONFIG.PARENT[id] or id
 		for tabId, b in pairs(api.buttons) do
-			local on = (tabId == id)
+			local on = (tabId == lit)
 			b.BackgroundColor3 = on and CONFIG.ACTIVE_BG or CONFIG.IDLE_BG
 			b.TextColor3       = on and CONFIG.ACTIVE_TEXT or CONFIG.IDLE_TEXT
 			local st = b:FindFirstChildOfClass("UIStroke")
@@ -140,18 +129,34 @@ function _G.HubTabs.build(parent, onSelect)
 		b.Size = UDim2.new(0, CONFIG.BTN_W, 1, 0)
 		b.LayoutOrder = i
 		b.BackgroundColor3 = CONFIG.IDLE_BG
-		b.Text = t.label
+		b.Text = "" -- the word is the child label below
 		b.Font = Enum.Font.FredokaOne
-		b.TextSize = CONFIG.TEXT_SIZE
-		-- TextScaled + a MaxTextSize constraint: the label shrinks to fit a narrow button
-		-- on a phone, but never grows past the authored size on a wide one.
-		b.TextScaled = true
 		b.TextColor3 = CONFIG.IDLE_TEXT
 		b.AutoButtonColor = false
+		b.ZIndex = 4
 		b.Parent = bar
 		corner(b, CONFIG.CORNER)
-		stroke(b, CONFIG.IDLE_STROKE, CONFIG.IDLE_THICK)
-		local c = Instance.new("UITextSizeConstraint"); c.MaxTextSize = CONFIG.TEXT_SIZE; c.Parent = b
+		do local st = stroke(b, CONFIG.IDLE_STROKE, CONFIG.IDLE_THICK); st.ApplyStrokeMode = Enum.ApplyStrokeMode.Border end
+
+		local lbl = Instance.new("TextLabel")
+		lbl.Name = "Label"
+		lbl.Size = UDim2.new(1, -8, 1, -6)
+		lbl.Position = UDim2.new(0, 4, 0, 3)
+		lbl.BackgroundTransparency = 1
+		lbl.Text = t.label
+		lbl.Font = Enum.Font.FredokaOne
+		-- TextScaled + a ceiling: shrinks to fit a phone, never grows past the authored size (this realm's
+		-- repositionGUIs sweep force-sets TextScaled anyway, so the constraint is what actually holds it).
+		lbl.TextSize = CONFIG.TEXT_SIZE
+		lbl.TextScaled = true
+		lbl.TextWrapped = false
+		lbl.TextColor3 = CONFIG.IDLE_TEXT
+		lbl.ZIndex = 5
+		lbl.Parent = b
+		do local c = Instance.new("UITextSizeConstraint"); c.MaxTextSize = CONFIG.TEXT_SIZE; c.Parent = lbl end
+		stroke(lbl, Color3.new(0, 0, 0), 2)
+		-- anything that recolours the BUTTON carries over to the word
+		b:GetPropertyChangedSignal("TextColor3"):Connect(function() lbl.TextColor3 = b.TextColor3 end)
 
 		if CONFIG.HOVER_LIFT then
 			local sc = Instance.new("UIScale"); sc.Scale = 1; sc.Parent = b
@@ -172,11 +177,7 @@ function _G.HubTabs.build(parent, onSelect)
 end
 
 --======================================================================
--- AUTO-ATTACH
---
--- Waits for the hub to exist, builds the bar, and routes to pages by NAME: a tab with
--- id "quests" shows a child called "QuestsOverlay" or "QuestsPage" and hides the others.
--- Replace the body of showPage with your own routing when your pages are ready.
+-- AUTO-ATTACH: find the hub, build the bar, route pages
 --======================================================================
 if CONFIG.AUTO_ATTACH then
 	task.spawn(function()
@@ -197,40 +198,29 @@ if CONFIG.AUTO_ATTACH then
 		if existing then existing:Destroy() end
 
 		local function showPage(id)
-			-- PREFER the hub's own set-state entry points.
-			--
-			-- The generic fallback below only flips a frame's Visible, which is not enough for
-			-- this hub: its trade overlay holds two sub-views and the player list is filled by
-			-- refreshPicker(), reached only via showPicker(). Revealing the frame alone gave an
-			-- empty panel that read as "the tab did nothing".
-			local hubShow = ({ pets = _G.PetHubShowPets, food = _G.PetHubShowFood, quests = _G.PetHubShowQuests, trade = _G.PetHubShowTrade })[id]
-			if hubShow then
-				pcall(hubShow)
-			else
-				-- Fallback for a hub that hasn't got the entry points: show/hide by frame name.
-				-- Both spellings are accepted because the main game names them
-				-- "QuestsOverlay" / "TradeOverlay" while a fresh build tends to use "QuestsPage".
-				for _, t in ipairs(CONFIG.TABS) do
-					local cap = t.id:sub(1, 1):upper() .. t.id:sub(2)
-					for _, suffix in ipairs({ "Overlay", "Page", "Section" }) do
-						local pg = panel:FindFirstChild(cap .. suffix)
-						if pg and pg:IsA("GuiObject") then pg.Visible = (t.id == id) end
-					end
-				end
+			-- CRATES / TOKENS are pages of the crate panel, not of the hub: it owns the roll, the reveal and the
+			-- token purchase, and a second copy would be a second thing that can disagree with the server.
+			if id == "crates" or id == "tokens" then
+				if _G.toggleSkinCrates then pcall(_G.toggleSkinCrates, true, id) end
+				return
 			end
-			-- Hand-offs: in the main game CRATES and TOKENS are pages of the crate panel,
-			-- not of the hub -- it already owns the roll, the reveal and the token purchase,
-			-- and a second copy of any of those is a second thing that can disagree with the
-			-- server. Route them out rather than rebuilding them here.
-			if (id == "crates" or id == "tokens") and _G.toggleSkinCrates then
-				pcall(_G.toggleSkinCrates, true, id)
-			end
+			-- The hub's own SET-state entry points (the trade page must be populated, not just revealed).
+			local hubShow = ({ pets = _G.PetHubShowPets, food = _G.PetHubShowFood, space = _G.PetHubShowSpace, quests = _G.PetHubShowQuests, trade = _G.PetHubShowTrade })[id]
+			if hubShow then pcall(hubShow) end
 		end
 
 		local tabs = _G.HubTabs.build(panel, showPage)
-		_G.PetHubTabs = tabs -- so other scripts can call tabs.select("quests")
+		_G.PetHubTabs = tabs -- other scripts call tabs.select("quests")
 
-		print(("[HubTabs] attached to %s.%s -- %d tabs"):format(CONFIG.GUI_NAME, CONFIG.PANEL_NAME, #CONFIG.TABS))
+		-- The first realm's contract names, so code written against its hub (or Space's) works here too.
+		_G.PetHub = _G.PetHub or {}
+		_G.PetHub.panel = panel
+		_G.PetHub.navButtons = tabs and tabs.buttons or {}
+		_G.PetHub.showPage = function(id) if tabs then tabs.select(id) end end
+		_G.PetHub.syncNav = function() if tabs then tabs.setActive(tabs.active or "pets") end end
+
+		print(("[HubTabs] attached to %s.%s -- %d tabs (PETS / FOOD / SPACE / QUESTS / CRATES / TRADE, first-realm bar)")
+			:format(CONFIG.GUI_NAME, CONFIG.PANEL_NAME, #CONFIG.TABS))
 	end)
 end
 

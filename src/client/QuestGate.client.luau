@@ -306,10 +306,13 @@ do
 		-- StegosaurusTemplate into Workspace at `base` and float it. Server-owned unions render for
 		-- everyone, identical to the Hub. (Fallback: local parts blob if the spawner isn't present.)
 		local spawnEvt = ReplicatedStorage:FindFirstChild("HatchStegoSpawn")
-		if _G.SpawnStegoFollower then
+		-- TRICERATOPS follower, matching the Mama Triceratops whose nest this is -- see the
+		-- grant note below. The HatchStegoSpawn fallback below keeps its old name because it
+		-- is a server remote; only the species the preferred path spawns has changed.
+		if _G.SpawnTriceratopsFollower then
 			-- preferred: the client FOLLOWER (emerges here, then follows you) -- PetFollow.client.luau
-			print("[QuestGate] hatch -> spawning Stego follower (clones StegosaurusTemplate, then follows you)")
-			pcall(function() _G.SpawnStegoFollower(base) end)
+			print("[QuestGate] hatch -> spawning Triceratops follower (clones TriceratopsTemplate, then follows you)")
+			pcall(function() _G.SpawnTriceratopsFollower(base) end)
 		elseif spawnEvt then
 			print("[QuestGate] hatch -> firing HatchStegoSpawn (server floating pet, fallback)")
 			pcall(function() spawnEvt:FireServer(base) end)
@@ -341,10 +344,18 @@ do
 			end
 		end
 		st.owns = true; st.hatching = false
-		-- send the hatched pet to the Pet Hub (built in PetHub.client.luau)
-		if _G.PetHubAddPet then pcall(function() _G.PetHubAddPet("StegoPet", { petId="StegoPet", displayName="Stegosaurus", level=1, xp=0, xpNeed=100, maxLevel=25, milestone="Newly hatched!" }) end) end
-		-- tell the server to grant + equip the Stego (PetUpgrades.server.luau drives level/XP/evolve)
-		do local sh = ReplicatedStorage:FindFirstChild("StegoHatched"); if sh then pcall(function() sh:FireServer() end) end end
+		-- ===== NESTING NOOK HATCHES A TRICERATOPS, NOT A STEGOSAURUS =====
+		-- The NPC standing over this nest is a MAMA TRICERATOPS. Handing out a Stego from her
+		-- eggs was the one pet in the game that contradicted the island it came from, and it
+		-- was the very first pet a new player ever earns. Swapped with Fern Frontier, which
+		-- was giving the Triceratops and now gives the Stego -- see TriceratopsQuest.
+		--
+		-- NOTHING ELSE HAD TO MOVE. The Lost Eggs are a generic egg model, not a species one,
+		-- so the egg, the nest and the rocking minigame are all unchanged; only which remote
+		-- fires at the end of it does.
+		if _G.PetHubAddPet then pcall(function() _G.PetHubAddPet("TriceratopsPet", { petId="TriceratopsPet", displayName="Triceratops", level=1, xp=0, xpNeed=100, maxLevel=25, milestone="Newly hatched!" }) end) end
+		-- tell the server to grant + equip it (PetUpgrades.server.luau drives level/XP/evolve)
+		do local sh = ReplicatedStorage:FindFirstChild("TriceratopsHatched"); if sh then pcall(function() sh:FireServer() end) end end
 		-- destroy the brown twig nest / egg shell IMMEDIATELY so it doesn't overlap the new pet
 		if st.egg then pcall(function() st.egg:Destroy() end); st.egg = nil end
 	end
@@ -481,9 +492,21 @@ do
 		check()
 
 		-- /done : skip straight to the reward (arrow + hint to the Mama Dino + hatchable egg)
+		--
+		-- "complete1" does the same from anywhere in the tower, whitelisted via DevAccess --
+		-- the same pair DoneCommand.luau binds for every other quest. This island does NOT use
+		-- that module (its completion is driven by the NestingNook egg counters above, not by a
+		-- one-shot function), so the pair is spelled out here instead. Nesting Nook is slot 1
+		-- AND model island1, so the number is 1 either way -- but it is the CLIMB SLOT that is
+		-- being matched, same as every other complete<N>.
+		local DevAccess = require(ReplicatedStorage:WaitForChild("DinosaurRealm"):WaitForChild("DevAccess"))
 		local function onMessage(text)
-			if text and string.gsub(string.lower(text), "%s", "") == "/done" then
+			if not text then return end
+			local cmd = string.gsub(string.lower(text), "%s", "")
+			if cmd == "/done" then
 				completeNow()
+			elseif cmd == "complete1" or cmd == "/complete1" then
+				if DevAccess.isAllowed(player) then completeNow() end
 			end
 		end
 		player.Chatted:Connect(onMessage)

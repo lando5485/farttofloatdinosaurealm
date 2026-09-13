@@ -56,7 +56,7 @@ local NPC_NAMES = {
 	"CoastalFisher",   -- island4  Coastal Crossing
 	"MireWatcher",     -- island5  Misty Mire
 	"RidgeWarden",     -- island6  Redwood Ridge
-	"RaptorScout",     -- island7  Raptor Ridge
+	"RaptorScout",     -- island7  Claw Cliffs
 	"AshWarden",       -- island11 Volcanic Vista
 }
 local OPT_IN_ATTR = "QuestNpc"    -- ...or set this attribute on a model to adopt it without editing this list

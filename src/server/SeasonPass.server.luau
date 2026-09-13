@@ -27,16 +27,16 @@ local PREMIUM_GAMEPASS_ID = 0 -- ⚠ your "Season Pass Premium" gamepass id (0 =
 
 -- the track. free = coins everyone gets; prem = the premium lane (coins + optional pet levels).
 local TIERS = {
-	{ free = { coins = 50 },   prem = { coins = 150 } },
-	{ free = { coins = 75 },   prem = { coins = 250 } },
-	{ free = { coins = 100 },  prem = { coins = 350, pet = 1 } },
+	{ free = { coins = 25 },   prem = { coins = 75 } },
+	{ free = { coins = 38 },   prem = { coins = 125 } },
+	{ free = { coins = 50 },  prem = { coins = 175, pet = 1 } },
+	{ free = { coins = 75 },  prem = { coins = 250 } },
+	{ free = { coins = 100 },  prem = { coins = 350, pet = 2 } },
 	{ free = { coins = 150 },  prem = { coins = 500 } },
-	{ free = { coins = 200 },  prem = { coins = 700, pet = 2 } },
-	{ free = { coins = 300 },  prem = { coins = 1000 } },
-	{ free = { coins = 400 },  prem = { coins = 1500, pet = 2 } },
-	{ free = { coins = 600 },  prem = { coins = 2200 } },
-	{ free = { coins = 800 },  prem = { coins = 3000, pet = 3 } },
-	{ free = { coins = 1200 }, prem = { coins = 5000, pet = 5 } },
+	{ free = { coins = 200 },  prem = { coins = 750, pet = 2 } },
+	{ free = { coins = 300 },  prem = { coins = 1100 } },
+	{ free = { coins = 400 },  prem = { coins = 1500, pet = 3 } },
+	{ free = { coins = 600 }, prem = { coins = 2500, pet = 5 } },
 }
 
 --------------------------------------------------------------------------------

@@ -24,6 +24,12 @@ local TEMPLATE_FOR = {
 	TriceratopsPet   = "TriceratopsTemplate",
 	SpinosaurusPet   = "SpinosaurusTemplate",
 	TyrannosaurusPet = "TyrannosaurusTemplate",
+	-- These two were missing, and this table is why. Both are granted by PetUpgrades and both build
+	-- their templates at boot, but with no row here _G.petBuildModel returned nil for them -- so the
+	-- skin panel could not preview them and /scanpet could not test them, which is why every report
+	-- covered 6 pets and quietly said nothing about these two however wrong their gear sat.
+	TherizinosaurusPet = "TherizinosaurusTemplate",
+	BrachiosaurusPet   = "BrachiosaurusTemplate",
 }
 
 -- Built models are cached per pet id: the reel asks for the same handful of pets

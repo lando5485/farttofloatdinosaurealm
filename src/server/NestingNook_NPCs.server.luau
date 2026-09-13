@@ -19,8 +19,78 @@ do local t0 = os.clock(); while not _G.islandsPositioned and os.clock() - t0 < 5
 
 local SPEECH_LIFETIME = 9 -- seconds before a speech bubble auto-hides
 local RING_RADIUS = 3.5 -- how far returned eggs sit from the nest center
-local DIALOGUE_CLOSE_DISTANCE = 8 -- studs; conversation closes when the player walks this far away
+
+-- ===== HOW CLOSE YOU HAVE TO BE TO TALK =====
+-- These were BOTH 8, and 8 was the reason the Talk prompt "sometimes doesn't come up".
+-- Two compounding reasons:
+--
+--   1. THE PROMPT SITS ON THE NPC'S HEAD (pickAdornee prefers a part named "head"), and
+--      MaxActivationDistance is measured in 3-D from that part. A head ~5 studs up means
+--      the real radius on the ground is sqrt(8^2 - 5^2) = 6 studs. You have to be almost
+--      touching the NPC. On mobile, where you steer by dragging a thumbstick and stop
+--      wherever the character happens to stop, 6 studs is a coin flip.
+--   2. ACTIVATION AND CLOSE WERE THE SAME NUMBER, so a player hovering right at the edge
+--      had the watcher closing the conversation on the same step the prompt was still
+--      showing -- the bubble flickered shut mid-sentence.
+--
+-- Now: you can start talking from 14 (a ~13-stud ground radius even off a head), and the
+-- conversation only gives up at 20. The gap between them is deliberate -- close must always
+-- be comfortably LARGER than activation or you get case 2 back.
+local TALK_DISTANCE = 14 -- studs; how far away the [E] Talk prompt appears + fires
+local DIALOGUE_CLOSE_DISTANCE = 20 -- studs; conversation closes when the player walks this far away
 local LOOK_RADIUS = 20 -- a player within this many studs gets looked at
+
+-- ===== THE MAMA DINO'S VOICE =====
+-- She calls out now and then while you are on the Nesting Nook. Deliberately SPARSE: this is
+-- the first island, the one a new player stands on while reading the intro, so the dino is
+-- atmosphere, not a foreground sound.
+--
+-- Two rules keep it from turning into a nuisance:
+--   * THE GAP IS RE-ROLLED EVERY TIME (not a fixed metronome). A steady beat is what makes a
+--     repeated ambient sound start to grate -- you learn the interval and then you're waiting
+--     for it. A gap that wanders between ~20s and ~50s never settles into a rhythm.
+--   * NO IMMEDIATE REPEATS. Four clips is a small pool; hearing the same one twice in a row
+--     makes it obvious there are only four, so the next pick always differs from the last.
+-- It also only fires when somebody is actually close enough to hear it, so you don't walk up
+-- to the island and catch a call already half finished.
+local DINO_VOICE = {
+	"rbxassetid://9116304651",
+	"rbxassetid://9114629311",
+	"rbxassetid://9116308556",
+	"rbxassetid://257001981",
+}
+local DINO_VOICE_FIRST_GAP = 8  -- seconds before her FIRST call once someone is on the island
+local DINO_VOICE_GAP_MIN = 20   -- seconds, shortest quiet stretch when you are ACROSS the island
+local DINO_VOICE_GAP_MAX = 50   -- seconds, longest
+-- ===== STANDING WITH HER PUTS HER ON A SHORT LEASH =====
+-- One greeting and then 20-50s of nothing made her go quiet exactly when you had walked
+-- over to look at her. While anyone is inside the re-arm radius she calls on THIS cadence
+-- instead, so she sounds off several times while you are there. Still randomised at both
+-- ends -- a fixed beat is what turns a repeated sound into a nuisance.
+local DINO_VOICE_NEAR_MIN = 6
+local DINO_VOICE_NEAR_MAX = 14
+-- ===== SHE ALSO GREETS YOU WHEN YOU WALK UP =====
+-- Two radii, not one. Cross IN at 26 and she calls; you then have to get back out past 45
+-- before she will do it again. A single radius makes the distance flicker across the line
+-- while you stand at the edge, and she fires every poll.
+-- 26 is "you have clearly come over to her" -- she is ~13 studs long, so it is roughly two
+-- body lengths and comfortably inside the nest clearing rather than halfway across island1.
+local DINO_VOICE_APPROACH_IN  = 26
+local DINO_VOICE_APPROACH_OUT = 45
+-- No two calls closer together than this, whatever set them off. Long enough that a clip
+-- finishes before the next can start, short enough that walking up still feels immediate.
+local DINO_VOICE_MIN_GAP = 3.5
+-- 0.5 with a tapered falloff was inaudible in practice. The island beds sit at 0.28-0.70 and
+-- they are CONSTANT, so a one-shot has to be clearly above them to register at all -- you only
+-- get one chance to notice it. Flat out to 90 studs (most of island1) then linear to silence
+-- at 260 puts her plainly in front of the ambience without being a jumpscare.
+-- Raised twice off playtests: 1.2 -> 1.8 -> 2.7 (+50% each time). She is now the loudest
+-- thing on island1 by a distance -- above the mosquito squish (2.0) and ~4x the loudest
+-- island bed. Deliberate: she is a rare one-shot, not a bed, and the whole point is that
+-- you look up when she calls.
+local DINO_VOICE_VOLUME = 2.7
+local DINO_VOICE_FULL_RADIUS = 90 -- studs; full volume anywhere inside this
+local DINO_VOICE_RADIUS = 260   -- studs; past this she's inaudible (island1 is ~185 wide)
 
 ----------------------------------------------------------------------
 -- Wait for the shared quest state published by the setup script
@@ -424,6 +494,10 @@ local function addPrompt(part: BasePart, actionText: string, objectText: string)
 	prompt.HoldDuration = 0
 	prompt.MaxActivationDistance = 12
 	prompt.RequiresLineOfSight = false
+	-- ON A PHONE THERE IS NO E KEY -- the prompt is only reachable if it draws its own
+	-- tap target. ClickablePrompt defaults to true, but say it out loud so nobody turns
+	-- it off in Studio without realising they just made the prompt keyboard-only.
+	prompt.ClickablePrompt = true
 	prompt.Parent = part
 	return prompt
 end
@@ -446,6 +520,18 @@ end
 local function findDinoMarker(): BasePart?
 	local function scan(root: Instance?): BasePart?
 		if not root then return nil end
+		-- A PART NAMED "dino1" WINS OVER "DinoPlacement".
+		-- The Mama Dino model was lost from the place, and a bare part named dino1 was put
+		-- down to mark where the replacement should stand. That name matched NOTHING before:
+		-- findModel only looks at Models, and the marker test below needs both "dino" AND
+		-- "plac" in the name -- so the part sat there doing nothing while the log kept
+		-- reporting the dino missing. It is checked FIRST because it is the more specific,
+		-- more recent instruction: if someone drops a dino1 part, that is where they want it.
+		for _, desc in ipairs(root:GetDescendants()) do
+			if desc:IsA("BasePart") and string.lower(desc.Name) == "dino1" then
+				return desc
+			end
+		end
 		for _, desc in ipairs(root:GetDescendants()) do
 			if desc:IsA("BasePart") then
 				local n = string.lower(desc.Name)
@@ -475,13 +561,48 @@ end
 -- the DinoPlacement marker (static, no animation), and host the quest GUI.
 ----------------------------------------------------------------------
 
+-- ===== FINDING THE MAMA DINO WHEN SHE IS NOT CALLED "dino1" =====
+-- The original dino1 model was lost from the place and replaced by a hand-placed model with
+-- a different name. Rather than demand a rename, these names are accepted as the Mama Dino
+-- too -- the user's spelling first, since that is what is actually in the place.
+--
+-- ⚠ THE PET BUILDER ALSO PUTS A MODEL CALLED "Triceratops" IN WORKSPACE.
+-- Triceratops.server.luau publishes a template AND leaves a visible copy under that exact
+-- name. Adopting it here would anchor the pet's copy, drag it to island1 and wire quest
+-- prompts onto it -- so any candidate containing a BodyUnion (PetFace's signature for a
+-- fused pet body) is skipped. That is why the misspelled "Triceretops" is listed FIRST and
+-- matches before the correctly-spelled name is ever tried.
+local DINO_NAMES = { "dino1", "Triceretops", "Triceratops", "Trike", "MamaDino" }
+
+local function looksLikeAPetCopy(m: Model): boolean
+	if m:GetAttribute("PetFollower") then return true end
+	if not m:IsDescendantOf(Workspace) then return true end
+	for _, d in ipairs(m:GetDescendants()) do
+		if d:IsA("BasePart") and d.Name == "BodyUnion" then return true end
+	end
+	return false
+end
+
+local function findMamaDino(): Model?
+	for _, want in ipairs(DINO_NAMES) do
+		for _, desc in ipairs(Workspace:GetDescendants()) do
+			if desc:IsA("Model") and desc.Name == want and not looksLikeAPetCopy(desc) then
+				return desc
+			end
+		end
+	end
+	return nil
+end
+
 local function setupBabyDino(): (Model?, BasePart?)
-	local model = findModel("dino1")
+	local model = findMamaDino()
 	if not model then
-		warn("[NestingNook] Model 'dino1' not found in Workspace. Baby Dino quest logic skipped.")
+		warn(("[NestingNook] No Mama Dino model found. Looked for a Model named: %s "
+			.. "(pet-builder copies with a BodyUnion are skipped on purpose). "
+			.. "Baby Dino quest logic skipped."):format(table.concat(DINO_NAMES, ", ")))
 		return nil, nil
 	end
-	print("[NestingNook] Found dino1: " .. model:GetFullName())
+	print(("[NestingNook] Found the Mama Dino: %s"):format(model:GetFullName()))
 
 	-- Remove any leftover neck/body filler balls from earlier versions.
 	for _, d in ipairs(model:GetDescendants()) do
@@ -923,6 +1044,9 @@ end
 
 -- Dialogue split into short pages, advanced by pressing E. The Mama Dino is the
 -- heartbroken mother; the Miner is a gruff old prospector with his own voice.
+-- NOT CURRENTLY WIRED. The Mama Dino's [E] prompt was removed -- she roars instead of
+-- talking -- but her lines are kept here rather than deleted: they are the only written
+-- voice she has, and re-attaching them is one wireDialogue() call if she ever speaks again.
 local function dinoPages(): { string }
 	if eggsReturnedValue.Value >= totalEggsValue.Value then
 		return {
@@ -953,31 +1077,87 @@ end
 -- Drive a prompt as a paged conversation: each E press shows the next page;
 -- after the last page, E closes the bubble and resets to "Talk".
 local function wireDialogue(prompt: ProximityPrompt, adornee: BasePart, getPages: () -> { string }, onTalk: ((Player) -> ())?)
-	-- The "E" prompt shows/fires within the same range the conversation stays
-	-- open, so there's no zone where it opens then instantly closes.
-	prompt.MaxActivationDistance = DIALOGUE_CLOSE_DISTANCE
+	-- ===== EVERY TALK PROMPT GETS THE SAME SETTINGS, WHEREVER IT CAME FROM =====
+	-- This used to set MaxActivationDistance and nothing else. That is fine for the prompts
+	-- addPrompt() builds, but the Mama Dino's and the miner's prompts are FOUND first and only
+	-- created as a fallback -- so a prompt placed by hand in Studio kept whatever it was saved
+	-- with. Roblox's defaults for a fresh ProximityPrompt are hostile here:
+	--
+	--   RequiresLineOfSight = TRUE   -> the raycast runs camera -> prompt, and the NPC's own
+	--                                   head/hat/cloth sits in the way at most angles. Walk a
+	--                                   quarter turn around them and the prompt vanishes. This
+	--                                   is the "sometimes it doesn't come up" you can reproduce
+	--                                   by circling the NPC.
+	--   Exclusivity = OneGlobally    -> only the single closest prompt in the WHOLE PLACE draws.
+	--                                   The miner stands in the nest ring next to five LostEggs,
+	--                                   and every island Researcher is placed ~6 studs from that
+	--                                   island's food stand. Stand slightly nearer the egg or the
+	--                                   stand and the NPC's prompt is suppressed outright -- it
+	--                                   isn't broken, it's being outvoted.
+	--   HoldDuration                 -> whatever Studio saved; a stale hold means a tap that
+	--                                   doesn't linger (i.e. every mobile tap) never fires.
+	--
+	-- Forcing all of them here means the talk prompts behave identically whether they were
+	-- authored in Studio or built by this script, and stay that way if someone edits the model.
+	prompt.Enabled = true
+	prompt.MaxActivationDistance = TALK_DISTANCE
+	prompt.RequiresLineOfSight = false
+	prompt.HoldDuration = 0
+	prompt.ClickablePrompt = true                                   -- the tap target on touch
+	prompt.Exclusivity = Enum.ProximityPromptExclusivity.AlwaysShow  -- never lose to a nearby egg/food stand
+	prompt.KeyboardKeyCode = Enum.KeyCode.E
+	prompt.GamepadKeyCode = Enum.KeyCode.ButtonX
+	-- Style=Custom draws NOTHING unless a script is listening for PromptShown and building the
+	-- GUI itself. A prompt saved as Custom in Studio is therefore completely invisible while
+	-- still being perfectly functional -- you walk up, see nothing, and conclude the NPC is
+	-- broken. UIOffset is the same class of trap: a stale offset can park the button off-screen.
+	prompt.Style = Enum.ProximityPromptStyle.Default
+	prompt.UIOffset = Vector2.new(0, 0)
+
+	-- ===== KILL ANY OTHER PROMPT HIDING IN THIS NPC =====
+	-- The Mama Dino and the miner are the player's own Studio models, and we only look for a
+	-- prompt on the adornee PART (FindFirstChildWhichIsA is not recursive). A prompt sitting
+	-- on some other part of the same model is therefore never found and never wired -- but it
+	-- is still a live prompt standing right next to ours. It wins on distance, shows its own
+	-- label, and pressing E fires an event NOBODY IS LISTENING TO. The player is aiming at a
+	-- real-looking prompt that does nothing, which reads exactly like a broken quest giver.
+	-- One wired prompt per NPC, always.
+	do
+		local root = adornee:FindFirstAncestorOfClass("Model")
+		if root then
+			for _, d in ipairs(root:GetDescendants()) do
+				if d:IsA("ProximityPrompt") and d ~= prompt then
+					d.Enabled = false
+					warn(("[NPC] %s: disabled a stray unwired ProximityPrompt at %s (it was stealing the [E] press)")
+						:format(root.Name, d:GetFullName()))
+				end
+			end
+		end
+	end
 
 	local pages: { string }? = nil
 	local index = 0
 	local watching = false
+	local talker: Player? = nil -- who owns the conversation currently on screen
 
 	local function closeDialogue()
 		hideSpeech(adornee)
 		prompt.ActionText = "Talk"
 		index = 0
 		pages = nil
+		talker = nil
 	end
 
-	-- Is any player within DIALOGUE_CLOSE_DISTANCE studs of this NPC?
+	-- Is the player who is READING this conversation still within DIALOGUE_CLOSE_DISTANCE?
+	-- (Was "is ANY player in range", which kept a bubble open for a player who had walked
+	-- away just because a second player happened to be standing near the NPC.)
 	local function playerInRange(): boolean
-		for _, plr in ipairs(Players:GetPlayers()) do
-			local char = plr.Character
-			local hrp = char and char:FindFirstChild("HumanoidRootPart")
-			if hrp and hrp:IsA("BasePart") and (hrp.Position - adornee.Position).Magnitude <= DIALOGUE_CLOSE_DISTANCE then
-				return true
-			end
-		end
-		return false
+		local plr = talker
+		if not plr or not plr.Parent then return false end
+		local char = plr.Character
+		local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		return hrp ~= nil and hrp:IsA("BasePart")
+			and (hrp.Position - adornee.Position).Magnitude <= DIALOGUE_CLOSE_DISTANCE
 	end
 
 	-- While a conversation is open, watch distance and close it the moment the
@@ -1000,6 +1180,18 @@ local function wireDialogue(prompt: ProximityPrompt, adornee: BasePart, getPages
 	end
 
 	prompt.Triggered:Connect(function(player)
+		-- ===== A SECOND PLAYER STARTS THE CONVERSATION OVER, IT DOESN'T HIJACK IT =====
+		-- index/pages are per-PROMPT, not per-player (there is one speech bubble on the NPC
+		-- and everyone sees it). So without this, player B walking up and pressing E while
+		-- player A is reading advanced A's page counter -- and if A was on the last page, B's
+		-- first press CLOSED the bubble instead of opening it. From B's side that is exactly
+		-- "I clicked the quest giver and nothing came up".
+		-- Taking over resets to page 1, so whoever pressed last always sees a real page.
+		if talker ~= player then
+			talker = player
+			index = 0
+			pages = nil
+		end
 		if index == 0 then
 			pages = getPages()
 		end
@@ -1019,9 +1211,12 @@ local function wireDialogue(prompt: ProximityPrompt, adornee: BasePart, getPages
 		startWatcher()
 	end)
 
-	-- Immediate close when the prompt hides (player left the 12-stud range).
+	-- Immediate close when the prompt hides -- but ONLY if the person actually reading it
+	-- has left. PromptHidden fires on the server for ANY player leaving range, so the bare
+	-- version closed your conversation because someone else wandered off past the NPC. The
+	-- distance watcher above is the real close condition; this is just the fast path.
 	prompt.PromptHidden:Connect(function()
-		if index ~= 0 then
+		if index ~= 0 and not playerInRange() then
 			closeDialogue()
 		end
 	end)
@@ -1039,14 +1234,259 @@ end
 -- questClaimed[player], and onEggTaken() refuses EVERY egg pickup without it. So a
 -- missing prompt on the miner = the island1 eggs can never be collected, with nothing
 -- in the log to say why.
-if babyAdornee then
-	local babyPrompt = babyAdornee:FindFirstChildWhichIsA("ProximityPrompt")
-	if not babyPrompt then
-		babyPrompt = addPrompt(babyAdornee, "Talk", "Mama Dinosaur")
-		print("[NestingNook] dino1 had no ProximityPrompt -> created one")
+
+-- The Mama Dino's occasional call, swapped between the four clips.
+--
+-- ===== THE EMITTER IS ITS OWN ANCHORED PART, NOT HER HEAD =====
+-- The obvious thing is to parent the Sound to the head part the Talk prompt already uses.
+-- Don't: dino1 gets rebuilt by this very script -- neck/body filler parts are DESTROYED after
+-- the adornee is picked, and setupDinoIdle re-CFrames the head every frame. A Sound whose
+-- parent is deleted stops dead and the loop's `adornee.Parent` guard quietly ends the thread,
+-- with nothing in the log to say the voice died. She never moves, so a standalone anchored
+-- emitter at her position is strictly safer and sounds identical.
+--
+-- ===== ONE SOUND PER CLIP, AND THE LOAD IS CHECKED OUT LOUD =====
+-- Swapping SoundId on a single Sound and calling Play() in the same frame plays nothing if
+-- that asset hasn't streamed in yet -- which is exactly what happens on the FIRST call, the
+-- only one you're listening for when testing. Four separate Sounds built at startup means
+-- every call is instant.
+-- The IsLoaded roll-call below exists because the most likely way for a brand-new sound id to
+-- do nothing is AUDIO PRIVACY: Roblox refuses audio the place doesn't own ("Asset is not
+-- approved for the requester") and the failure is otherwise completely silent -- from the
+-- outside it looks identical to "the script never ran". This makes the difference visible.
+local function startDinoVoice(model: Model, adornee: BasePart)
+	local ContentProvider = game:GetService("ContentProvider")
+
+	local origin = adornee.Position
+	do -- prefer the model's own centre, a little above the ground, over whatever part won pickAdornee
+		local ok, cf, size = pcall(function()
+			local c, s = model:GetBoundingBox()
+			return c, s
+		end)
+		if ok and typeof(cf) == "CFrame" then
+			origin = cf.Position + Vector3.new(0, (typeof(size) == "Vector3" and size.Y or 0) * 0.25, 0)
+		end
 	end
-	wireDialogue(babyPrompt, babyAdornee, dinoPages)
-	print("[NestingNook] Mama Dino talk prompt wired.")
+
+	local emitter = Instance.new("Part")
+	emitter.Name = "MamaDinoVoiceEmitter"
+	emitter.Size = Vector3.new(1, 1, 1)
+	emitter.CFrame = CFrame.new(origin)
+	emitter.Transparency = 1
+	emitter.Anchored, emitter.CanCollide, emitter.CanQuery, emitter.CanTouch = true, false, false, false
+	emitter.Parent = Workspace
+
+	local sounds: { Sound } = {}
+	for i, id in ipairs(DINO_VOICE) do
+		local s = Instance.new("Sound")
+		s.Name = ("MamaDinoVoice%d"):format(i)
+		s.SoundId = id
+		s.Volume = DINO_VOICE_VOLUME
+		-- Linear, like every other positional sound in this realm. InverseTapered was the first
+		-- attempt and it falls off HARD -- at 40 studs she was already most of the way to silent,
+		-- which is a large part of why she couldn't be heard from anywhere on the island.
+		s.RollOffMode = Enum.RollOffMode.Linear
+		s.RollOffMinDistance = DINO_VOICE_FULL_RADIUS
+		s.RollOffMaxDistance = DINO_VOICE_RADIUS
+		s.Parent = emitter
+		sounds[i] = s
+	end
+
+	task.spawn(function()
+		-- Best-effort warm-up. PreloadAsync is really a client-side API, so this is wrapped and
+		-- its failure means nothing; the IsLoaded roll-call below is the signal that matters.
+		pcall(function() ContentProvider:PreloadAsync(sounds) end)
+		task.wait(5)
+		local bad = 0
+		for i, s in ipairs(sounds) do
+			if not s.IsLoaded then
+				bad += 1
+				warn(("[NestingNook] Mama Dino clip %d (%s) did NOT load. The usual cause is audio "
+					.. "privacy -- a sound uploaded by someone else can't be played by this place "
+					.. "('Asset is not approved for the requester'). Reupload it on this account and "
+					.. "swap the id in DINO_VOICE."):format(i, DINO_VOICE[i]))
+			end
+		end
+		if bad == 0 then
+			print(("[NestingNook] Mama Dino: all %d clips loaded OK."):format(#sounds))
+		else
+			warn(("[NestingNook] Mama Dino: %d of %d clips are unusable -- she will be silent whenever "
+				.. "one of those is picked."):format(bad, #sounds))
+		end
+	end)
+
+	local function anyoneWithin(radius: number): boolean
+		for _, plr in ipairs(Players:GetPlayers()) do
+			local char = plr.Character
+			local hrp = char and char:FindFirstChild("HumanoidRootPart")
+			if hrp and hrp:IsA("BasePart") and (hrp.Position - origin).Magnitude <= radius then
+				return true
+			end
+		end
+		return false
+	end
+	-- anywhere she can be heard from (worth calling at all) vs standing with her
+	local function anyoneNear(): boolean  return anyoneWithin(DINO_VOICE_RADIUS) end
+	local function anyoneClose(): boolean return anyoneWithin(DINO_VOICE_APPROACH_OUT) end
+
+	-- HOW LONG UNTIL THE NEXT CALL -- and it depends on where you are standing.
+	--
+	-- One greeting on approach and then 20-50 seconds of silence made her go quiet exactly
+	-- when you were paying attention to her. Standing WITH her now puts her on the short
+	-- cadence, so she calls repeatedly while you are there; wander off across the island and
+	-- she drops back to the sparse ambient rhythm. Both ends stay randomised -- a fixed
+	-- interval is what makes a repeated sound start to grate.
+	local function rollGap(): number
+		if anyoneClose() then
+			return DINO_VOICE_NEAR_MIN + math.random() * (DINO_VOICE_NEAR_MAX - DINO_VOICE_NEAR_MIN)
+		end
+		return DINO_VOICE_GAP_MIN + math.random() * (DINO_VOICE_GAP_MAX - DINO_VOICE_GAP_MIN)
+	end
+
+	local lastPick = 0
+	local lastCallAt = -math.huge   -- os.clock() of the last call, however it was triggered
+	-- Force a call now. Returns the clip index so the caller can log it.
+	local function callOut(reason: string): number
+		local pick = math.random(1, #DINO_VOICE)
+		-- never twice running (the #>1 guard keeps this from spinning forever if
+		-- somebody trims the list down to a single clip)
+		while #DINO_VOICE > 1 and pick == lastPick do pick = math.random(1, #DINO_VOICE) end
+		lastPick = pick
+		lastCallAt = os.clock()
+		local s = sounds[pick]
+		s.TimePosition = 0
+		pcall(function() s:Play() end)
+		-- SAY SO IN THE LOG. Every call prints, so "I never heard her" can be told apart from
+		-- "she never fired" without guessing.
+		print(("[NestingNook] Mama Dino calls (%s): clip %d/%d %s  vol=%.2f  loaded=%s  at (%.0f,%.0f,%.0f)")
+			:format(reason, pick, #DINO_VOICE, DINO_VOICE[pick], s.Volume, tostring(s.IsLoaded),
+				origin.X, origin.Y, origin.Z))
+		return pick
+	end
+	_G.dinoCall = function() return callOut("forced") end -- /dino, and callable from the command bar
+
+	-- WHEN THE NEXT AMBIENT CALL IS DUE. A deadline rather than a sleep, so walking up to
+	-- her takes effect immediately: the old version slept the whole gap in one task.wait, so
+	-- arriving one second into a 50-second wait meant 49 more seconds of silence no matter
+	-- what you did. Now the loop wakes twice a second and re-reads where everyone is.
+	local nextCallAt = os.clock() + DINO_VOICE_FIRST_GAP
+
+	task.spawn(function()
+		-- FIRST CALL COMES SOON. A 20-50s opening silence means you land on island1, hear
+		-- nothing, and assume it's broken -- so the first one lands within a few seconds of a
+		-- player actually being there, and only then does it settle into the random gaps.
+		while emitter.Parent do
+			task.wait(0.5)
+			if not emitter.Parent then break end
+			if os.clock() >= nextCallAt then
+				-- Don't stack on top of a greeting. If walking up to her just set her off,
+				-- let this one pass rather than roaring twice in a row.
+				if anyoneNear() and os.clock() - lastCallAt >= DINO_VOICE_MIN_GAP then
+					callOut(anyoneClose() and "nearby" or "ambient")
+				end
+				nextCallAt = os.clock() + rollGap()
+			end
+		end
+	end)
+
+	--------------------------------------------------------------------
+	-- SHE NOTICES YOU. Walk up to her and she calls out.
+	--------------------------------------------------------------------
+	-- The timer above is ambient -- it fires while you wander the island and has nothing to
+	-- do with where you are standing. This is the other half: she greets you when you
+	-- actually approach, which is what makes her feel like she is reacting to YOU rather
+	-- than running on a clock.
+	--
+	-- HYSTERESIS, not a plain radius test. Enter within APPROACH_IN and she calls; you then
+	-- have to get back out past the LARGER APPROACH_OUT before she will greet you again.
+	-- With a single radius, standing exactly on the boundary makes the distance flicker
+	-- either side of it and she machine-guns the clip every poll.
+	--
+	-- Per player, so a second player walking up is greeted on their own approach rather than
+	-- being locked out by yours -- but the MIN_GAP is shared, because there is one emitter
+	-- and two roars on top of each other is just noise.
+	do
+		local inside: { [Player]: boolean } = {}
+		task.spawn(function()
+			while emitter.Parent do
+				task.wait(0.3)
+				local present: { [Player]: boolean } = {}
+				for _, plr in ipairs(Players:GetPlayers()) do
+					present[plr] = true
+					local char = plr.Character
+					local hrp = char and char:FindFirstChild("HumanoidRootPart")
+					if hrp and hrp:IsA("BasePart") then
+						local d = (hrp.Position - origin).Magnitude
+						if d <= DINO_VOICE_APPROACH_IN then
+							if not inside[plr] then
+								inside[plr] = true
+								if os.clock() - lastCallAt >= DINO_VOICE_MIN_GAP then
+									callOut("approach:" .. plr.Name)
+									-- restart the ambient clock, so a timer call that was
+									-- nearly due doesn't land on top of the greeting
+									nextCallAt = os.clock() + rollGap()
+								end
+							end
+						elseif d > DINO_VOICE_APPROACH_OUT then
+							inside[plr] = nil   -- re-armed: walking back in greets again
+						end
+					else
+						inside[plr] = nil       -- dead / respawning: re-arm
+					end
+				end
+				-- drop players who left, so the table cannot grow forever on a long server
+				for plr in pairs(inside) do
+					if not present[plr] then inside[plr] = nil end
+				end
+			end
+		end)
+	end
+
+	print(("[NestingNook] Mama Dino voice active -- %d clips at vol %.2f, full volume within %d studs, "
+		.. "silent past %d. First call ~%ds. Random %d-%ds while you are NEAR her (within %d), "
+		.. "%d-%ds across the island. Greets you on approach (in %d / re-arm %d studs). "
+		.. "Min %.1fs between any two calls. Type /dino to force one.")
+		:format(#DINO_VOICE, DINO_VOICE_VOLUME, DINO_VOICE_FULL_RADIUS, DINO_VOICE_RADIUS,
+			DINO_VOICE_FIRST_GAP, DINO_VOICE_NEAR_MIN, DINO_VOICE_NEAR_MAX, DINO_VOICE_APPROACH_OUT,
+			DINO_VOICE_GAP_MIN, DINO_VOICE_GAP_MAX,
+			DINO_VOICE_APPROACH_IN, DINO_VOICE_APPROACH_OUT, DINO_VOICE_MIN_GAP))
+
+	Players.PlayerAdded:Connect(function(plr)
+		plr.Chatted:Connect(function(msg)
+			if msg:lower():gsub("%s", "") == "/dino" then
+				print("[NestingNook] /dino by " .. plr.Name)
+				callOut("/dino")
+			end
+		end)
+	end)
+	for _, plr in ipairs(Players:GetPlayers()) do
+		plr.Chatted:Connect(function(msg)
+			if msg:lower():gsub("%s", "") == "/dino" then
+				print("[NestingNook] /dino by " .. plr.Name)
+				callOut("/dino")
+			end
+		end)
+	end
+end
+
+-- ===== THE MAMA DINO HAS NO [E] PROMPT. SHE IS AN ANIMAL, NOT A QUEST GIVER. =====
+-- She used to carry a paged "Talk" conversation. It was pure flavour -- unlike the miner's,
+-- her dialogue had no onTalk and claimed nothing, so nothing in the quest depended on it
+-- (the Researcher is the one who unlocks egg pickup). She speaks in ROARS now.
+--
+-- Every prompt in her model is destroyed, not just disabled: a disabled prompt is invisible
+-- but still sitting there for the next person who wonders why the dino has a dead prompt in
+-- the explorer, and one placed by hand in Studio would otherwise survive this.
+if babyAdornee then
+	local killed = 0
+	local root = babyDino or babyAdornee:FindFirstAncestorOfClass("Model")
+	if root then
+		for _, d in ipairs(root:GetDescendants()) do
+			if d:IsA("ProximityPrompt") then d:Destroy(); killed += 1 end
+		end
+	end
+	print(("[NestingNook] Mama Dino: no talk prompt (removed %d) -- she only roars now."):format(killed))
+	startDinoVoice(babyDino :: Model, babyAdornee)
 end
 
 if archAdornee then
@@ -1074,11 +1514,12 @@ end
 -- Talking to it grants the DIG QUEST (sets the "DigQuestAccepted" attribute);
 -- BurritoDig.client.luau watches that to build + reveal the dig trail.
 ----------------------------------------------------------------------
+-- island3's quest is THE LIVING FOSSIL (LivingFossil.client.luau) -- the shovel
+-- dig-trail this dialogue used to describe is retired.
 local function digMinerPages(): { string }
 	return {
-		"There are fossils buried here.",
-		"Take this shovel.",
-		"Dig the dirt spots to find an egg!",
+		"My scans found fossils buried all over this site...",
+		"But ONE of them has a HEARTBEAT. Take my Amber Lens and find it!",
 	}
 end
 
@@ -1268,9 +1709,11 @@ end
 
 -- One quest-giver per island that has a spawn point (dialogue matches that island's quest).
 local ISLAND_NPCS = {
+	-- island2's quest is THE FERN THIEF (FernThief.client.luau) -- a baby Stego raids the
+	-- ferns and you trap it. The egg this dialogue used to point at is retired.
 	{ island = "island2", name = "FrillRancher", title = "The Rancher", pages = {
-		"There's a Triceratops egg in the ferns.",
-		"Find it and press E to hatch it!",
+		"Something's been stealing my ferns every night!",
+		"Set traps at the glowing spots and catch that thief!",
 	} },
 	{ island = "island4", name = "CoastalFisher", title = "The Fisher", pages = {
 		"Grab the fishing rod from the barrel.",
@@ -1290,7 +1733,7 @@ local ISLAND_NPCS = {
 		"Grab a sniper and hunt them down to find it!",
 	} },
 	{ island = "island7", name = "RaptorScout", title = "The Scout", pages = {
-		"This is Raptor Ridge.",
+		"This is Claw Cliffs.",
 		"A raptor nest is starving -- its eggs won't hatch!",
 		"Grab the meat scattered around the island.",
 		"Carry it back and feed the nest -- 5 pieces.",

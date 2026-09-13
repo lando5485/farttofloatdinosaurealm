@@ -8,3 +8,16 @@ rojo.exe
 Thumbs.db
 .DS_Store
 desktop.ini
+
+# Build output -- rojo regenerates these; a 1.2MB binary per build bloats history fast
+*.rbxl
+*.rbxlx
+
+# Local backups and one-off exports (~4MB, and they duplicate files already tracked in src/)
+backup_before_*/
+export_pet_system/
+pet_system_export.zip
+
+# Python bytecode from tools/
+__pycache__/
+*.pyc

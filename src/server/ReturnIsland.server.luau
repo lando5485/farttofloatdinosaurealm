@@ -51,7 +51,9 @@ local CONFIG = {
 	-- studs BELOW the island before the prompt appears WHILE AIRBORNE. Too small and it
 	-- flickers every time you hop off a ledge; too large and a falling player waits to be
 	-- offered help. 60 is the kit's default and it suits a tower whose gaps are 6000+.
-	CATCH_MARGIN = 60,
+	-- RESCALED x0.455 with the tower (was 60). It is an anti-flicker band measured against
+	-- the airspace of a gap, and the gaps shrank by more than half.
+	CATCH_MARGIN = 27,
 
 	-- The same test for a player who is STANDING ON SOMETHING. Far smaller on purpose: the
 	-- big margin is only there to stop mid-air flicker, and you cannot flicker with your
@@ -73,6 +75,10 @@ local CONFIG = {
 	-- and every tier above climbs faster), so it catches every real flight. A jump tops out
 	-- around 50 and would read as "flying" for its first fraction of a second -- harmless,
 	-- since it only suppresses a button that reappears the moment you start coming down.
+	-- BACK AT 10. Every powered climb speed is back to its pre-compression value (the
+	-- slowest gut climbs at 50 studs/sec again), so the original threshold is once more the
+	-- right one -- a fifth of the slowest powered climb, and well clear of physics noise.
+	-- An interim pass cut this to 5 to track a slowed-down player who no longer exists.
 	RISE_SPEED = 10,
 
 	-- Falling at or beyond this is a DECENT FALL and always shows the button, whatever the

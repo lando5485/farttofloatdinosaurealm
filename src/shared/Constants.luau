@@ -13,7 +13,7 @@ Constants.CRATE = {
 	-- 8 hours between free claims (8 * 60 * 60).
 	COOLDOWN_SECONDS = 28800,
 	-- Coins granted when every owned pet is already at the level cap (nothing left to level).
-	FALLBACK_COINS = 500,
+	FALLBACK_COINS = 250,
 	-- Pet level cap (mirrors PetSystem.PET_MAX_LEVEL; grants clamp here).
 	PET_MAX_LEVEL = 25,
 	-- Rarity roll weights. Sum = 100, but consumers compute the total defensively so any

@@ -513,12 +513,114 @@ task.spawn(function()
 		end
 		newTarget()
 
+		--------------------------------------------------------------------
+		-- PANIC -- what a shot raptor does instead of carrying on grazing.
+		--------------------------------------------------------------------
+		-- Getting hit used to flash the body red and change NOTHING about how the animal
+		-- moved: it kept ambling to its next wander point at the same 6 studs/sec as if
+		-- nothing had happened, which made the whole hunt feel like shooting a prop.
+		--
+		-- Now a hit throws it into a bolt: fast, erratic, AWAY from whoever shot, and it
+		-- re-picks a direction every few tenths of a second so it scatters rather than
+		-- running one clean line off into the trees. It also drops any chase it was on --
+		-- a wounded animal is not still coming for you.
+		--
+		-- panicUntil doubles as the flag; nothing else has to be reset when it lapses.
+		local panicUntil, panicNext = 0, 0
+		local PANIC_TIME  = 4.5   -- seconds of bolting per hit (a second hit re-arms it)
+		local PANIC_SPD   = 22    -- vs WANDER 6 / CHASE 12 -- clearly running for its life
+		local PANIC_TURN  = 0.35  -- seconds between new scatter points; low = frantic
+		local PANIC_HOP   = 14    -- how far each scatter point is thrown
+
+		-- Pick somewhere to bolt to. Biased directly away from `from` (the shooter) when we
+		-- know who that is, then jittered wide so five panicking raptors don't stack into a
+		-- single stream. Falls back to the normal wander picker if the island edge blocks
+		-- every candidate, so a panicking raptor can still never run off the island.
+		local function panicTarget(from: Vector3?)
+			local awayA
+			if from then
+				awayA = math.atan2(pos.Z - from.Z, pos.X - from.X)
+			else
+				awayA = math.random() * 2 * math.pi
+			end
+			for _ = 1, 12 do
+				local a = awayA + (math.random() - 0.5) * math.rad(150) -- wide cone, not a line
+				local d = PANIC_HOP * (0.6 + math.random() * 0.8)
+				local tx, tz = pos.X + math.cos(a) * d, pos.Z + math.sin(a) * d
+				-- STAY ON THE LEASH. This was CHASE_R (55) and that is what put raptors up in
+				-- the trees: normal roaming never leaves WANDER_R (16) of home, so the ground
+				-- within that ring is known-good, while a panic that threw them 55 studs out
+				-- sent them scrambling onto rocks and root systems they had never touched.
+				-- 1.5x the wander ring is enough room to look frantic without leaving the
+				-- clearing the raptor actually lives in.
+				local fh = Vector3.new(tx - home.X, 0, tz - home.Z)
+				if onIsland(tx, tz) and fh.Magnitude <= WANDER_R * 1.5 then
+					target = Vector3.new(tx, 0, tz)
+					return
+				end
+			end
+			newTarget()
+		end
+
+		--------------------------------------------------------------------
+		-- OVERHEAD: NOTHING, UNTIL YOU ACTUALLY HIT IT.
+		--------------------------------------------------------------------
+		-- This used to be a permanent nameplate reading "Velociraptor  4/4" over every
+		-- raptor on the island -- five floating labels announcing themselves before you had
+		-- even drawn the rifle, which told you which models were targets and killed any
+		-- sense of hunting something. Both the name and the counter are gone.
+		--
+		-- What replaces it is a HEALTH BAR that is invisible until this raptor is shot, then
+		-- shows for a few seconds and fades back out. It is built PER RAPTOR inside
+		-- spawnRaptor, so `bb`/`fill` below are this animal's own -- hitting one cannot
+		-- light up the other four, which is the thing that makes it read as damage to a
+		-- specific creature rather than a group HUD.
 		local head = mama:FindFirstChild("Head", true) or root
-		local bb = Instance.new("BillboardGui"); bb.Name = "MamaHP"; bb.Adornee = head; bb.Size = UDim2.fromOffset(170, 40)
-		bb.StudsOffset = Vector3.new(0, 6, 0); bb.AlwaysOnTop = true; bb.MaxDistance = 140; bb.Parent = mama -- only show near island6 (not from other islands)
-		local lbl = Instance.new("TextLabel"); lbl.Size = UDim2.fromScale(1, 1); lbl.BackgroundTransparency = 1; lbl.Font = Enum.Font.FredokaOne
-		lbl.TextScaled = true; lbl.TextColor3 = Color3.fromRGB(255, 120, 120); lbl.TextStrokeTransparency = 0
-		lbl.Text = ("%s  %d/%d"):format(mama.Name, MAX_HITS, MAX_HITS); lbl.Parent = bb
+		local HP_SHOW_TIME = 3.5   -- seconds of no further hits before it hides again
+
+		local bb = Instance.new("BillboardGui")
+		bb.Name = "MamaHP"
+		bb.Adornee = head
+		bb.Size = UDim2.fromOffset(140, 14)
+		bb.StudsOffset = Vector3.new(0, 6, 0)
+		bb.AlwaysOnTop = true
+		bb.MaxDistance = 220        -- was 140; you shoot these from across the clearing
+		bb.Enabled = false          -- <== the whole point: silent until hit
+		bb.Parent = mama
+
+		local track = Instance.new("Frame")
+		track.Size = UDim2.fromScale(1, 1)
+		track.BackgroundColor3 = Color3.fromRGB(26, 18, 16)
+		track.BorderSizePixel = 0
+		track.Parent = bb
+		do
+			local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(1, 0); c.Parent = track
+			local s = Instance.new("UIStroke"); s.Color = Color3.fromRGB(12, 8, 8); s.Thickness = 2; s.Parent = track
+		end
+
+		local fill = Instance.new("Frame")
+		fill.Size = UDim2.fromScale(1, 1)
+		fill.BackgroundColor3 = Color3.fromRGB(96, 220, 112)
+		fill.BorderSizePixel = 0
+		fill.Parent = track
+		do local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(1, 0); c.Parent = fill end
+
+		-- Token, not a plain task.delay: every hit bumps it, so an older pending hide can
+		-- never switch the bar off a moment after a fresh hit turned it back on.
+		local hpToken = 0
+		local function showHP()
+			local frac = math.clamp((MAX_HITS - hits) / MAX_HITS, 0, 1)
+			fill.BackgroundColor3 = (frac > 0.5 and Color3.fromRGB(96, 220, 112))
+				or (frac > 0.25 and Color3.fromRGB(255, 190, 70))
+				or Color3.fromRGB(240, 70, 60)
+			bb.Enabled = true
+			TS:Create(fill, TweenInfo.new(0.22), { Size = UDim2.fromScale(frac, 1) }):Play()
+			hpToken += 1
+			local mine = hpToken
+			task.delay(HP_SHOW_TIME, function()
+				if mine == hpToken and bb.Parent then bb.Enabled = false end
+			end)
+		end
 
 		-- keep the model's EXACT placed orientation (never reorient -> it can NEVER flip); just translate + a tiny bob
 		local origRot = mama:GetPivot().Rotation -- = the corrected (pitched-upright) rotation
@@ -577,7 +679,13 @@ task.spawn(function()
 		RunService.Heartbeat:Connect(function(dt)
 			if dead or not mama.Parent then return end
 			bobT += dt -- advance the alive bob/sway
-			local gy = groundY(pos.X, pos.Z, lastGY + 15, 50); if gy and gy >= homeGY - 12 and gy <= homeGY + 30 then lastGY = gy end -- stay near island level
+			-- CANOPY REJECTION ON THE WANDER RAY TOO (the `homeGY` argument).
+			-- Only the initial PLACEMENT passed a nearY, so a walking raptor had no protection
+			-- against its down-ray meeting a branch: step under a redwood, the ray hits foliage
+			-- 20 studs up, that hit passes the `<= homeGY + 30` band, and the animal is left
+			-- standing on thin air. Passing the home's own surface level makes groundY() reject
+			-- anything more than CANOPY_CLEARANCE above it and keep descending to real ground.
+			local gy = groundY(pos.X, pos.Z, lastGY + 15, 50, homeGY); if gy and gy >= homeGY - 12 and gy <= homeGY + 30 then lastGY = gy end -- stay near island level
 
 			local nearest, nd = nil, DETECT
 			for _, plr in ipairs(Players:GetPlayers()) do
@@ -593,8 +701,28 @@ task.spawn(function()
 			-- the claim, ignore the player here and keep wandering (players never get swarmed).
 			if nearest and not (activeChaser == nil or activeChaser == index) then nearest = nil end
 
+			-- PANIC OVERRIDES EVERYTHING. A raptor that has just been shot is not hunting
+			-- anybody, so the chase is dropped (and its claim on the single chase slot
+			-- released, or one wounded animal would lock every other raptor out of chasing
+			-- for as long as it kept getting hit).
+			local panicking = os.clock() < panicUntil
+			if panicking then
+				nearest = nil
+				if activeChaser == index then activeChaser = nil end
+			end
+
 			local speed = WANDER_SPD
-			if nearest then
+			if panicking then
+				speed = PANIC_SPD
+				-- new scatter point several times a second -> darting, not one long sprint
+				if os.clock() >= panicNext then
+					panicNext = os.clock() + PANIC_TURN
+					panicTarget(nil)
+				-- reached this one early? bolt again immediately rather than standing still
+				elseif (Vector3.new(target.X - pos.X, 0, target.Z - pos.Z)).Magnitude < 2 then
+					panicTarget(nil)
+				end
+			elseif nearest then
 				if activeChaser == nil then activeChaser = index end -- claim the single chase slot
 				local hrp = nearest.Character.HumanoidRootPart
 				target = Vector3.new(hrp.Position.X, 0, hrp.Position.Z); speed = CHASE_SPD
@@ -629,13 +757,17 @@ task.spawn(function()
 				local blocked = Workspace:Raycast(Vector3.new(pos.X, lastGY + 1.5, pos.Z), dir * ahead, rpF)
 					or Workspace:Raycast(Vector3.new(pos.X, lastGY + 5, pos.Z), dir * ahead, rpF)
 				if blocked then
-					if not nearest then newTarget() end
+					-- A panicking raptor that runs into a tree picks another escape line
+					-- instead of falling back to a calm wander point next to its home.
+					if panicking then panicTarget(nil)
+					elseif not nearest then newTarget() end
 				else
 					local nx = pos + dir * speed * dt
 					local fh = Vector3.new(nx.X - home.X, 0, nx.Z - home.Z)
 					if fh.Magnitude > CHASE_R then nx = Vector3.new(home.X, 0, home.Z) + fh.Unit * CHASE_R end
 					-- step only onto SOLID ground AND while staying ON the island (never fall/wander off the edge)
-					local cgy = groundY(nx.X, nx.Z, lastGY + 15, 50)
+					-- same canopy rejection as the pose ray above: never step ONTO foliage
+					local cgy = groundY(nx.X, nx.Z, lastGY + 15, 50, homeGY)
 					-- step only onto solid ground that's ON the island AND near the island's surface level
 					if cgy and onIsland(nx.X, nx.Z) and cgy >= homeGY - 12 and cgy <= homeGY + 30 then
 						pos = Vector3.new(nx.X, 0, nx.Z); lastGY = cgy
@@ -653,6 +785,36 @@ task.spawn(function()
 			raptorByModel[mama] = nil                            -- stop routing shots to a dead raptor
 			if activeChaser == index then activeChaser = nil end -- free the single chase slot
 			pcall(function() bb:Destroy() end)
+
+			-- ===== THE DEATH CRY =====
+			-- POSITIONAL and on its own anchored emitter, not on the raptor: the body is
+			-- pivoted over, faded out and DESTROYED about two seconds from now, and a Sound
+			-- dies with its parent -- parenting the cry to `mama` would cut it off mid-roar.
+			-- The emitter outlives the corpse and cleans itself up.
+			-- Server-side so every player nearby hears it, not just whoever pulled the trigger.
+			if root and root.Parent then
+				pcall(function()
+					local a = Instance.new("Part")
+					a.Name = "RaptorDeathCry"
+					a.Size = Vector3.new(1, 1, 1)
+					a.CFrame = CFrame.new(root.Position)
+					a.Transparency = 1
+					a.Anchored, a.CanCollide, a.CanQuery, a.CanTouch = true, false, false, false
+					a.Parent = Workspace
+					local s = Instance.new("Sound")
+					s.Name = "RaptorDeath"
+					s.SoundId = "rbxassetid://244510423"
+					s.Volume = 1.6
+					s.RollOffMode = Enum.RollOffMode.Linear
+					s.RollOffMinDistance = 40    -- full volume anywhere in the clearing
+					s.RollOffMaxDistance = 320   -- gone by the time you are off Redwood Ridge
+					s.Parent = a
+					s:Play()
+					-- task.delay, not Debris: this file has no Debris local and uses delay
+					-- for its other self-cleaning parts. 8s is well clear of the clip.
+					task.delay(8, function() pcall(function() a:Destroy() end) end)
+				end)
+			end
 			-- announce whether THIS raptor was hiding the secret egg
 			if root and root.Parent then
 				if hasEgg then floaty(root, "\xF0\x9F\xA5\x9A The secret egg!", Color3.fromRGB(235, 205, 150))
@@ -677,23 +839,38 @@ task.spawn(function()
 
 		-- Route shots at THIS raptor to its own hit handler; the central RaptorShot
 		-- dispatcher below calls it based on the model the client reported hitting.
-		raptorByModel[mama] = function()
+		raptorByModel[mama] = function(shooter: Player?)
 			if dead or not mama.Parent then return end
 			hits += 1
-			pcall(function() lbl.Text = ("%s  %d/%d"):format(mama.Name, math.max(0, MAX_HITS - hits), MAX_HITS) end)
+			pcall(showHP)   -- this raptor's bar only; the other four stay hidden
 			pcall(function()
 				local b = mama:FindFirstChild("Body")
 				if b then local c = b.Color; b.Color = Color3.fromRGB(255, 90, 90); task.delay(0.12, function() if b.Parent then b.Color = c end end) end
 			end)
+
+			-- BOLT. Re-armed on every hit, so keeping the pressure on keeps it running.
+			-- The first scatter point is thrown immediately and biased AWAY from whoever
+			-- fired -- waiting for the next PANIC_TURN tick would leave it standing in the
+			-- open for a third of a second looking like the shot missed.
+			panicUntil = os.clock() + PANIC_TIME
+			panicNext  = os.clock() + PANIC_TURN
+			local from
+			local shooterChar = shooter and shooter.Character
+			local shooterHrp = shooterChar and shooterChar:FindFirstChild("HumanoidRootPart")
+			if shooterHrp and shooterHrp:IsA("BasePart") then from = shooterHrp.Position end
+			panicTarget(from)
+
 			if hits >= MAX_HITS then killMama() end
 		end
 	end -- spawnRaptor
 
 	-- Central shot dispatcher: the client passes the raptor MODEL it hit, so the hit
 	-- is applied to that specific raptor (not all of them at once).
-	RaptorShot.OnServerEvent:Connect(function(_plr, model)
+	RaptorShot.OnServerEvent:Connect(function(plr, model)
 		local onHit = typeof(model) == "Instance" and raptorByModel[model]
-		if onHit then onHit() end
+		-- the shooter is passed through so the raptor can bolt AWAY from them rather than
+		-- picking a random direction that might run it straight at the gun
+		if onHit then onHit(plr) end
 	end)
 
 	-- Spawn the 5 raptors on island6; ONE holds the secret egg. Each raptor is placed
@@ -776,11 +953,50 @@ task.spawn(function()
 	-- ===== BIG SNIPER LOCKER at SniperSpot =====
 	if sniperSpot then
 		local sp = sniperSpot.Position
-		local gy = groundY(sp.X, sp.Z, sp.Y + 120, 400) or REF_Y
+
+		-- ===== THE LOCKER STANDS ON THE MARKER, NOT ON A RAYCAST =====
+		-- This used to ground itself with `groundY(sp.X, sp.Z, sp.Y + 120, 400)` and build at
+		-- that height, which is why it kept turning up somewhere other than the block you put
+		-- down. Two ways that goes wrong on THIS island in particular:
+		--
+		--   1. THE MARKER IS INVISIBLE TO THE RAY. SniperSpot has CanQuery = false (set with
+		--      RaptorSpot up at the top), so the ray passes straight through it and reports
+		--      whatever is underneath. Put the marker on a ledge, a rock or a platform and the
+		--      locker drops to the floor below it.
+		--   2. NO CANOPY REJECTION. This call passes no `nearY`, so unlike the raptors it has
+		--      no protection against the ray meeting a BRANCH on the way down -- and Redwood
+		--      Ridge is the tall-tree island. A marker under foliage put the locker up in it.
+		--
+		-- The marker is the authority now: the cabinet's base sits on the marker's TOP FACE,
+		-- so it lands exactly where you place the block and follows it when you move it. The
+		-- ground ray is still taken, but only to PRINT alongside -- if the two ever disagree
+		-- wildly the log says so instead of the locker silently wandering off.
+		local markerTop = sp.Y + sniperSpot.Size.Y / 2
+		local rayY = groundY(sp.X, sp.Z, sp.Y + 120, 400)
+		local gy = markerTop
 		local locker = Instance.new("Model"); locker.Name = "SniperLocker"; locker.Parent = Workspace
 		ignoreForGround[#ignoreForGround + 1] = locker
 		local STEELC, DARKC = Color3.fromRGB(78, 84, 94), Color3.fromRGB(48, 52, 60)
-		local base = CFrame.new(sp.X, gy + 3.0, sp.Z) * CFrame.Angles(0, math.rad(180), 0) -- spun 180
+		-- ===== THE LOCKER FACES THE MARKER'S +Z FACE =====
+		-- This was `CFrame.Angles(0, math.rad(180), 0)` -- a hardcoded half turn that threw
+		-- away the marker's own rotation entirely. However you turned SniperSpot in Studio the
+		-- locker came out pointing the same way, and that way was world -Z (the 180 flips the
+		-- default CFrame's -Z look round, and the glass hangs off local +Z).
+		--
+		-- Now it inherits the marker's YAW, so the front face -- the glass with the rifles
+		-- behind it -- sits on the marker's +Z side and you aim the locker by rotating the
+		-- block. Every panel below is already positioned in base-local space with the glass at
+		-- +Z and the back panel at -Z, so nothing else had to move.
+		--
+		-- YAW ONLY, deliberately: pitch and roll are dropped so a marker left tilted in Studio
+		-- still produces a locker standing upright on the ground instead of one lying over.
+		-- HALF TURN ON TOP OF THE MARKER'S YAW. Putting the glass on the marker's +Z put the
+		-- cabinet the wrong way round in game, so it gets spun to face the other face. This is
+		-- one number: set it to 0 to put the glass back on +Z, 180 to keep it on -Z.
+		local LOCKER_FACE_OFFSET = 180
+		local _mx, markerYaw = sniperSpot.CFrame:ToEulerAnglesYXZ()
+		markerYaw = markerYaw + math.rad(LOCKER_FACE_OFFSET)
+		local base = CFrame.new(sp.X, gy + 3.0, sp.Z) * CFrame.Angles(0, markerYaw, 0)
 		local function lp(name, size, color, cf, mat, collide)
 			local p = Instance.new("Part"); p.Name = name; p.Size = size; p.Color = color; p.Material = mat or Enum.Material.Metal
 			p.Anchored = true; p.CanCollide = collide ~= false; p.CFrame = cf; p.Parent = locker; return p
@@ -791,8 +1007,12 @@ task.spawn(function()
 		lp("Top",    Vector3.new(5.0, 0.5, 2.2), DARKC,  base * CFrame.new(0, 3.0, 0))
 		lp("Bottom", Vector3.new(5.0, 0.6, 2.2), DARKC,  base * CFrame.new(0, -3.0, 0))
 		lp("Shelf",  Vector3.new(4.4, 0.2, 1.9), STEELC, base * CFrame.new(0, 0.2, 0), nil, false)
-		lp("Feet1",  Vector3.new(0.5, 0.8, 0.5), DARKC,  CFrame.new(sp.X - 1.9, gy + 0.4, sp.Z))
-		lp("Feet2",  Vector3.new(0.5, 0.8, 0.5), DARKC,  CFrame.new(sp.X + 1.9, gy + 0.4, sp.Z))
+		-- The feet were the one pair placed in WORLD space, which was harmless while the
+		-- rotation was a hardcoded constant and wrong the moment it became the marker's --
+		-- the cabinet would turn and leave its legs behind. Base-local now, like everything
+		-- else. -2.6 puts them back at gy+0.4 (base sits at gy+3.0).
+		lp("Feet1",  Vector3.new(0.5, 0.8, 0.5), DARKC,  base * CFrame.new(-1.9, -2.6, 0))
+		lp("Feet2",  Vector3.new(0.5, 0.8, 0.5), DARKC,  base * CFrame.new( 1.9, -2.6, 0))
 		local glass = lp("Glass", Vector3.new(4.6, 5.6, 0.12), Color3.fromRGB(150, 200, 230), base * CFrame.new(0, 0, 1.05), Enum.Material.Glass, false)
 		glass.Transparency = 0.55; glass.Reflectance = 0.15
 		for i = -1, 1 do
@@ -800,10 +1020,13 @@ task.spawn(function()
 			lp("RifleBarrel", Vector3.new(0.14, 2.0, 0.14), Color3.fromRGB(70, 74, 82), base * CFrame.new(i * 1.1 + 0.12, 1.5, 0.2), Enum.Material.Metal, false)
 		end
 		local pl = Instance.new("PointLight"); pl.Color = Color3.fromRGB(180, 220, 255); pl.Brightness = 1.4; pl.Range = 14; pl.Parent = locker:FindFirstChild("Top")
-		local signbb = Instance.new("BillboardGui"); signbb.Adornee = locker:FindFirstChild("Top"); signbb.Size = UDim2.fromOffset(230, 50)
-		signbb.StudsOffset = Vector3.new(0, 1.8, 0); signbb.AlwaysOnTop = true; signbb.MaxDistance = 140; signbb.Parent = locker -- only show near island6
-		local sl = Instance.new("TextLabel"); sl.Size = UDim2.fromScale(1, 1); sl.BackgroundTransparency = 1; sl.Font = Enum.Font.FredokaOne
-		sl.TextScaled = true; sl.TextColor3 = Color3.fromRGB(255, 225, 120); sl.TextStrokeTransparency = 0; sl.Text = "\xF0\x9F\x94\xAB Sniper Locker"; sl.Parent = signbb
+		-- ===== NO FLOATING "Sniper Locker" SIGN =====
+		-- A billboard hanging over the cabinet was doing the job of navigation: it advertised
+		-- the locker through the trees from 140 studs out, so there was nothing to find. Every
+		-- other quest on this tower guides you with the green chevron runway on the ground
+		-- instead, and island6 now does the same -- RedwoodRaptor.client lays a trail to the
+		-- locker the moment the RidgeWarden hands the job over. The PointLight on the cabinet
+		-- stays: that is the locker lighting ITSELF, not a label pointing at it.
 
 		local prompt = Instance.new("ProximityPrompt"); prompt.ActionText = "Grab Sniper"; prompt.ObjectText = "Sniper Locker"
 		prompt.HoldDuration = 0.3; prompt.MaxActivationDistance = 14; prompt.RequiresLineOfSight = false; prompt.Parent = glass
@@ -825,6 +1048,12 @@ task.spawn(function()
 			if has then return end
 			local t = buildSniperTool(); t.Parent = bp or plr.Character
 		end)
-		print("[Redwood] Big Sniper Locker built at SniperSpot")
+		print(("[Redwood] Big Sniper Locker built ON SniperSpot at (%.1f, %.1f, %.1f) -- marker top %.1f, "
+			.. "facing its +Z (yaw %.0f deg). Ground ray said %s%s")
+			:format(sp.X, gy, sp.Z, markerTop, math.deg(markerYaw),
+				rayY and ("%.1f"):format(rayY) or "nothing",
+				(rayY and math.abs(rayY - markerTop) > 6)
+					and ("  <== %.1f studs apart; the marker is not sitting on the floor"):format(rayY - markerTop)
+					or ""))
 	end
 end)

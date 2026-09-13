@@ -31,7 +31,8 @@ local HttpService = game:GetService("HttpService") -- JSONEncode, used only to M
 local DINO_PLACE_ID  = 110777788409412 -- this place
 local FOOD_PLACE_ID  = 120919484545190 -- Food Realm (the original food-islands place)
 local SPACE_PLACE_ID = 125063266868039 -- Space Realm
-local REALM_PLACE = { Food = FOOD_PLACE_ID, Space = SPACE_PLACE_ID }
+local CANDY_PLACE_ID = 133591422694132 -- Candy Realm (realm 2 -- the summit finale also sends you here)
+local REALM_PLACE = { Food = FOOD_PLACE_ID, Space = SPACE_PLACE_ID, Candy = CANDY_PLACE_ID }
 
 -- ===== Islands (shared source of truth: names + tower slot order) =====
 local IslandOrder = require(ReplicatedStorage:WaitForChild("DinosaurRealm"):WaitForChild("IslandOrder"))
@@ -341,7 +342,7 @@ end)
 
 -- Async teleport failures (accepted, then failed to init) -> tell that player's client so it isn't stuck.
 TeleportService.TeleportInitFailed:Connect(function(plr, result, errMsg, placeId)
-	if placeId == FOOD_PLACE_ID or placeId == SPACE_PLACE_ID then
+	if placeId == FOOD_PLACE_ID or placeId == SPACE_PLACE_ID or placeId == CANDY_PLACE_ID then
 		warn(("[Wormhole] TeleportInitFailed for %s (place %d): %s (%s)")
 			:format(plr.Name, placeId, tostring(result), tostring(errMsg)))
 		pcall(function() RealmWarpFailed:FireClient(plr) end)
@@ -349,5 +350,5 @@ TeleportService.TeleportInitFailed:Connect(function(plr, result, errMsg, placeId
 end)
 
 print("[Wormhole] service online (Dino Realm) — visited-only island warps + Food/Space realm hops (travel only, no unlocks).")
-print(("[Wormhole] realm hops: Food -> %d, Space -> %d (grounded-gated, pcall-guarded)."):format(FOOD_PLACE_ID, SPACE_PLACE_ID))
+print(("[Wormhole] realm hops: Food -> %d, Space -> %d, Candy -> %d (grounded-gated, pcall-guarded)."):format(FOOD_PLACE_ID, SPACE_PLACE_ID, CANDY_PLACE_ID))
 print(("[Wormhole] realm hops carry pets/skins/collection + earned coin & token DELTAS (<= %d byte payload)."):format(BUDGET_BYTES))

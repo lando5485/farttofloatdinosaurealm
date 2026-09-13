@@ -52,8 +52,8 @@ local PET_ACCS = {
 	SpinosaurusPet   = { {3,"bell"},{7,"glasses"},{10,"safari"},{13,"scarf"},{17,"sword"},{20,"lantern"},{23,"pickaxe"} },
 	TyrannosaurusPet = { {3,"bowtie"},{7,"glasses"},{10,"crown"},{13,"backpack"},{17,"gemstuds"},{20,"sparklecluster"},{23,"cane"} },
 }
-local PET_DISPLAY = { StegoPet="Stegosaurus", RaptorPet="Velociraptor", SharkPet="Megalodon", TriceratopsPet="Triceratops", SpinosaurusPet="Spinosaurus", TyrannosaurusPet="T-Rex" }
-local RARE_NAME   = { StegoPet="Cosmic Stegosaurus", RaptorPet="Alpha Velociraptor", SharkPet="Ancient Megalodon", TriceratopsPet="Elder Triceratops", SpinosaurusPet="Swamp King Spinosaurus", TyrannosaurusPet="Volcano Tyrant Rex" }
+local PET_DISPLAY = { StegoPet="Stegosaurus", RaptorPet="Velociraptor", SharkPet="Megalodon", TriceratopsPet="Triceratops", SpinosaurusPet="Spinosaurus", TyrannosaurusPet="T-Rex", TherizinosaurusPet="Therizinosaurus", BrachiosaurusPet="Brachiosaurus" }
+local RARE_NAME   = { StegoPet="Cosmic Stegosaurus", RaptorPet="Alpha Velociraptor", SharkPet="Ancient Megalodon", TriceratopsPet="Elder Triceratops", SpinosaurusPet="Swamp King Spinosaurus", TyrannosaurusPet="Volcano Tyrant Rex", TherizinosaurusPet="Scythe Lord", BrachiosaurusPet="Ancient Bonewalker" }
 -- RARE variant body looks (glass/metal/cosmic). T-Rex = Mythical cosmic; the rest = Exotic.
 local RARE_LOOK = {
 	StegoPet         = { body=Color3.fromRGB(20,150,80),   mat=Enum.Material.Glass,   refl=0.25, fx=Color3.fromRGB(70,255,150) },
@@ -62,10 +62,18 @@ local RARE_LOOK = {
 	TriceratopsPet   = { body=Color3.fromRGB(255,200,40),  mat=Enum.Material.Metal,   refl=0.35, fx=Color3.fromRGB(255,225,90) },
 	SpinosaurusPet   = { body=Color3.fromRGB(80,210,200),  mat=Enum.Material.Glass,   refl=0.25, fx=Color3.fromRGB(150,255,240) },
 	TyrannosaurusPet = { body=Color3.fromRGB(30,24,66),    mat=Enum.Material.Plastic, refl=0.1,  fx=Color3.fromRGB(180,140,255), cosmic=true, light=true },
+	TherizinosaurusPet = { body=Color3.fromRGB(40,120,130),  mat=Enum.Material.Glass, refl=0.25, fx=Color3.fromRGB(110,240,255) },
+	BrachiosaurusPet   = { body=Color3.fromRGB(205,180,120), mat=Enum.Material.Metal, refl=0.35, fx=Color3.fromRGB(255,235,175) },
 }
 local function petIdFromName(name)
 	name = tostring(name)
-	if name:find("Stego") then return "StegoPet"
+	-- Theri/Brachio FIRST: neither contains any of the substrings below, so without these two
+	-- branches they hit the `return "StegoPet"` fallback at the bottom and every pet in the game
+	-- that is not explicitly listed here silently becomes a Stegosaurus -- wrong nameplate,
+	-- wrong rare look, wrong tier pill.
+	if name:find("Theri") then return "TherizinosaurusPet"
+	elseif name:find("Brachio") then return "BrachiosaurusPet"
+	elseif name:find("Stego") then return "StegoPet"
 	elseif name:find("Raptor") or name:find("Veloci") then return "RaptorPet"
 	elseif name:find("Shark") or name:find("Megalo") then return "SharkPet"
 	elseif name:find("Trice") then return "TriceratopsPet"
@@ -228,6 +236,10 @@ local function applyRareLook(pet, root, petId)
 		if d:IsA("BasePart") and d ~= root then
 			local n = d.Name
 			if n~="whitepartofeye" and n~="blackpartofeye" and n~="Glint" and n~="EvoPart" and n~="PetOrb" and n~="PetRing" and n~="PetPulse" then
+				-- a UNION ignores .Color while UsePartColor is false, and the pets are fused into
+				-- exactly that (see PetFace.fuseAll) -- so the rare recolour has to flip it on or
+				-- it would silently do nothing at all.
+				if d:IsA("UnionOperation") then d.UsePartColor = true end
 				d.Color = r.body; d.Material = r.mat; d.Reflectance = r.refl
 			end
 		end
@@ -280,10 +292,27 @@ local function applyLevelVisual(pet, level, isRare)
 	clearEvo(pet)
 	-- (1) SIZE 60% -> 100% via Model:ScaleTo -- this scales every part's SIZE *and* POSITION together about
 	-- the pivot, so welded fins/tail keep the SAME overlap with the BodyUnion (no per-part separation).
-	local sizeMul = 0.6 + 0.4 * frac
-	-- small ball parts (shark fins / trike frill + horn segments) separate when shrunk -> keep these FULL SIZE
-	-- (identical to the hub clone, guaranteed solid -- uniform scale alone still pulls the little balls apart).
-	if pet.Name:find("Shark") or pet.Name:find("Trice") or pet.Name:find("Spino") or pet.Name:find("Tyranno") then sizeMul = 1.0 end
+	-- ===== NO SIZE RAMP. EVERY FOLLOWER IS FULL SIZE. =====
+	-- This used to be `0.6 + 0.4 * frac`, so a level-1 pet spawned at 60%. Scaling is where the
+	-- "looks fine in the Pet Hub, discombobulated when equipped" bug came from -- the hub icon is
+	-- an unscaled clone of the template, the follower was a shrunken one, and shrinking BREAKS
+	-- these models.
+	--
+	-- WHY IT BREAKS: Model:ScaleTo multiplies positions exactly, but Roblox CLAMPS a part's size
+	-- at 0.05 studs. Every small detail -- a 0.07 claw, a 0.12 nostril dot, a 0.044 claw tip --
+	-- hits that floor and stops shrinking while its position keeps moving inward. The part is
+	-- then the wrong size for the socket it sits in and drifts out of it. On a pet built from
+	-- chains of small welded pieces that is not subtle: the file's own note said the claws "pull
+	-- off the hands and the pet ships as a body surrounded by floating splinters".
+	--
+	-- Six of the eight pets had already been exempted one at a time as each one broke. Stego and
+	-- Raptor were the last two still shrinking. Rather than keep growing an exception list that
+	-- was always going to end up containing everything, the ramp is gone: the follower is now a
+	-- pixel-identical copy of what you see in the Hub, which is the whole ask.
+	--
+	-- Level progression still reads loud and clear through the aura, trail, sparkles, orbs, ring
+	-- and rare sheen below -- none of which move geometry.
+	local sizeMul = 1.0
 	petScale[pet] = sizeMul
 	local function gapReport(tag) -- prints a part's overlap with the BodyUnion (negative = gap)
 		local bu = pet:FindFirstChild("BodyUnion")
@@ -343,8 +372,29 @@ local function applyLevelVisual(pet, level, isRare)
 	end
 	petLevel[pet] = level
 	local nAcc=0; for _,e in ipairs(theme.accs) do if level>=e[1] then nAcc=nAcc+1 end end
-	print(("[PetFollow] Stego Lv %d: size %d%%, aura %s, trail %s, sparkles %s, accessories %d, shimmer %s")
-		:format(level, math.floor(sizeMul*100), level>=2 and "on" or "off", level>=5 and "on" or "off", level>=8 and "on" or "off", nAcc, atMax and "on" or "off"))
+	print(("[PetFollow] %s Lv %d: size %d%%, aura %s, trail %s, sparkles %s, accessories %d, shimmer %s")
+		:format(tostring(petId), level, math.floor(sizeMul*100), level>=2 and "on" or "off", level>=5 and "on" or "off", level>=8 and "on" or "off", nAcc, atMax and "on" or "off"))
+
+	-- ===== HAND THE PET TO THE COSMETICS RENDERER. THIS IS THE WHOLE SKIN/TRAIT SYSTEM. =====
+	-- PetSkinLook paints skins and builds trait accessories, but it does NOT search Workspace for
+	-- pets -- it only ever touches models handed to it here, which it records in its `painted`
+	-- register. That register is what repaintAll() walks on every server equip push and what
+	-- /testpet's try-on repaints.
+	--
+	-- THIS CALL DID NOT EXIST IN THIS REALM. The renderer loaded fine, reported "17 skins, 21
+	-- traits", and then sat with an EMPTY register forever: no skin ever applied, no trait ever
+	-- appeared, and every /testpet TRY silently repainted nothing. The renderer's own header names
+	-- this exact call site ("at the end of applyLevelVisual") -- it was simply never wired on this
+	-- side, because the previous generation of the file was reached a different way.
+	--
+	-- AFTER the level look, never before: applyLevelVisual recolours and rescales the body, so a
+	-- skin painted first would be overwritten by the level pass a few lines later. Guarded and
+	-- pcall'd because load order between two LocalScripts is never guaranteed -- if the renderer
+	-- has not published its hook yet the pet simply renders plain, and the next level-up or equip
+	-- push paints it.
+	if _G.applyPetSkinLook then
+		pcall(_G.applyPetSkinLook, pet, petId, false)
+	end
 end
 
 -- ===== FX LOOP: orbit orbs, spin ring, pulse, periodic burst, MAX shimmer =====
@@ -397,10 +447,312 @@ local petSmoothPos, petSmoothFwd, bobT = nil, nil, 0
 
 local st = { pet = nil, level = 1, rare = false, emerging = false }
 
+-- ===== LIVE X-RAY -- draws the pet THAT IS ACTUALLY ON YOUR SCREEN =====
+-- The hub icon and the follower clone the SAME template, so when one looks right and the other
+-- looks wrong, the difference is something done to the follower AFTER it spawns -- and no amount
+-- of reading the builder will show that. This reads the spawned model's real parts, in their real
+-- positions, and draws them. If this drawing disagrees with the builder's own x-ray, whatever is
+-- between them is the bug.
+--
+-- It runs ~1.5s after spawn (past the emerge animation and a few walk-cycle frames) so it shows
+-- the settled state, not the entry pose. Re-run it any time with  _G.dinoPetXray()  in the console.
+local FX_NAMES = { PetOrb=true, PetRing=true, PetPulse=true, EvoPart=true, LevelGlow=true,
+                   PetSparkle=true, PetTrail=true, PetAura=true, Root=true }
+local function liveGlyph(n)
+	if n:find("Tooth") then return "T" end
+	if n:find("Nostril") then return "*" end
+	if n:find("Neck") then return "N" end
+	if n:find("Head") then return "H" end
+	if n:find("Snout") or n:find("Beak") then return "h" end
+	if n:find("Dome") or n:find("Crest") then return "D" end
+	if n:find("Jaw") then return "J" end
+	if n:find("Mouth") or n:find("Smile") then return "m" end
+	if n:find("Brow") then return "^" end
+	if n:find("Claw") then return "c" end
+	if n:find("Arm") or n:find("Hand") then return "a" end
+	if n:find("Tail") then return "~" end
+	if n:find("Belly") then return ":" end
+	if n:find("Foot") then return "L" end
+	if n:find("Gill") then return "g" end
+	if n:find("Plate") or n:find("Sail") then return "S" end
+	if n:find("Fin") or n:find("Dorsal") then return "f" end
+	if n:find("Spot") or n:find("Dapple") then return "." end
+	if n:find("eye") or n:find("Eye") or n:find("Glint") then return "o" end
+	if n:find("BodyUnion") then return "#" end
+	return "+"
+end
+local function livePetXray(pet, tag)
+	if not (pet and pet.Parent and pet.PrimaryPart) then
+		warn("[PetXray] no pet to draw"); return
+	end
+	local pivot = pet:GetPivot()
+	local list = {}
+	for _, d in ipairs(pet:GetDescendants()) do
+		if d:IsA("BasePart") and not FX_NAMES[d.Name] then
+			local rel = pivot:ToObjectSpace(d.CFrame)
+			list[#list + 1] = { part = d, cf = rel, size = d.Size, glyph = liveGlyph(d.Name) }
+		end
+	end
+	if #list == 0 then warn("[PetXray] pet has no parts"); return end
+	local sc = pet:GetScale(); if sc <= 0 then sc = 1 end
+	local function insideLive(e, wp)
+		local lp = e.cf:PointToObjectSpace(wp)
+		local hx, hy, hz = e.size.X/2, e.size.Y/2, e.size.Z/2
+		if hx <= 0 or hy <= 0 or hz <= 0 then return false end
+		local sh = (e.part:IsA("Part")) and e.part.Shape or nil
+		if sh == Enum.PartType.Ball then
+			return (lp.X/hx)^2 + (lp.Y/hy)^2 + (lp.Z/hz)^2 <= 1
+		elseif sh == Enum.PartType.Cylinder then
+			return math.abs(lp.X) <= hx and (lp.Y/hy)^2 + (lp.Z/hz)^2 <= 1
+		end
+		return math.abs(lp.X) <= hx and math.abs(lp.Y) <= hy and math.abs(lp.Z) <= hz
+	end
+	local COLS, ROWS = 58, 26
+	print(("[PetXray] %s -- %s, %d part(s), scale %.2f"):format(tag, pet.Name, #list, sc))
+	for _, view in ipairs({ "SIDE", "FRONT" }) do
+		local minA, maxA, minY, maxY = 1e9, -1e9, 1e9, -1e9
+		for _, e in ipairs(list) do
+			local c, r = e.cf.Position, e.size.Magnitude * 0.5
+			local a = (view == "SIDE") and c.X or c.Z
+			minA = math.min(minA, a - r); maxA = math.max(maxA, a + r)
+			minY = math.min(minY, c.Y - r); maxY = math.max(maxY, c.Y + r)
+		end
+		local sa, sy = (maxA - minA) / COLS, (maxY - minY) / ROWS
+		print(("[PetXray] %s VIEW  (%s)"):format(view,
+			view == "SIDE" and "+X right = the pet's front" or "+Z right, head on"))
+		for r = 0, ROWS - 1 do
+			local wy = maxY - (r + 0.5) * sy
+			local line = {}
+			for c = 0, COLS - 1 do
+				local wa = minA + (c + 0.5) * sa
+				local ch, best = " ", -1e9
+				for _, e in ipairs(list) do
+					local wp, depth
+					if view == "SIDE" then wp = Vector3.new(wa, wy, e.cf.Position.Z); depth = e.cf.Position.Z
+					else wp = Vector3.new(e.cf.Position.X, wy, wa); depth = e.cf.Position.X end
+					if insideLive(e, wp) and depth > best then best = depth; ch = e.glyph end
+				end
+				line[#line + 1] = ch
+			end
+			print("[PetXray] |" .. (table.concat(line):gsub("%s+$", "")))
+		end
+	end
+	-- anything touching nothing at all
+	local loose = {}
+	for _, e in ipairs(list) do
+		local touch = false
+		for _, q in ipairs(list) do
+			if q ~= e and (e.cf.Position - q.cf.Position).Magnitude
+				<= (e.size.Magnitude + q.size.Magnitude) * 0.5 then touch = true; break end
+		end
+		if not touch then loose[#loose + 1] = e.part.Name end
+	end
+	if #loose > 0 then
+		warn(("[PetXray] %d part(s) touching NOTHING: %s"):format(#loose, table.concat(loose, ", ")))
+	else
+		print("[PetXray] every part is in contact with at least one other")
+	end
+end
+_G.dinoPetXray = function() livePetXray(st.pet, "ON DEMAND") end
+
+-- ===== WALK CYCLE: THE FEET SWING ON THEIR OWN =====
+-- Every part named "Foot" is animated here. The builders deliberately keep the feet OUT of the
+-- body union for this: a fused foot is one rigid solid with the body and physically cannot move
+-- independently, no matter what this code does.
+--
+-- The gait is diagonal-pair (front-left with back-right), which is how four-legged animals
+-- actually walk and reads far better than all four moving together. Stride length and cadence
+-- both scale with how fast you are actually travelling, so the feet settle back to rest when you
+-- stop -- no marching in place.
+-- OFF BY DEFAULT. The walk cycle is the only thing that MOVES a part after the follower spawns,
+-- so while "the shapes don't connect when equipped" is being chased it must not be in the way.
+-- It also has a real cost even when working: feet have to live OUTSIDE the body union to move at
+-- all, and a body-coloured part welded on rather than fused shades independently, so Roblox draws
+-- a crease where each leg meets the body. Invisible in the Hub's flat ViewportFrame lighting,
+-- visible in the world. Set this true to get stepping legs back and accept the seams.
+local WALK_CYCLE = true   -- feet are welded (not fused) again on every pet, so they can step
+
+-- ===== THE GAIT IS THE FOOD REALM'S PENDULUM SWING (ported 2026-08-29) =====
+-- It used to SLIDE the feet: CFrame.new(swing, lift, 0) translated each block fore/aft and
+-- lifted it. Blocks skating back and forth under a body -- the legs never actually pivoted, so
+-- nothing about it read as walking. The first realm swings each leg like a PENDULUM from a hip
+-- socket instead (PetFollow.client.lua:4253 over there), which is what sells the step, and this
+-- is that algorithm on this realm's models:
+--
+--   swing = 18deg * mv * sin(phase)                       -- rotation, not translation
+--   leg   = rotate(rest pose) about the HIP, around the LATERAL Z axis
+--
+-- WHAT CHANGED WITH IT, and why each one matters:
+--   * HIP PIVOT IS DERIVED, NOT HARDCODED. The food realm pivots every pet at a flat
+--     y = -0.7 * 0.9 studs, which only works because all its pets are one size. These are not:
+--     a Stego foot is a 0.95 cube and a Brachiosaurus "foot" is a 2.05-tall LEG. Each leg group
+--     now pivots at its own TOP FACE, so stride length scales with leg length for free -- little
+--     dinos take little steps, the Brachiosaurus takes long ones.
+--   * ONE PIVOT PER LEG GROUP, not per part. The raptor's FootClaw sickles sit on the toes; give
+--     each part its own pivot and the claw rotates on a shorter arm than the foot it belongs to
+--     and visibly shears off it. Grouping by quadrant and rotating the whole group about the
+--     main foot's hip keeps foot+claw rigid.
+--   * SPEED IS THE PET'S OWN DISPLACEMENT, not the player's velocity. Measured horizontally and
+--     smoothed, exactly like the food realm: vertical is dropped, so a fart-ascent leaves the
+--     legs hanging still instead of sprinting in mid-air. No airborne branch needed.
+--   * PHASE IS PER-PET, not one file-level global shared by every follower.
+--   * NO LIFT TERM. The rotation arcs the foot up on its own; the old explicit lift was there
+--     to fake what a pendulum does for free.
+local SWING_MAX     = math.rad(18)  -- peak leg swing at a full run (the food realm's number)
+local STRIDE_SPEED  = 23.4          -- studs/sec that counts as a full-speed run (theirs: 26 * 0.9)
+
+local feetOf = setmetatable({}, { __mode = "k" })  -- pet -> foot rest offsets (weak: dead pets drop out)
+
+local function captureFeet(pet)
+	if not WALK_CYCLE then return end
+	local sc = pet:GetScale(); if sc <= 0 then sc = 1 end
+	local pivot = pet:GetPivot()
+	local list = { phase = 0, move = 0, lastPos = nil }
+	for _, p in ipairs(pet:GetDescendants()) do
+		-- NAME PREFIX, not an exact match. The live log read
+		--     [PetFollow] TyrannosaurusPetFollower walk cycle -> 0 foot part(s)
+		-- because that pet names its feet FootFL / FootFR / FootBL / FootBR. An exact "Foot"
+		-- test silently gave those pets no walk cycle at all.
+		if p:IsA("BasePart") and p.Name:sub(1, 4) == "Foot" then
+			-- store the rest pose in the pivot's own space, DIVIDED BY the model scale, so the
+			-- same numbers stay correct after applyLevelVisual() scales the pet on level-up.
+			local rel = pivot:ToObjectSpace(p.CFrame)
+			list[#list + 1] = {
+				part = p, pos = rel.Position / sc, rot = rel - rel.Position,
+				halfY = (p.Size.Y * 0.5) / sc,          -- for the hip: half the leg's own height
+				vol   = p.Size.X * p.Size.Y * p.Size.Z, -- biggest part in a group = the real foot
+			}
+		end
+	end
+
+	-- GROUP BY QUADRANT and give each group ONE hip, taken from its bulkiest part (the foot
+	-- itself, never a claw hanging off it). Everything in the group then rotates rigidly.
+	local groups = {}
+	for _, f in ipairs(list) do
+		local key = ((f.pos.X >= 0) and "F" or "B") .. ((f.pos.Z >= 0) and "L" or "R")
+		local g = groups[key]
+		if not g or f.vol > g.vol then groups[key] = { vol = f.vol, f = f } end
+		f.groupKey = key
+	end
+	for _, f in ipairs(list) do
+		local lead = groups[f.groupKey].f
+		f.hip = Vector3.new(lead.pos.X, lead.pos.Y + lead.halfY, lead.pos.Z)
+	end
+
+	-- order them so alternating indices are diagonal partners (front-left, back-right, ...)
+	table.sort(list, function(a, b)
+		if a.pos.X ~= b.pos.X then return a.pos.X > b.pos.X end
+		return a.pos.Z > b.pos.Z
+	end)
+	feetOf[pet] = list
+	print(("[PetFollow] %s walk cycle -> %d foot part(s)"):format(pet.Name, #list))
+	return list
+end
+
+local function animateFeet(pet, pivot, speed, dt)
+	if not WALK_CYCLE then return end
+	local list = feetOf[pet]
+	if not list or #list == 0 then return end
+	local sc = pet:GetScale(); if sc <= 0 then sc = 1 end
+
+	-- the pet's OWN horizontal speed, smoothed -- see the header note
+	local here = pivot.Position
+	if list.lastPos then
+		local d = here - list.lastPos
+		local sp = Vector3.new(d.X, 0, d.Z).Magnitude / math.max(dt, 1e-3)
+		local target = math.clamp(sp / STRIDE_SPEED, 0, 1)
+		list.move = list.move + (target - list.move) * math.clamp(dt * 5, 0, 1)
+	end
+	list.lastPos = here
+	local mv = list.move
+	list.phase = list.phase + dt * (9 + 3 * mv)   -- cadence rises with speed
+
+	for _, f in ipairs(list) do
+		if f.part.Parent then
+			-- DIAGONAL GAIT KEYED ON POSITION, not list index: front-left steps with back-right.
+			-- Position-keyed so extra Foot* parts (the raptor's FootClaw sickles ride on the toes)
+			-- inherit the exact phase of the foot they sit on instead of a random index parity.
+			local ph    = list.phase + (((f.pos.X >= 0) == (f.pos.Z >= 0)) and 0 or math.pi)
+			local swing = SWING_MAX * mv * math.sin(ph)
+			-- pendulum: rotate the rest pose about the hip, around the lateral Z axis. +X is the
+			-- pet's front, so +Z rotation carries the foot forward.
+			local hip  = f.hip * sc
+			local rest = CFrame.new(f.pos * sc) * f.rot
+			f.part.CFrame = pivot
+				* (CFrame.new(hip) * CFrame.Angles(0, 0, swing) * CFrame.new(-hip))
+				* rest
+		end
+	end
+end
+
+-- ===== FIN FLAP =====
+-- Same idea as the walk cycle, for side fins: any part named "Pectoral" (or "Wing", for future
+-- pets) is kept welded by fuseAll and rocked around its own mounting point. Fins scull gently
+-- even at rest -- a shark treads water -- and beat faster with speed.
+local finsOf = setmetatable({}, { __mode = "k" })
+local finPhase = 0
+local function captureFins(pet)
+	local sc = pet:GetScale(); if sc <= 0 then sc = 1 end
+	local pivot = pet:GetPivot()
+	local list = {}
+	for _, p in ipairs(pet:GetDescendants()) do
+		if p:IsA("BasePart") and (p.Name == "Pectoral" or p.Name == "Wing") then
+			local rel = pivot:ToObjectSpace(p.CFrame)
+			list[#list + 1] = { part = p, pos = rel.Position / sc, rot = rel - rel.Position,
+				sgn = (rel.Position.Z >= 0) and 1 or -1 }
+		end
+	end
+	finsOf[pet] = list
+	if #list > 0 then print(("[PetFollow] %s fin flap -> %d fin(s)"):format(pet.Name, #list)) end
+end
+local function animateFins(pet, pivot, speed, dt)
+	local list = finsOf[pet]
+	if not list or #list == 0 then return end
+	local sc = pet:GetScale(); if sc <= 0 then sc = 1 end
+	local drive = 0.35 + 0.65 * math.clamp(speed / 18, 0, 1)
+	finPhase = finPhase + dt * (2.2 + 6 * drive)
+	local ang = math.sin(finPhase) * 0.22 * drive
+	for _, f in ipairs(list) do
+		if f.part.Parent then
+			f.part.CFrame = pivot * (CFrame.new(f.pos * sc) * f.rot) * CFrame.Angles(ang * f.sgn, 0, 0)
+		end
+	end
+end
+
+-- ===== FOLLOW WATCHDOG =====
+-- "they do not follow me" is reported often and is nearly impossible to diagnose from source,
+-- because the follow branch below is fully generic -- no pet is named in it, so a pet that
+-- spawns either follows or fails one of exactly four preconditions. This prints WHICH ONE,
+-- once a second, so the answer is in the log instead of in a guess.
+--
+-- IT ALSO CATCHES THE COMMON FALSE ALARM: the two STATIC copies of every pet that legitimately
+-- stand still are the build's display model near the SpawnLocation and the "Hatched<Name>_<you>"
+-- celebration pet the server floats over the egg. Neither is st.pet and neither ever follows.
+-- If this watchdog is silent while a pet stands there, that pet is one of those two, not a bug.
+local wdT = 0
+local function followWatchdog(dt, pet, hrp)
+	wdT = wdT + dt
+	if wdT < 1 then return end
+	wdT = 0
+	if not pet then return end                      -- nothing equipped: not a fault
+	local why =
+		(not pet.Parent) and "pet was destroyed (pet.Parent == nil)"
+		or (not pet.PrimaryPart) and "pet has NO PrimaryPart -- its 'Root' part is missing from the template"
+		or st.emerging and "still in the 0.5s emerge animation (stuck emerging = a PivotTo error)"
+		or (not hrp) and "your character has no HumanoidRootPart yet"
+		or nil
+	if why then warn(("[PetFollow][WATCHDOG] %s is NOT following: %s"):format(pet.Name, why)) end
+	-- A DESTROYED pet is gone for good -- something external removed it (e.g. /petfull replacing
+	-- test followers). Repeating the same warning every second forever is noise, not diagnosis:
+	-- one report, then let go of the reference so the state reads "nothing equipped".
+	if not pet.Parent then st.pet = nil end
+end
+
 RunService.RenderStepped:Connect(function(dt)
 	local char = player.Character
 	local hrp = char and char:FindFirstChild("HumanoidRootPart")
 	local pet = st.pet
+	followWatchdog(dt, pet, hrp)
 	if pet and pet.Parent and pet.PrimaryPart and not st.emerging and hrp then
 		local targetPos = (hrp.CFrame * CFrame.new(FOLLOW_OFFSET.X, FOLLOW_OFFSET.Y, FOLLOW_OFFSET.Z)).Position
 		if not petSmoothPos then petSmoothPos = targetPos end
@@ -408,13 +760,24 @@ RunService.RenderStepped:Connect(function(dt)
 		local back = petSmoothPos - targetPos
 		if back.Magnitude > MAX_TRAIL then petSmoothPos = targetPos + back.Unit * MAX_TRAIL end
 		bobT = bobT + dt
-		local renderPos = petSmoothPos + Vector3.new(0, math.sin(bobT * 1.4) * 0.10, 0)
-		-- HYBRID facing: face the TRAVEL direction while moving, turn to face the PLAYER when idle.
-		-- (+X front reads forward when running, and looks at you when stopped -- the hub's front view.)
 		local vel = hrp.AssemblyLinearVelocity
 		local moveDir = Vector3.new(vel.X, 0, vel.Z)
+		-- ===== ALIVE, NOT A STATUE =====
+		-- WHOLE-BODY MOTION, layered UNDER the leg swing (animateFeet, below). This comment used
+		-- to say legs could not move at all because the pet was one fused solid -- that has not
+		-- been true since feet came back out of the union on every pet, and the body motion is
+		-- now the accompaniment rather than the whole performance:
+		--   * a HOP synced to a GALLOP pitch while you move (bounds along over the stepping legs)
+		--   * a WADDLE roll layered on top
+		--   * a FORWARD LEAN that grows with speed -- the food realm's running tell
+		--   * a slow BREATHING sway + idle yaw/roll when standing still
+		local speedF = math.clamp(moveDir.Magnitude / 14, 0, 1)
+		local hop = math.abs(math.sin(bobT * 4.5)) * 0.09 * speedF   -- toned down: the LEGS walk now, the body only bounces lightly over them
+		local renderPos = petSmoothPos + Vector3.new(0, math.sin(bobT * 1.4) * 0.10 + hop, 0)
+		-- HYBRID facing: face the TRAVEL direction while moving, turn to face the PLAYER when idle.
+		-- (+X front reads forward when running, and looks at you when stopped -- the hub's front view.)
 		local fwd
-		if st.facePlayer then -- shark: ALWAYS face the player so its +X face shows (hub-like)
+		if st.facePlayer then -- shark/trike: ALWAYS face the player so its +X face shows (hub-like)
 			fwd = hrp.Position - renderPos; fwd = Vector3.new(fwd.X, 0, fwd.Z)
 		elseif moveDir.Magnitude > 2 then
 			fwd = moveDir                               -- moving -> face where it's going
@@ -428,7 +791,38 @@ RunService.RenderStepped:Connect(function(dt)
 		petSmoothFwd = petSmoothFwd:Lerp(fwd, 1 - math.exp(-FACE_K * dt))
 		if petSmoothFwd.Magnitude < 0.05 then petSmoothFwd = fwd end
 		local face = petSmoothFwd.Unit
-		pet:PivotTo(CFrame.lookAt(renderPos, renderPos + face) * CFrame.Angles(0, math.rad(90), 0)) -- +X = front -> yaw +90
+		-- ===== THREE-QUARTER VIEW (st.faceYaw) =====
+		-- The Pet Hub does NOT look at a pet head-on. Its camera sits front-upper-RIGHT, at
+		-- dir=(0.80,0.50,0.55) -- about 35 degrees off the pet's nose -- so every flat feature shows
+		-- its BROAD side. facePlayer, by contrast, aimed the nose exactly at the camera, and a flat
+		-- feature seen exactly edge-on is only as wide as it is THICK.
+		--
+		-- That is the whole "the megalodon has no fin when I equip it" bug. Its dorsal is 1.44 wide
+		-- but only 0.77 THICK, so nose-on it collapsed to a ~0.77-stud dark nub above the head --
+		-- "just a little dot". Nothing was missing, deleted or shrunk: /petfull proved the world copy
+		-- is identical to the template and the hub icon, part for part. It was pointed the one way
+		-- that hides it. Yawing to match the hub's own camera angle is what makes it read as a fin.
+		local pivot = CFrame.lookAt(renderPos, renderPos + face)
+			* CFrame.Angles(0, math.rad(90 + (st.faceYaw or 0)), 0) -- +X = front -> yaw +90 (+ per-pet offset)
+		-- gallop = nose bobs with the hop; waddle = side-to-side lean; breath = idle sway
+		local gallop = math.sin(bobT * 9.0) * 0.035 * speedF
+		local waddle = math.sin(bobT * 4.5) * 0.02 * speedF
+		local breath = (1 - speedF) * math.sin(bobT * 1.6) * 0.02
+		-- FORWARD LEAN -- the other half of the food realm's gait, and the half that actually
+		-- reads as "running". Their pets pitch nose-down up to 13 degrees in proportion to speed
+		-- (PetFollow.client.lua:4225 over there); ours only ever oscillated, so the body stayed
+		-- bolt upright while the legs worked. -Z pitch drops the nose, since +X is the front.
+		local lean = -math.rad(13) * speedF
+		-- IDLE SWAY: a slow yaw/roll that never stops, so a standing pet still breathes rather
+		-- than freezing solid the moment you stop -- the legs go completely still at rest now.
+		local swayY = math.rad(3) * math.sin(bobT * 0.8)
+		local swayZ = math.rad(2) * math.sin(bobT * 1.1)
+		pivot = pivot * CFrame.Angles(waddle, swayY, gallop + breath + lean + swayZ)
+		pet:PivotTo(pivot)
+		-- feet AFTER the pivot: PivotTo moves every part, so the walk offsets have to be applied
+		-- on top of the pose it just set, not before it.
+		animateFeet(pet, pivot, moveDir.Magnitude, dt)
+		animateFins(pet, pivot, moveDir.Magnitude, dt)
 		if not st.orientPrinted then st.orientPrinted = true
 			local pv = pet:GetPivot()
 			print(("[PetFollow][ORIENT] %s AFTER -> up=(%.2f,%.2f,%.2f) frontX=(%.2f,%.2f,%.2f)  (up should be ~0,1,0 = dorsal upright; frontX = the travel/look dir the face points)"):format(pet.Name, pv.UpVector.X,pv.UpVector.Y,pv.UpVector.Z, pv.RightVector.X,pv.RightVector.Y,pv.RightVector.Z))
@@ -467,47 +861,13 @@ local function applyBlink(petModel)
 	print("[PetFollow] eye blink (Size.Y squash) started (" .. #eyes .. " eye parts)")
 end
 
--- ===== FOLLOWER-ONLY shark fins: add a big dorsal fin + a forked tail, welded to the follower's BodyUnion.
--- Does NOT touch the SharkTemplate or the hub icon -- only the spawned follower clone. Sizes/offsets are in
--- world studs matching the full-size body (+X front, +Y up, -X back), and parts are embedded so nothing floats. =====
-local function addSharkFollowerFins(pet)
-	local body = pet:FindFirstChild("BodyUnion") or pet.PrimaryPart
-	if not body then warn("[PetFollow] shark follower has no BodyUnion -> cannot add fins"); return end
-	-- clear any template/old follower dorsal+tail on THIS clone only (so the new ones don't double up)
-	for _, d in ipairs(pet:GetChildren()) do
-		if d:IsA("BasePart") and (d.Name=="Dorsal" or d.Name=="TailBase" or d.Name=="TailTop" or d.Name=="TailBot"
-			or d.Name:find("FollowerDorsal") or d.Name:find("FollowerTail")) then d:Destroy() end
-	end
-	local FIN = Color3.fromRGB(84,100,120)   -- shark blue-grey fin
-	local SMOOTH = Enum.SurfaceType.Smooth
-	local hx, hy = body.Size.X/2, body.Size.Y/2 -- ACTUAL body half-extents: hx = front/back (X), hy = top (Y)
-	-- SWEPT: rotate the wedge so it's a FLAT TRIANGLE in the X-Y plane, THIN (0.4) side-to-side along Z, with the
-	-- full-height edge toward +X tapering to a point toward -X (swept back). A WedgePart -- NOT a ball.
-	local SWEPT = CFrame.Angles(0, math.rad(-90), 0)
-	local function wedgeFin(name, sx,sy,sz, lx,ly,lz)
-		local p = Instance.new("WedgePart"); p.Name = name; p.Size = Vector3.new(sx,sy,sz); p.Color = FIN
-		p.Anchored=true; p.CanCollide=false; p.CanQuery=false; p.CanTouch=false; p.CastShadow=false; p.Massless=true; p.Material=Enum.Material.Plastic
-		p.TopSurface=SMOOTH;p.BottomSurface=SMOOTH;p.LeftSurface=SMOOTH;p.RightSurface=SMOOTH;p.FrontSurface=SMOOTH;p.BackSurface=SMOOTH
-		p.CFrame = body.CFrame * CFrame.new(lx,ly,lz) * SWEPT
-		p.Parent = pet
-		local w = Instance.new("WeldConstraint"); w.Name="FinWeld"; w.Part0=body; w.Part1=p; w.Parent=p -- moves + stays attached at follower scale
-		print(("[PetFollow][FIN] %s shape=%s size=(%.2f,%.2f,%.2f) relPos=(%.2f,%.2f,%.2f)"):format(name, p.ClassName, sx,sy,sz, lx,ly,lz))
-		return p
-	end
-	-- size order = (sx = thin Z, sy = tall Y, sz = depth X)
-	-- DORSAL FIN: flat triangle standing on the TOP surface; flat bottom embeds ~0.4, the rest (~2 studs) stands above.
-	local dY = 2.4
-	wedgeFin("FollowerDorsal", 0.4, dY, 1.8, -0.1, hy + dY/2 - 0.4, 0)
-	-- FORKED TAIL: two flat triangular lobes at the BACK (-X). Tall edge embeds ~0.3 into the rear; points splay out behind.
-	wedgeFin("FollowerTailTop", 0.4, 2.3, 1.8, -hx - 1.8/2 + 0.3,  0.5, 0)  -- taller TOP lobe
-	wedgeFin("FollowerTailBot", 0.4, 1.5, 1.5, -hx - 1.5/2 + 0.3, -0.7, 0)  -- shorter bottom lobe
-	-- ===== confirm: WedgeParts sitting ON the body surface (not balls floating off it) =====
-	local dBase = (hy + dY/2 - 0.4) - dY/2
-	print(("[PetFollow][FIN] body half: X(front/back)=%.2f  Y(top)=%.2f"):format(hx, hy))
-	print(("[PetFollow][FIN] DORSAL base_y=%.2f bodyTop=%.2f embed=%.2f -> tip ~%.2f studs ABOVE the body"):format(dBase, hy, hy - dBase, (hy + dY/2 - 0.4) + dY/2 - hy))
-	print(("[PetFollow][FIN] TAIL lobes: tall edge embeds ~0.30 into the rear (bodyBack=%.2f), points stick out behind"):format(-hx))
-	print("[PetFollow] SharkPetFollower: dorsal + forked tail are WedgeParts ON the body surface (welded to BodyUnion)")
-end
+-- SHARK FOLLOWER-ONLY FINS: DELETED. This built the equipped shark a SECOND set of WedgePart
+-- fins and destroyed the template Dorsal/TailTop/TailBot first, so the pet you equipped was a
+-- different model from its Hub icon. Its call site was removed long ago but the function was
+-- left behind, and it cost a whole debugging round: it looks exactly like a fin-deleter, so it
+-- became the prime suspect for the missing megalodon fin before grep proved nothing called it.
+-- The real cause was the viewing angle (see st.faceYaw above). Dead code that impersonates a bug
+-- is worse than no code.
 
 -- ===== SPAWN a follower from a published template (called by QuestGate / dig quest on hatch) =====
 local function spawnFollowerFromTemplate(templateName, label, baseCF)
@@ -519,13 +879,62 @@ local function spawnFollowerFromTemplate(templateName, label, baseCF)
 	print(("[PetFollow] %s -> CLONED %s (%d parts)"):format(label, templateName, n))
 	-- match the hub EXACTLY: pivot on Root (origin/identity, +X front, +Y up). If the clone lost its PrimaryPart,
 	-- PivotTo would fall back to a tilted bounding-box pivot -> fin/face read wrong. Force it back to Root.
+	-- Ask for full detail on the clone. Roblox refuses this on runtime-CSG unions (see
+	-- PetFace.forcePrecise for the two reasons it is a dead end, and why it does not matter:
+	-- Automatic already renders at highest detail within ~250 studs). Left in, silent, in case
+	-- the engine ever starts honouring it.
+	for _, d in ipairs(pet:GetDescendants()) do
+		if d:IsA("UnionOperation") then
+			pcall(function() d.RenderFidelity = Enum.RenderFidelity.Precise end)
+		end
+	end
 	if pet.PrimaryPart ~= pet:FindFirstChild("Root") then pet.PrimaryPart = pet:FindFirstChild("Root") end
+	-- ===== NO PrimaryPart == NO FOLLOWING, SILENTLY =====
+	-- The follow loop requires pet.PrimaryPart, so a clone whose "Root" is missing spawns fine,
+	-- looks fine, and then stands exactly where it appeared forever with nothing logged. That is
+	-- indistinguishable to a player from "the pet is broken", and it is the single failure that
+	-- has cost the most time on this file. Root can go missing for boring reasons -- a build that
+	-- errored before newRoot(), a stale template published by an older version of the builder,
+	-- a resync that landed mid-build -- so rather than trust every builder to be perfect, rebuild
+	-- it here. An invisible 0.4 ball at the model's own pivot is exactly what newRoot() makes.
+	if not pet.PrimaryPart then
+		warn(("[PetFollow] %s clone has NO 'Root' part -- rebuilding one so it can follow " ..
+		      "(fix the builder: %s must call newRoot())"):format(label, templateName))
+		local pivot = pet:GetPivot()
+		local r = Instance.new("Part")
+		r.Name = "Root"; r.Shape = Enum.PartType.Ball; r.Size = Vector3.new(0.4, 0.4, 0.4)
+		r.Transparency = 1; r.Anchored = true; r.CanCollide = false; r.CanQuery = false
+		r.CanTouch = false; r.CastShadow = false; r.Massless = true
+		r.CFrame = pivot; r.Parent = pet
+		pet.PrimaryPart = r
+	end
 	do local pv = pet:GetPivot(); print(("[PetFollow][ORIENT] %s BEFORE -> PrimaryPart=%s pivotUp=(%.2f,%.2f,%.2f) pivotLook=(%.2f,%.2f,%.2f)"):format(label, pet.PrimaryPart and pet.PrimaryPart.Name or "nil", pv.UpVector.X,pv.UpVector.Y,pv.UpVector.Z, pv.LookVector.X,pv.LookVector.Y,pv.LookVector.Z)) end
 	st.pet = pet; petSmoothPos = nil; petSmoothFwd = nil; st.orientPrinted = false
-	st.facePlayer = (label:find("Shark") ~= nil) or (label:find("Trice") ~= nil) -- shark/trike: always turn its +X FACE toward you (see its face like the hub)
+	-- The SHARK no longer force-faces the player. That rule dates from when its fin was
+	-- invisible and only the face view looked right -- but a glider that always rotates toward
+	-- you SWIMS BACKWARD whenever you move, which is exactly the "looks bad only when equipped"
+	-- effect: the hub cannot show motion. It now faces its travel direction like a real shark
+	-- (and still turns to face you when you stand still, via the idle branch below).
+	st.facePlayer = (label:find("Trice") ~= nil) -- trike only: its frill face is its identity
+	-- The TRICERATOPS reads best dead-on -- its frill faces forward, which is why it has always
+	-- looked right. The MEGALODON is the opposite animal: everything that identifies it (dorsal,
+	-- pectorals, tail fork) is a FLAT BLADE, invisible edge-on. It gets the hub camera's own
+	-- ~35-degree offset so you see the broad side of those blades, not their thickness.
+	-- No yaw offset either: it existed to show the old invisible fin's broad side. The new
+	-- design carries its identity in the silhouette (dorsal, side fins, tail), which is exactly
+	-- what you see while it swims alongside you; the face shows when it turns to you at rest.
+	st.faceYaw = 0
 	applyLevelVisual(pet, st.level, st.rare)
+	captureFeet(pet)   -- AFTER applyLevelVisual: it calls ScaleTo, which moves the feet
+	captureFins(pet)   -- side fins (Pectoral/Wing) scull on their own cycle
 	applyBlink(pet)  -- Size.Y squash blink on whitepartofeye/blackpartofeye/Glint
-	if label:find("Shark") then addSharkFollowerFins(pet) end -- follower-only dorsal fin + forked tail (template/hub untouched)
+	-- SHARK FOLLOWER-ONLY FINS: REMOVED. This used to delete the template's Dorsal/TailTop/TailBot
+	-- and rebuild them as WedgeParts, so the equipped shark was literally a DIFFERENT model from the
+	-- one in the Pet Hub -- the single clearest case of "looks right in the menu, wrong in the world".
+	-- It only existed because the follower used to be scaled to 0.6, which pulled the template's small
+	-- welded fins off the body; the size ramp is gone, so the template's own fins work. And it would
+	-- now actively break things: after PetFace.fuseAll the template fins are INSIDE the union, so the
+	-- destroy pass would find nothing and it would weld a SECOND set of fins on top of them.
 	-- emerge: a short rise at the spot, then hand off to the follow loop
 	if typeof(baseCF) == "CFrame" then
 		st.emerging = true
@@ -541,6 +950,9 @@ local function spawnFollowerFromTemplate(templateName, label, baseCF)
 		end)
 	end
 	print("[PetFollow] " .. label .. " spawned -> following you")
+	task.delay(1.5, function()
+		if st.pet == pet and pet.Parent then livePetXray(pet, "EQUIPPED (live, 1.5s after spawn)") end
+	end)
 end
 _G.SpawnStegoFollower  = function(baseCF) spawnFollowerFromTemplate("StegosaurusTemplate", "StegoFollower", baseCF) end
 _G.SpawnRaptorFollower = function(baseCF) spawnFollowerFromTemplate("VelociraptorTemplate", "RaptorFollower", baseCF) end
@@ -548,6 +960,8 @@ _G.SpawnSharkFollower  = function(baseCF) spawnFollowerFromTemplate("SharkTempla
 _G.SpawnTriceratopsFollower = function(baseCF) spawnFollowerFromTemplate("TriceratopsTemplate", "TriceratopsFollower", baseCF) end
 _G.SpawnSpinosaurusFollower = function(baseCF) spawnFollowerFromTemplate("SpinosaurusTemplate", "SpinosaurusFollower", baseCF) end
 _G.SpawnTyrannosaurusFollower = function(baseCF) spawnFollowerFromTemplate("TyrannosaurusTemplate", "TyrannosaurusFollower", baseCF) end
+_G.SpawnTherizinosaurusFollower = function(baseCF) spawnFollowerFromTemplate("TherizinosaurusTemplate", "TherizinosaurusFollower", baseCF) end
+_G.SpawnBrachiosaurusFollower   = function(baseCF) spawnFollowerFromTemplate("BrachiosaurusTemplate",   "BrachiosaurusFollower",   baseCF) end
 
 -- ===== EQUIP from the Pet Hub -> spawn THAT pet as the follower (or despawn on unequip). Lets you equip any owned pet. =====
 task.spawn(function()
@@ -565,6 +979,12 @@ task.spawn(function()
 		TriceratopsPet   = "TriceratopsTemplate",
 		SpinosaurusPet   = "SpinosaurusTemplate",   -- was missing
 		TyrannosaurusPet = "TyrannosaurusTemplate", -- was missing
+		-- AND THEN IT HAPPENED AGAIN. The Therizinosaurus and Brachiosaurus were added with
+		-- templates, grants, hub icons and _G.Spawn*Follower hooks -- everything except this
+		-- table -- so they hatched, appeared in the Hub, and equipped to nothing. If you add a
+		-- pet anywhere, add it HERE too; this is the table the equip button actually reads.
+		TherizinosaurusPet = "TherizinosaurusTemplate",
+		BrachiosaurusPet   = "BrachiosaurusTemplate",
 	}
 	pee.OnClientEvent:Connect(function(petId)
 		if not petId or petId == false then -- unequipped -> remove the follower
@@ -592,8 +1012,13 @@ task.spawn(function()
 	local pse = RS:WaitForChild("PetStateEvent", 20)
 	if not pse then return end
 	pse.OnClientEvent:Connect(function(payload)
-		if not (payload and st.pet) then return end
+		-- IGNORE STATE FOR A PET THAT IS NOT THE ONE EQUIPPED. The live log caught this firing on
+		-- the OUTGOING follower mid-swap: equipping the Triceratops re-ran the whole level-visual
+		-- pass on the SharkPetFollower a few milliseconds before it was destroyed. Harmless today,
+		-- but it re-applies scaling and FX to a doomed model and muddies every log it appears in.
+		if not (payload and st.pet and st.pet.Parent) then return end
 		local d = payload.StegoPet or payload.RaptorPet or payload.SharkPet or payload.TriceratopsPet or payload.SpinosaurusPet or payload.TyrannosaurusPet
+			or payload.TherizinosaurusPet or payload.BrachiosaurusPet
 		if not d then for _, v in pairs(payload) do if type(v) == "table" then d = v; break end end end
 		if d then
 			st.level = d.level or st.level

@@ -28,7 +28,16 @@
 local Players   = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 
-local TICK        = 0.5 -- matches XP_PER_FLIGHT_TICK's assumed cadence (6 XP * 2 = 12 XP/sec)
+-- 0.23 = 0.5 x 0.455. FLIGHT XP IS PAID PER TICK, SO IT IS PAID PER SECOND -- and flights
+-- are now 2.2x shorter in wall-clock than they were before the tower was compressed and
+-- FLIGHT_SECONDS came down with it. Left at 0.5 a pet would earn less than half the XP per
+-- crossing it was tuned for, and the whole 1..25 level track would stretch out by the same
+-- factor. Ticking faster restores XP PER CROSSING, which is the quantity that was designed;
+-- XP per second was only ever a proxy for it.
+--
+-- The coin-delta branch below is unaffected either way -- it pays on a DELTA, so the tick
+-- rate changes only how finely it samples.
+local TICK        = 0.23 -- was 0.5; XP per crossing preserved, XP/sec is now ~26
 local TOP_ISLAND  = 13
 
 -- Per-player bookkeeping
@@ -49,7 +58,15 @@ local ISLAND_TO_SLOT = IslandOrder.ISLAND_TO_SLOT
 -- HOW FAR FROM AN ISLAND'S CENTRE STILL COUNTS AS BEING AT IT. Islands are 370-460 wide,
 -- so ~300 reaches the rim of the biggest one; the gaps between them are 6000+. Anything
 -- inside 700 is unambiguously AT an island, and nothing mid-flight can be.
-local NEAR_RADIUS = 700
+-- RESCALED x0.455 with the tower (was 700). This is the "close enough to count as
+-- ARRIVED" radius, and its correctness is defined against the GAPS, not the islands: it
+-- must stay comfortably under the smallest gap, or the island above you sits inside your
+-- own arrival radius. That gap is now 552 studs, so 700 would have exceeded it outright.
+-- 318 restores the same proportion. The footprint test above still catches anyone standing
+-- anywhere inside an island's own bounding box, so this only governs the just-off-the-edge
+-- case -- and it is still gated on `grounded`, which is what makes a mid-gap false positive
+-- impossible either way.
+local NEAR_RADIUS = 318
 local NEAR_RADIUS_SQ = NEAR_RADIUS * NEAR_RADIUS
 
 -- `grounded` gates the NEAR-MISS fallback only. Reaching an island means STANDING on it:
@@ -67,8 +84,28 @@ local function currentIsland(hrp: BasePart, grounded: boolean?): number?
 			if ok and cf and size and size.Magnitude > 1 then
 				local dx, dz = pos.X - cf.Position.X, pos.Z - cf.Position.Z
 				local dy = pos.Y - cf.Position.Y
-				-- standing inside the island's footprint -> definitely this one
-				if math.abs(dx) <= size.X / 2 and math.abs(dz) <= size.Z / 2
+				-- Standing inside the island's footprint -> definitely this one.
+				--
+				-- `grounded` IS REQUIRED HERE, and leaving it out was a progression bug.
+				-- This branch returned `i` unconditionally, so it credited the island to
+				-- anyone whose X/Z happened to be over its footprint -- INCLUDING someone
+				-- flying past it, or falling back down after failing the crossing. The
+				-- vertical test is the island's own half-height PLUS 120 studs of slop, and
+				-- these bounding boxes are large (island5 is 198 tall), so that is ~220
+				-- studs of airspace under and over each island where merely passing through
+				-- counted as arriving.
+				--
+				-- What that broke: HighestSlot jumped early, which unlocks the higher-tier
+				-- FOOD, and a slot-9 food fills a low tank in two servings -- so a failed
+				-- crossing could hand the player the fuel to trivially win the next one.
+				-- It also made every flight-count measurement meaningless, because the log
+				-- recorded islands that were never actually landed on.
+				--
+				-- The nearest-island fallback below has always required `grounded`. This
+				-- branch is simply the same rule stated for the footprint case: you have
+				-- arrived when you are STANDING on it, not when you are above it.
+				if grounded
+					and math.abs(dx) <= size.X / 2 and math.abs(dz) <= size.Z / 2
 					and math.abs(dy) <= size.Y / 2 + 120 then
 					return i
 				end

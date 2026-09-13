@@ -50,8 +50,8 @@ local folder      = RS:WaitForChild("NestingNook")
 local eggCarry    = folder:WaitForChild("EggCarry")
 local PickupFloor = require(RS:WaitForChild("DinosaurRealm"):WaitForChild("PickupFloor"))
 
-local ROCKS  = 8    -- alternating rocks; each one works the egg 1/8 looser
-local SETTLE = 0.02 -- it settles back into the leaf litter while you're not rocking
+local ROCKS  = 5    -- alternating rocks; each one works the egg 1/5 looser
+local SETTLE = 0.012 -- it settles back into the leaf litter while you're not rocking
 -- DONE, not 1.0. The bar is CLAMPED to the rising ceiling, so the most a rock can ever
 -- put in it is exactly the ceiling's value -- and the settle drain then takes a sliver
 -- back out on the very next frame. Testing for a literal 1.0 is a test that can never

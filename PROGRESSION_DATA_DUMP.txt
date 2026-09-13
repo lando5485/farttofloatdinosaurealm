@@ -1,0 +1,483 @@
+==========================================================
+FART TO FLOAT - DINOSAUR REALM
+COMPLETE RAW PROGRESSION DATA DUMP
+==========================================================
+Generated from the live source files.
+Only ONE realm exists in this project: Dinosaur Realm, 13 islands.
+
+SOURCE FILES
+| System | File |
+|---|---|
+| Island order / names / positions | src/shared/IslandOrder.luau |
+| Flight physics / tiers / gaps / speeds | src/shared/FlightTuning.luau |
+| Gut tiers + prices | src/shared/StomachTiers.luau |
+| Food prices + power | src/shared/FoodMenu.luau |
+| Purchase validation / coin handler | src/server/Shop.server.luau |
+| Flight loop / drain / climb coins | src/client/BottomHUD.client.luau |
+| Gas + coin bubbles | src/client/Bubbles.client.luau |
+| Bubble gas grant (server) | src/server/GasBubble.server.luau |
+| Gamepass / dev-product grants | src/server/PurchaseReceipts.server.luau |
+
+
+==========================================================
+SECTION 1 - FOOD
+==========================================================
+
+| Food | Unlock Island (slot) | Cost | Fuel Given | Fuel per Coin | Purchase Limit | Cooldown | Any Other Stats |
+|---|---|---|---|---|---|---|---|
+| Eggs | 1 (Nesting Nook) | 21 | 8 | 0.3810 | None | None | host island #1 |
+| Chili Peppers | 2 (Jungle Junction) | 53 | 25 | 0.4717 | None | None | host island #9 |
+| Lettuce | 3 (Misty Mire) | 79 | 45 | 0.5696 | None | None | host island #5 |
+| Grapes | 4 (Sunscorch Sands) | 101 | 70 | 0.6931 | None | None | host island #12 |
+| Bananas | 5 (Fossil Frontier) | 118 | 100 | 0.8475 | None | None | host island #3 |
+| Popcorn | 6 (Glacier Gulch) | 136 | 140 | 1.0294 | None | None | host island #13 |
+| Fish | 7 (Coastal Crossing) | 147 | 185 | 1.2585 | None | None | host island #4 |
+| Ribs | 8 (Fern Frontier) | 156 | 240 | 1.5385 | None | None | host island #2 |
+| Potatoes | 9 (Petrified Pass) | 159 | 300 | 1.8868 | None | None | host island #10 |
+| Apples | 10 (Raptor Ridge) | 160 | 370 | 2.3125 | None | None | host island #7 |
+| Mushrooms | 11 (Redwood Ridge) | 159 | 450 | 2.8302 | None | None | host island #6 |
+| Chicken | 12 (Inferno Isle) | 156 | 540 | 3.4615 | None | None | host island #8 |
+| Steak | 13 (Volcanic Vista) | 185 | 640 | 3.4595 | None | None | host island #11 |
+
+NO purchase limit, NO cooldown, NO debounce exist in BuyFoodEvent.
+There is no per-food unlock gate - food is gated only by which island hosts the stand.
+
+FOOD FORMULAS
+price = gap * MARGIN * COIN_PER_STUD / (R * (tierMaxPower / power))
+        solved for flat R = 1.91
+        tierMaxPower = ORIGINAL sizes (100/140/190/...), NOT the +10 ones
+
+has2x        = HasTwoXForever OR (TwoXHourExpiry > os.time())
+powerGain    = has2x and floor(food.power * 1.4) or food.power
+effectiveMax = has2x and floor(StomachMax * 1.4) or StomachMax
+newPower     = CurrentPower + powerGain
+
+REJECT if newPower > effectiveMax
+    remaining = effectiveMax - CurrentPower
+    remaining <= 0 -> "stomach_full"
+    remaining  > 0 -> "not_enough_room"
+
+ON SUCCESS
+    Coins          -= food.price
+    CurrentPower    = newPower
+    TotalFartPower += food.power + (has2x and food.power or 0)
+
+
+==========================================================
+SECTION 2 - STOMACHS
+==========================================================
+
+| Stomach | Cost | Capacity | Speed Multiplier | Fuel Consumption Multiplier | Unlock Island (slot) | Other Stats |
+|---|---|---|---|---|---|---|
+| Hatchling Belly | 0 | 110 | 1.0000 | 1.0 | 1 | band speed 26.3250; full-tank climb 1,184.62 |
+| Raptor Gut | 1250 | 150 | 1.4198 | 1.0 | 2 | band speed 37.3750; full-tank climb 1,317.22 |
+| Dilo Stomach | 1400 | 200 | 1.6309 | 1.0 | 3 | band speed 42.9325; full-tank climb 1,470.91 |
+| Stego Stomach | 1550 | 270 | 1.8136 | 1.0 | 4 | band speed 47.7425; full-tank climb 1,646.56 |
+| Anky Belly | 1750 | 365 | 2.0346 | 1.0 | 5 | band speed 53.5600; full-tank climb 1,845.31 |
+| Trike Gut | 1950 | 495 | 2.2790 | 1.0 | 6 | band speed 59.9950; full-tank climb 2,069.72 |
+| Bronto Belly | 2200 | 675 | 2.5444 | 1.0 | 7 | band speed 66.9825; full-tank climb 2,321.58 |
+| Spino Stomach | 2450 | 920 | 2.8543 | 1.0 | 8 | band speed 75.1400; full-tank climb 2,603.79 |
+| Rex Gut | 2750 | 1260 | 3.1877 | 1.0 | 9 | band speed 83.9150; full-tank climb 2,920.15 |
+| Ptero Belly | 3050 | 1725 | 3.5728 | 1.0 | 10 | band speed 94.0550; full-tank climb 3,273.91 |
+| Fossil Gut | 3450 | 2360 | 4.0049 | 1.0 | 11 | band speed 105.4300; full-tank climb 3,669.56 |
+| Titan Gut | 3850 | 3230 | 4.4864 | 1.0 | 12 | band speed 118.1050; full-tank climb 4,112.68 |
+| Primal Gut | 499 Robux | 9999 | 5.1852 | 0.0 (drain disabled) | 1 (not gated) | band speed 136.5000; sets HasPrimalGut |
+
+Fuel Consumption Multiplier is 1.0 for EVERY coin-bought tier.
+The meter is normalised: tankSecondsFor(any) = 45.
+A bigger gut does NOT burn slower or last longer - it flies faster.
+
+STOMACH FORMULAS
+capacity = tier.maxPower                 -- literal table value, NO formula
+speed    = TIERS[j].speed where p <= TIERS[j].maxPower
+gutCost  = 4.25 * (one flight's surplus at the tier below)   -- DESIGN RULE ONLY, not in code
+
+isUnlocked(tier, highestSlot) = tier.robux or floor(highestSlot) >= tier.unlockSlot
+
+ON PURCHASE
+    Coins       -= tier.cost
+    StomachMax   = tier.maxPower
+    CurrentPower = clamp(max(scaled, courtesy), oldCurrentPower, newMax)
+        scaled   = floor((oldCurrentPower / oldMax) * newMax)
+        courtesy = floor(min(newMax, powerForClimb(newMax, gapFromSlot(HighestSlot)) * 1.10) + 0.5)
+
+
+==========================================================
+SECTION 3 - ISLANDS
+==========================================================
+
+| Island (slot) | Name | Realm | X | Y | Z | Previous Island | Vertical Gap | 3D Distance | Flight Distance Used |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | Nesting Nook | Dinosaur Realm | 0 | 150.00 | 0 | None | n/a | n/a | n/a |
+| 2 | Jungle Junction | Dinosaur Realm | 120 | 1,246.88 | 60 | 1 (Nesting Nook) | 1,096.88 | 1,105.05 | 1,096.88 |
+| 3 | Misty Mire | Dinosaur Realm | -160 | 2,475.38 | 100 | 2 (Jungle Junction) | 1,228.50 | 1,260.64 | 1,228.50 |
+| 4 | Sunscorch Sands | Dinosaur Realm | 180 | 3,851.43 | -120 | 3 (Misty Mire) | 1,376.05 | 1,434.40 | 1,376.05 |
+| 5 | Fossil Frontier | Dinosaur Realm | -200 | 5,392.57 | 160 | 4 (Sunscorch Sands) | 1,541.15 | 1,611.81 | 1,541.15 |
+| 6 | Glacier Gulch | Dinosaur Realm | 220 | 7,118.65 | -180 | 5 (Fossil Frontier) | 1,726.08 | 1,808.68 | 1,726.08 |
+| 7 | Coastal Crossing | Dinosaur Realm | -240 | 9,052.08 | 200 | 6 (Glacier Gulch) | 1,933.43 | 2,023.40 | 1,933.42 |
+| 8 | Fern Frontier | Dinosaur Realm | 260 | 11,217.55 | -220 | 7 (Coastal Crossing) | 2,165.48 | 2,261.79 | 2,165.47 |
+| 9 | Petrified Pass | Dinosaur Realm | -280 | 13,643.02 | 240 | 8 (Fern Frontier) | 2,425.47 | 2,527.08 | 2,425.47 |
+| 10 | Raptor Ridge | Dinosaur Realm | 300 | 16,359.70 | -260 | 9 (Petrified Pass) | 2,716.68 | 2,822.54 | 2,716.68 |
+| 11 | Redwood Ridge | Dinosaur Realm | -320 | 19,402.35 | 280 | 10 (Raptor Ridge) | 3,042.65 | 3,151.78 | 3,042.65 |
+| 12 | Inferno Isle | Dinosaur Realm | 340 | 22,809.98 | -300 | 11 (Redwood Ridge) | 3,407.62 | 3,519.08 | 3,407.62 |
+| 13 | Volcanic Vista | Dinosaur Realm | -360 | 26,626.45 | 320 | 12 (Inferno Isle) | 3,816.47 | 3,929.36 | 3,816.47 |
+
+Flight Distance Used = TIERS.gap. The engine uses VERTICAL GAP ONLY.
+3D distance is never consumed by any calculation.
+
+ISLAND MODEL NUMBER -> SLOT MAPPING
+| Island model # | Name | Type | Climb slot |
+|---|---|---|---|
+| 1 | Nesting Nook | Quest | 1 |
+| 2 | Fern Frontier | Quest | 8 |
+| 3 | Fossil Frontier | Quest | 5 |
+| 4 | Coastal Crossing | Quest | 7 |
+| 5 | Misty Mire | Quest | 3 |
+| 6 | Redwood Ridge | Quest | 11 |
+| 7 | Raptor Ridge | Quest | 10 |
+| 8 | Inferno Isle | Scenery | 12 |
+| 9 | Jungle Junction | Scenery | 2 |
+| 10 | Petrified Pass | Scenery | 9 |
+| 11 | Volcanic Vista | Quest | 13 |
+| 12 | Sunscorch Sands | Scenery | 4 |
+| 13 | Glacier Gulch | Scenery | 6 |
+
+
+==========================================================
+SECTION 4 - COINS
+==========================================================
+
+| Constant | Value |
+|---|---|
+| Coin Value (climb) | studs_climbed * 0.430769230769 |
+| Coins Per Stud (base) | 0.14 |
+| Coins Per Stud (effective) | 0.430769230769 |
+| Coin Density | 6 coin bubbles per gap |
+| Coin Spawn Rate (respawn) | 30 s |
+| Gas Spawn Rate (respawn) | 45 s |
+| Coin Spawn Spacing (T_POSITIONS) | 0.18, 0.34, 0.50, 0.66, 0.82, 0.94 |
+| Gas Spawn Spacing (T_POSITIONS) | 0.10, 0.26, 0.42, 0.58, 0.74, 0.90 |
+| Coin Collection Radius | 22 |
+| Gas Collection Radius | 26 |
+| Coin ball diameter | 36 |
+| Gas ball diameter | 30 |
+| Coin transparency | 0.2 |
+| Coin spread min/max | 85 / 200 studs off centreline |
+| Gas spread min/max | 60 / 160 studs off centreline |
+| Angular placement | 2*pi/6 = 60 degrees apart, coin interleaved with gas |
+| BUBBLE_SHARE | 0.032 |
+| STREAK_STEP | 0.2 |
+| BASE_BONUS (fallback) | 15 |
+| RESET_ON_LANDING | true |
+| COIN_TICK | 0.5 s |
+| Coin bubble colours | RGB(255,215,0), RGB(0,200,255), RGB(255,100,200) |
+| Gas grant | max(1, ceil(StomachMax * 0.02)) |
+| GRANT_PERCENT | 0.02 |
+| MIN_INTERVAL | 0.75 s |
+| WINDOW_SECONDS | 60 |
+| WINDOW_MAX | 12 |
+
+AVERAGE COINS PER FLIGHT + BUBBLE VALUES, PER SLOT
+| Slot | Avg Coins Per Flight | 1 Bubble (x1.0) | 6 Bubbles | Bubble Spacing (studs) |
+|---|---|---|---|---|
+| 1 | 510.30 | 15.12 | 90.72 | 175.5 |
+| 2 | 567.42 | 16.93 | 101.61 | 196.6 |
+| 3 | 633.62 | 18.97 | 113.81 | 220.2 |
+| 4 | 709.29 | 21.24 | 127.46 | 246.6 |
+| 5 | 794.90 | 23.79 | 142.76 | 276.2 |
+| 6 | 891.57 | 26.65 | 159.91 | 309.3 |
+| 7 | 1,000.07 | 29.85 | 179.10 | 346.5 |
+| 8 | 1,121.63 | 33.43 | 200.61 | 388.1 |
+| 9 | 1,257.91 | 37.45 | 224.69 | 434.7 |
+| 10 | 1,410.30 | 41.94 | 251.65 | 486.8 |
+| 11 | 1,580.73 | 46.97 | 281.84 | 545.2 |
+| 12 | 1,771.62 | 52.61 | 315.65 | 610.6 |
+
+COIN SPAWN RULES
+- Anchors come from IslandOrder.SLOT_POS
+- Placed at fraction t up each gap, SPREAD_MIN..SPREAD_MAX studs off the centreline
+- Coin and gas heights are interleaved, never at matching t
+- Climb coins paid ONLY while (isFlying AND gasMeter > 0)
+- Descending ticks pay 0 (gained <= 0)
+- Falling pays 0
+- Server accumulates fractional amounts; floor() is moved into Coins
+
+
+==========================================================
+SECTION 5 - FLIGHT
+==========================================================
+
+| Property | Value |
+|---|---|
+| Base Speed (band 1) | 26.3250 studs/s |
+| Horizontal Speed | 48 studs/s |
+| Base Fuel Consumption | DRAIN_RATE = 2.222222 meter-points/s |
+| Gravity modifiers | NONE. Workspace.Gravity is never read or written anywhere in the project |
+| Acceleration | NONE. BodyVelocity sets velocity directly; no lerp, easing or ramp exists |
+| BodyVelocity.MaxForce | Vector3(50000, 1e6, 50000) |
+| BodyVelocity.Name | FartVelocity |
+| BodyVelocity parent | HumanoidRootPart |
+| BodyVelocity lifecycle | recreated each frame if missing; destroyed on stopFlying() |
+| FLIGHT_SECONDS | 45 |
+| TANK_SECONDS | 45 |
+| maxGasMeter | 100 |
+| MARGIN | 1.08 |
+| Fuel sync interval | 1.0 s (BurnFuelEvent) |
+
+EVERY MULTIPLIER
+| Multiplier | Value | Applies to |
+|---|---|---|
+| _G.flightDistanceMultiplier | 1 default, 0.9 in Monsoon Rain | vertical speed |
+| _G.serverEventCoinMult | 1 default | climb coins + bubble bonus |
+| _G.serverEventRingMult | 1 fallback | bubble bonus only |
+| POWER_PASS_MULT | 1.4 | food power + effective tank |
+| HasPrimalGut | boolean | disables drain entirely |
+| Coin streak | 1 + streak * 0.2 | bubble bonus only |
+
+MOVEMENT CODE AS IMPLEMENTED
+bodyVel.MaxForce = Vector3.new(50000, 1e6, 50000)
+bodyVel.Velocity = Vector3.new(move.X * 48,
+                               getFlightSpeed(currentPower) * (_G.flightDistanceMultiplier or 1),
+                               move.Z * 48)
+
+PER FRAME while (isFlying AND gasMeter > 0):
+    if NOT HasPrimalGut then gasMeter = max(0, gasMeter - DRAIN_RATE * dt)
+    currentPower = (gasMeter / 100) * StomachMax
+    every 1.0 s: BurnFuelEvent:FireServer(currentPower)
+    if gasMeter <= 0 then currentPower = 0; stopFlying()
+
+STOP CONDITIONS: gasMeter <= 0, button release, Humanoid.Health <= 0, no HRP/Humanoid
+
+SPEED BANDS
+| Band | Power range | Speed | Speed at scale 1.0 | Mult vs band 1 |
+|---|---|---|---|---|
+| 1 | 0 < p <= 110 | 26.3250 | 81.0 | 1.0000 |
+| 2 | 110 < p <= 150 | 37.3750 | 115.0 | 1.4198 |
+| 3 | 150 < p <= 200 | 42.9325 | 132.1 | 1.6309 |
+| 4 | 200 < p <= 270 | 47.7425 | 146.9 | 1.8136 |
+| 5 | 270 < p <= 365 | 53.5600 | 164.8 | 2.0346 |
+| 6 | 365 < p <= 495 | 59.9950 | 184.6 | 2.2790 |
+| 7 | 495 < p <= 675 | 66.9825 | 206.1 | 2.5444 |
+| 8 | 675 < p <= 920 | 75.1400 | 231.2 | 2.8543 |
+| 9 | 920 < p <= 1260 | 83.9150 | 258.2 | 3.1877 |
+| 10 | 1260 < p <= 1725 | 94.0550 | 289.4 | 3.5728 |
+| 11 | 1725 < p <= 2360 | 105.4300 | 324.4 | 4.0049 |
+| 12 | 2360 < p <= 3230 | 118.1050 | 363.4 | 4.4864 |
+| 13 | 3230 < p <= inf | 136.5000 | 420.0 | 5.1852 |
+
+
+==========================================================
+SECTION 6 - PROGRESSION CONSTANTS
+==========================================================
+
+| Constant | Value | File |
+|---|---|---|
+| SPACING_SCALE | 0.325 | IslandOrder.luau + FlightTuning.luau (must match) |
+| Gap Growth % | 12% per crossing | IslandOrder.luau |
+| MARGIN % | 1.08 (8%) | FlightTuning.luau |
+| COIN_PER_STUD base | 0.14 | BottomHUD + Bubbles |
+| COIN_PER_STUD effective | 0.430769230769 | derived |
+| Island spacing multiplier | SPACING_SCALE (0.325) | IslandOrder.luau |
+| FLIGHT_SECONDS | 45 | FlightTuning.luau |
+| TANK_SECONDS | 45 | FlightTuning.luau |
+| DRAIN_RATE | 2.222222 | FlightTuning.luau |
+| maxGasMeter | 100 | BottomHUD.client.luau |
+| FLIGHT_HORIZONTAL_SPEED | 48 | BottomHUD.client.luau |
+| COIN_TICK | 0.5 | BottomHUD.client.luau |
+| POWER_PASS_MULT | 1.4 | Shop.server.luau |
+| GRANT_PERCENT | 0.02 | GasBubble.server.luau |
+| MIN_INTERVAL | 0.75 | GasBubble.server.luau |
+| WINDOW_SECONDS | 60 | GasBubble.server.luau |
+| WINDOW_MAX | 12 | GasBubble.server.luau |
+| BUBBLE_SHARE | 0.032 | Bubbles.client.luau |
+| STREAK_STEP | 0.2 | Bubbles.client.luau |
+| BASE_BONUS | 15 | Bubbles.client.luau |
+| RESET_ON_LANDING | true | Bubbles.client.luau |
+| COIN RESPAWN | 30 | Bubbles.client.luau |
+| GAS RESPAWN | 45 | Bubbles.client.luau |
+| DISABLE_2X | false | Shop.server.luau |
+| DISABLE_PERKS_FOR_BALANCE | false | Shop.server.luau |
+| FORCE_NO_2X | false | Shop.server.luau |
+| TEST_FULL_DATA | false | Shop.server.luau |
+| MAX_ISLAND | 13 | PurchaseReceipts.server.luau |
+| Starting StomachMax | 100 | Shop.server.luau |
+| Target R | 1.91 | FoodMenu.luau |
+| Actual R range | 1.767 - 1.899 | derived |
+| Gut price rule | 4.25 * surplus at tier below | StomachTiers.luau (doc only) |
+| SLOT_TO_ISLAND | {1,9,5,12,3,13,4,2,10,7,6,8,11} | IslandOrder.luau |
+| QUEST islands | {1,2,3,4,5,6,7,11} | IslandOrder.luau |
+| Base Y pre-scale | 150, 3525, 7305, 11539, 16281, 21592, 27541, 34204, 41667, 50026, 59388, 69873, 81616 | IslandOrder.luau |
+| Base gaps pre-scale | 3375, 3780, 4234, 4742, 5311, 5949, 6663, 7463, 8359, 9362, 10485, 11743 | FlightTuning.luau |
+| Base speeds pre-scale | 81.0, 115.0, 132.1, 146.9, 164.8, 184.6, 206.1, 231.2, 258.2, 289.4, 324.4, 363.4, 420.0 | FlightTuning.luau |
+
+MONETISATION IDS
+| Kind | Name | ID | Effect |
+|---|---|---|---|
+| Dev product | 2x Power (1 Hour) | 3600302990 | TwoXHourExpiry = os.time()+3600 |
+| Dev product | Mid-Air Recharge | 3600303163 | CurrentPower = StomachMax |
+| Dev product | Skip Island | 3600303265 | HighestIsland += 1 and teleport |
+| Dev product | Meteorite Explosion | 3606893853 | server-wide meteor event |
+| Gamepass | 2x Fart Power Forever | 1862015450 | HasTwoXForever |
+| Gamepass | Glitter Fart Trail | 1859714979 | HasGlitterTrail |
+| Gamepass | Primal Gut | 1860686821 | HasPrimalGut, StomachMax=9999, drain disabled |
+
+
+==========================================================
+SECTION 7 - EXPECTED PROGRESSION
+==========================================================
+
+| Island | Expected Stomach | Expected Food | Expected Attempts | Expected Coins Earned | Expected Food Cost | Expected Coin Profit |
+|---|---|---|---|---|---|---|
+| 1 Nesting Nook | Hatchling Belly | Eggs | 6.64 | 3,389 | 1,918 | 1,472 |
+| 2 Jungle Junction | Raptor Gut | Chili Peppers | 6.61 | 3,752 | 2,103 | 1,649 |
+| 3 Misty Mire | Dilo Stomach | Lettuce | 6.49 | 4,110 | 2,277 | 1,833 |
+| 4 Sunscorch Sands | Stego Stomach | Grapes | 6.47 | 4,592 | 2,522 | 2,070 |
+| 5 Fossil Frontier | Anky Belly | Bananas | 6.35 | 5,051 | 2,737 | 2,314 |
+| 6 Glacier Gulch | Trike Gut | Popcorn | 6.36 | 5,667 | 3,057 | 2,611 |
+| 7 Coastal Crossing | Bronto Belly | Fish | 6.28 | 6,284 | 3,370 | 2,914 |
+| 8 Fern Frontier | Spino Stomach | Ribs | 6.25 | 7,012 | 3,739 | 3,274 |
+| 9 Petrified Pass | Rex Gut | Potatoes | 6.17 | 7,759 | 4,119 | 3,640 |
+| 10 Raptor Ridge | Ptero Belly | Apples | 6.19 | 8,734 | 4,620 | 4,114 |
+| 11 Redwood Ridge | Fossil Gut | Mushrooms | 6.15 | 9,729 | 5,132 | 4,597 |
+| 12 Inferno Isle | Titan Gut | Chicken | 1.00 | 1,772 | 933 | 839 |
+| 13 Volcanic Vista | Titan Gut | Steak | Not Calculated (terminal island) | Not Calculated | Not Calculated | Not Calculated |
+
+THE GAME DOES NOT CALCULATE ANY OF THESE AT RUNTIME.
+Expected attempts / coins / profit are "Not Calculated" in source; the values above are derived.
+Expected Attempts = (next_gut_cost / net_per_flight) + 1
+Slot 12 = 1.00 because no gut follows Titan.
+
+
+==========================================================
+SECTION 8 - ECONOMY
+==========================================================
+
+| Metric | Value |
+|---|---|
+| Average refill cost | 547.8 coins |
+| Average coins earned per attempt | 1,020.8 |
+| Average profit per attempt | 472.9 |
+| Average profit per island | 2,610.4 |
+| Average attempts per island | 5.91 |
+| Average servings per fill | 5.23 |
+| Total coins earned across tower | 67,852 |
+| Total food spend across tower | 36,527 |
+| Total gut spend across tower | 25,650 |
+| Grand net profit across tower | 5,675 |
+| R (earn / refill cost) range | 1.767 - 1.899 |
+
+PER-SLOT ECONOMY
+| Slot | Refill Cost | Coins/Attempt | Profit/Attempt | R |
+|---|---|---|---|---|
+| 1 | 288.8 | 510.3 | 221.6 | 1.767 |
+| 2 | 318.0 | 567.4 | 249.4 | 1.784 |
+| 3 | 351.1 | 633.6 | 282.5 | 1.805 |
+| 4 | 389.6 | 709.3 | 319.7 | 1.821 |
+| 5 | 430.7 | 794.9 | 364.2 | 1.846 |
+| 6 | 480.9 | 891.6 | 410.7 | 1.854 |
+| 7 | 536.4 | 1,000.1 | 463.7 | 1.865 |
+| 8 | 598.0 | 1,121.6 | 523.6 | 1.876 |
+| 9 | 667.8 | 1,257.9 | 590.1 | 1.884 |
+| 10 | 745.9 | 1,410.3 | 664.4 | 1.891 |
+| 11 | 833.9 | 1,580.7 | 746.9 | 1.896 |
+| 12 | 933.1 | 1,771.6 | 838.5 | 1.899 |
+
+EXPECTED STOMACH PURCHASE TIMING
+Gut tier k+1 is bought while standing on slot k, after banking
+(gut_cost / net_per_flight) flights of surplus.
+Gated by isUnlocked(tier, HighestSlot) requiring HighestSlot >= tier.unlockSlot.
+
+ANYTHING AFFECTING PROGRESSION
+- Anti-strand top-up (grants shortfall only when a flight ends dry)
+- Courtesy fill on gut purchase
+- Gas bubbles (+2% tank each, capped 12 per 60 s)
+- Coin bubbles (streak multiplier 1 + streak*0.2, resets on landing)
+- _G.serverEventCoinMult
+- _G.flightDistanceMultiplier (0.9 during Monsoon Rain)
+- 2x pass (1.4x power and 1.4x tank)
+- Mid-Air Recharge product
+- Skip Island product
+
+
+==========================================================
+SECTION 9 - FORMULAS
+==========================================================
+
+# ---- WORLD ----
+SLOT_POS[i].Y      = 150 + (BASE_Y[i] - 150) * SPACING_SCALE
+TIERS[i].gap       = BASE_gap[i] * SPACING_SCALE
+TIERS[i].speed     = BASE_speed[i] * SPACING_SCALE
+gapFromSlot(s)     = SLOT_POS[s+1].Y - SLOT_POS[s].Y
+
+# ---- FUEL ----
+DRAIN_RATE         = 100 / TANK_SECONDS
+gasMeter          -= DRAIN_RATE * dt                      (skipped if HasPrimalGut)
+currentPower       = (gasMeter / 100) * StomachMax
+tankSecondsFor(m)  = TANK_SECONDS
+flightDuration     = FLIGHT_SECONDS * (power / StomachMax)
+
+# ---- SPEED ----
+getFlightSpeed(p)  = first TIERS[j].speed where p <= TIERS[j].maxPower
+                     else TIERS[last].speed
+verticalVelocity   = getFlightSpeed(currentPower) * (_G.flightDistanceMultiplier or 1)
+horizontalVelocity = moveDirection * 48
+
+# ---- DISTANCE ----
+fullTankClimb(max) = (FLIGHT_SECONDS / max) * SUM_j[ speed_j * (min(M_j, max) - M_(j-1)) ]
+
+powerForClimb(max, dist):
+    need = dist * max / FLIGHT_SECONDS
+    sum, prev = 0, 0
+    for tier in TIERS:
+        top = min(tier.maxPower, max)
+        if top > prev:
+            span = (top - prev) * tier.speed
+            if sum + span >= need: return min(max, prev + (need - sum) / tier.speed)
+            sum, prev = sum + span, top
+        if top >= max: break
+    return max
+
+courtesyPower(m,g) = floor(min(m, powerForClimb(m, g) * 1.10) + 0.5)
+
+# ---- CAPACITY ----
+StomachMax         = tier.maxPower
+effectiveMax       = has2x and floor(StomachMax * 1.4) or StomachMax
+
+# ---- COINS ----
+COIN_PER_STUD      = 0.14 / SPACING_SCALE
+climbPay           = (Y - lastCoinY) * COIN_PER_STUD * (_G.serverEventCoinMult or 1)
+                     every 0.5 s of thrust, only when (Y - lastCoinY) > 0
+bubbleBase         = gapFromSlot(HighestSlot) * (0.14 / SPACING_SCALE) * 0.032
+bubbleMultiplier   = 1 + streak * 0.2
+bubbleBonus        = max(1, floor(bubbleBase * bubbleMultiplier * eventMult))
+gasGrant           = max(1, ceil(StomachMax * 0.02))
+
+serverCoinAccum:
+    accum += amount
+    toAdd  = floor(accum)
+    accum -= toAdd; Coins += toAdd; TotalCoinsEarned += toAdd
+
+# ---- PRICES ----
+foodPrice          = gap * MARGIN * COIN_PER_STUD / (R * (tierMaxPower / foodPower))
+gutCost            = 4.25 * (one flight's surplus at the tier below)      [doc only, not code]
+R                  = fullTankClimb(max) * COIN_PER_STUD / (price * (max / foodPower))
+
+# ---- GATES ----
+isUnlocked(tier,s) = tier.robux or floor(s) >= tier.unlockSlot
+foodFits           = (CurrentPower + powerGain) <= effectiveMax
+
+
+==========================================================
+KNOWN INCONSISTENCIES IN SOURCE
+==========================================================
+1. FlightTuning comments DRAIN_RATE as "1.25 (was 0.513 at 195s)". Actual value is 2.2222 (100/45).
+2. HUD prints raw StomachMax as the denominator. With the 2x pass the real cap is x1.4,
+   so the meter displays e.g. 130/100.
+3. FORCE_NO_2X is marked "REMOVE BEFORE LAUNCH" and is still present.
+4. ISLAND_SPACING.md is STALE - it lists food-realm island names and pre-retier positions. Ignore it.
+5. _G.serverEventCoinMult is read in two places but no setter exists in this repo.
+6. Gut cost values are literals; the "4.25 x surplus" rule is documentation, not code.
+
+==========================================================
+END OF DUMP
+==========================================================

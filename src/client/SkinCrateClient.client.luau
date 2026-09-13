@@ -469,15 +469,15 @@ do local c = Instance.new("UITextSizeConstraint"); c.MaxTextSize = 14; c.Parent 
 -- is what gives each top-level page one job instead of five competing ones.
 local TABS = {
 	{ id = "pets",   label = "\xF0\x9F\x90\xBE PETS",   hub = "pets"   },
+	{ id = "food",   label = "\xF0\x9F\x8D\x94 FOOD",   hub = "food"   }, -- the Food Realm collection (the first realm's other-realm tab)
+	{ id = "space",  label = "\xF0\x9F\x9A\x80 SPACE",  hub = "space"  }, { id = "quests", label = "\xF0\x9F\x93\x9C QUESTS", hub = "quests" }, -- SPACE: the Space Realm collection (hub page) -- kept: a real Dino page the first realm has no equivalent of
 	{ id = "crates", label = "\xF0\x9F\x93\xA6 CRATES" },
-	{ id = "tokens", label = "\xF0\x9F\x8E\x9F TOKENS" },
 	{ id = "trade",  label = "\xF0\x9F\x94\x84 TRADE",  hub = "trade"  },
-	{ id = "quests", label = "\xF0\x9F\x93\x9C QUESTS", hub = "quests" },
 }
 -- id -> the Pet Hub page to jump to, for the three this panel does not host
 local TAB_TO_HUB = {}
 for _, t in ipairs(TABS) do if t.hub then TAB_TO_HUB[t.id] = t.hub end end
-local TAB_W = 129
+local TAB_W = 106 -- six tabs now (SPACE added): 6*106 + 5*8 = 676, the same 680px bar as the Pet Hub
 local activeTab = "crates"
 local tabBar = mkFrame(panel, { Size = UDim2.new(1, -20, 0, 38), Position = UDim2.new(0, 10, 0, 66), BackgroundTransparency = 1 })
 do
@@ -487,21 +487,33 @@ end
 local tabButtons = {}
 for i, t in ipairs(TABS) do
 	local b = mkButton(tabBar, {
-		Size = UDim2.new(0, TAB_W, 1, 0), LayoutOrder = i, BackgroundColor3 = CARD, Text = t.label,
+		Size = UDim2.new(0, TAB_W, 1, 0), LayoutOrder = i, BackgroundColor3 = HEADER, Text = "", -- the word is the child label below
 		-- GOLD, not WHITE: pure white on the blue card is the brightest thing on the panel and was pulling
 		-- the eye away from the content. This is the same tone as the 'PET SKIN CRATES' title.
 		Font = Enum.Font.FredokaOne, TextSize = 15, TextScaled = true, TextColor3 = GOLD,
 	})
-	mkCorner(b, 10); mkStroke(b, WHITE, 1.5)
+	mkCorner(b, 10); do local st = mkStroke(b, Color3.fromRGB(74, 94, 68), 1.5); st.ApplyStrokeMode = Enum.ApplyStrokeMode.Border end
 	-- CoreClient force-sets TextScaled on every label in PlayerGui, so a plain TextSize won't hold -- the
 	-- ceiling has to come from a constraint or "COLLECTION" would scale up and crowd its neighbours.
 	do local c = Instance.new("UITextSizeConstraint"); c.MaxTextSize = 15; c.Parent = b end
+	-- THE WORD IS A CHILD LABEL (the first realm's trick): a stroke on a filled button outlines its border, so
+	-- the letters are outlined by a transparent label on top that follows the button's text colour.
+	do
+		local lbl = mkLabel(b, {
+			Name = "Label", Size = UDim2.new(1, -8, 1, -6), Position = UDim2.new(0, 4, 0, 3), Text = t.label,
+			Font = Enum.Font.FredokaOne, TextSize = 15, TextScaled = true, TextWrapped = false, TextColor3 = GOLD,
+			ZIndex = b.ZIndex + 1,
+		})
+		mkStroke(lbl, Color3.new(0, 0, 0), 2)
+		do local lc = Instance.new("UITextSizeConstraint"); lc.MaxTextSize = 15; lc.Parent = lbl end
+		b:GetPropertyChangedSignal("TextColor3"):Connect(function() lbl.TextColor3 = b.TextColor3 end)
+	end
 	tabButtons[t.id] = b
 end
 
 -- one scrolling body shared by the tabs; each tab rebuilds its contents into it
 local body = Instance.new("ScrollingFrame")
-body.Position = UDim2.new(0, 10, 0, 110); body.Size = UDim2.new(1, -20, 1, -122)
+body.Position = UDim2.new(0, 10, 0, 110); body.Size = UDim2.new(1, -20, 1, -194) -- stops 8px above the GET TOKENS banner
 body.BackgroundTransparency = 1; body.BorderSizePixel = 0
 body.ScrollBarThickness = 6; body.ScrollBarImageColor3 = GOLD
 body.CanvasSize = UDim2.new(0, 0, 0, 0); body.AutomaticCanvasSize = Enum.AutomaticSize.Y
@@ -511,6 +523,69 @@ do
 	ll.Padding = UDim.new(0, 10); ll.SortOrder = Enum.SortOrder.LayoutOrder
 	ll.HorizontalAlignment = Enum.HorizontalAlignment.Center; ll.Parent = body
 	local pd = Instance.new("UIPadding"); pd.PaddingBottom = UDim.new(0, 10); pd.Parent = body
+end
+
+-- ============================================================================================================
+-- THE GET TOKENS BANNER (the first realm's permanent bottom navigation, jungle-coloured)
+-- ============================================================================================================
+-- TOKENS stopped being a top-level tab when the bar became the Pet Hub's five pages (the first realm did the same
+-- with its tickets). The token page is a sub-page of CRATES, and this banner is its door from EVERY page of this
+-- panel: the thing that funds every crate on the shelf is never more than one press away.
+do
+	local nav = mkFrame(panel, {
+		Size = UDim2.new(1, -20, 0, 64), Position = UDim2.new(0, 10, 1, -74),
+		BackgroundColor3 = HEADER, ClipsDescendants = true,
+	})
+	mkCorner(nav, 16); mkStroke(nav, Color3.fromRGB(74, 94, 68), 1.5)
+	-- a radial glow from three concentric discs behind the token (UIGradient is linear-only)
+	for _, r in ipairs({ { 132, 0.88 }, { 96, 0.93 }, { 60, 0.97 } }) do
+		local d = mkFrame(nav, {
+			Size = UDim2.new(0, r[1], 0, r[1]), Position = UDim2.new(0, 48, 0.5, 0),
+			AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor3 = GOLD, BackgroundTransparency = r[2], ZIndex = 1,
+		})
+		mkCorner(d, math.floor(r[1] / 2))
+	end
+	mkLabel(nav, {
+		Text = CrateTokens.ICON, Font = Enum.Font.FredokaOne, TextSize = 46, TextScaled = true,
+		Size = UDim2.fromOffset(46, 46), Position = UDim2.new(0, 48, 0.5, 0),
+		AnchorPoint = Vector2.new(0.5, 0.5), ZIndex = 3,
+	})
+	local hl = mkLabel(nav, {
+		Text = "GET TOKENS!", Font = Enum.Font.FredokaOne, TextSize = 26, TextScaled = true,
+		TextColor3 = GOLD, Size = UDim2.new(0, 250, 0, 30), Position = UDim2.new(0, 100, 0, 8),
+		TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 4,
+	})
+	mkStroke(hl, Color3.new(0, 0, 0), 2)
+	do local c = Instance.new("UITextSizeConstraint"); c.MaxTextSize = 26; c.Parent = hl end
+	local sub = mkLabel(nav, {
+		Text = "More tokens. More pulls. More skins!", Font = Enum.Font.GothamBold, TextSize = 13,
+		TextScaled = true, TextColor3 = Color3.fromRGB(232, 209, 158),
+		Size = UDim2.new(0, 250, 0, 18), Position = UDim2.new(0, 100, 0, 38),
+		TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 4,
+	})
+	do local c = Instance.new("UITextSizeConstraint"); c.MaxTextSize = 13; c.Parent = sub end
+	-- the call to action: a darker slab 4px lower drawn first, so only its bottom lip shows (the key look)
+	local lip = mkFrame(nav, {
+		Size = UDim2.new(0, 208, 0, 44), Position = UDim2.new(1, -12, 0.5, 4),
+		AnchorPoint = Vector2.new(1, 0.5), BackgroundColor3 = Color3.fromRGB(150, 100, 14), ZIndex = 3,
+	})
+	mkCorner(lip, 16)
+	local b = mkButton(nav, {
+		Size = UDim2.new(0, 208, 0, 44), Position = UDim2.new(1, -12, 0.5, 0),
+		AnchorPoint = Vector2.new(1, 0.5), BackgroundColor3 = GOLD, Text = "", ZIndex = 4,
+	})
+	mkCorner(b, 16); mkStroke(b, Color3.fromRGB(180, 122, 20), 2.5)
+	local bl = mkLabel(b, {
+		Size = UDim2.new(1, -12, 1, -10), Position = UDim2.new(0, 6, 0, 5),
+		Text = "GET TOKENS!", Font = Enum.Font.FredokaOne, TextSize = 18, TextScaled = true,
+		TextColor3 = Color3.fromRGB(92, 58, 8), ZIndex = 5,
+	})
+	do local c = Instance.new("UITextSizeConstraint"); c.MaxTextSize = 18; c.Parent = bl end
+	b.MouseButton1Click:Connect(function()
+		playUIClick()
+		if activeTab == "tokens" then body.CanvasPosition = Vector2.new(0, 0); return end
+		activeTab = "tokens"; refreshTabs()
+	end)
 end
 
 local function clearBody()
@@ -1307,16 +1382,16 @@ refreshTabs = function()
 	})[activeTab] or "\xF0\x9F\x8E\x81 PET SKIN CRATES"
 	-- A sub-page keeps its PARENT tab lit: sitting on Collection with no tab highlighted reads as being lost.
 	local litTab = activeTab
-	if litTab == "inventory" or litTab == "tradeup" or litTab == "collection" then litTab = "crates" end
+	if litTab == "inventory" or litTab == "tradeup" or litTab == "collection" or litTab == "tokens" then litTab = "crates" end -- TOKENS is a CRATES sub-page now
 	for id, b in pairs(tabButtons) do
 		local on = (id == litTab)
 		-- Selected = yellow, unselected = blue, matching the Pet Hub's tab styling.
-		b.BackgroundColor3 = on and GOLD or CARD
+		b.BackgroundColor3 = on and GOLD or HEADER
 		-- Selected = dark-on-gold (max contrast, unmistakably the active tab); unselected = gold-on-blue,
 		-- matching the panel title rather than shouting in pure white.
 		b.TextColor3 = on and Color3.fromRGB(92, 58, 8) or GOLD
 		local st = b:FindFirstChildOfClass("UIStroke")
-		if st then st.Color = on and Color3.fromRGB(180, 122, 20) or WHITE; st.Thickness = on and 2.5 or 1.5 end
+		if st then st.Color = on and Color3.fromRGB(180, 122, 20) or Color3.fromRGB(74, 94, 68); st.Thickness = on and 2.5 or 1.5 end
 	end
 	if not gui.Enabled then return end -- don't rebuild a hidden panel
 	clearBody()
@@ -1349,7 +1424,7 @@ for id, b in pairs(tabButtons) do
 			task.defer(function()
 				if _G.PetHubTabs then pcall(function() _G.PetHubTabs.select(hubPage) end)
 				else
-					local show = ({ pets = _G.PetHubShowPets, trade = _G.PetHubShowTrade, quests = _G.PetHubShowQuests })[hubPage]
+					local show = ({ pets = _G.PetHubShowPets, food = _G.PetHubShowFood, space = _G.PetHubShowSpace, trade = _G.PetHubShowTrade, quests = _G.PetHubShowQuests })[hubPage]
 					if show then pcall(show) end
 				end
 			end)
@@ -2372,7 +2447,7 @@ setOpen = function(open, fromHub, wantTab)
 		openedFromHub = fromHub == true
 		-- The hub's nav sends which page it wants (CRATES or TOKENS). Without this the panel always
 		-- opened on whatever tab was last used, so pressing TOKENS could land you on Crates.
-		if wantTab and tabButtons[wantTab] then activeTab = wantTab end
+		if wantTab and (tabButtons[wantTab] or ({ tokens = true, inventory = true, tradeup = true, collection = true })[wantTab]) then activeTab = wantTab end -- sub-pages too (GET TOKENS, the hub's TRADE UP chip)
 		backBtn.Visible = openedFromHub
 		_G.MainMenuManager.notifyOpened("SkinCrates")
 		gui.Enabled = true
@@ -2380,7 +2455,9 @@ setOpen = function(open, fromHub, wantTab)
 		if _G.applyHudScaling then _G.applyHudScaling() end -- match the Shop's on-screen size exactly
 		-- Log the RESOLVED on-screen box, the same [UIFix] diagnostic the Shop and Pet Hub print. If the panel
 		-- ever appears not to open, this line says whether it was enabled and where it actually landed.
-		task.defer(function()
+		-- After layout settles: a ScreenGui that has never rendered reports a stale 800x600 box on its first frame,
+		-- which logged the first open at (50,-34) even though it drew centred.
+		task.delay(0.2, function()
 			print(string.format("[SkinCrate] panel OPEN -- tab=%s tokens=%d AbsoluteSize=%s AbsolutePosition=%s",
 				activeTab, state.tokens, tostring(panel.AbsoluteSize), tostring(panel.AbsolutePosition)))
 		end)

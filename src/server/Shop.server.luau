@@ -102,6 +102,10 @@ ev("GamepassEvent")
 -- Re-solved for the TWELVE-TIER tower -- the tank sizes moved (100/182/520/1075/2146/3218
 -- became twelve steps of 100..3220) and so did every gap, and both are in the formula, so
 -- the old prices against the new tanks would have put R anywhere from 1.2 to 3.4.
+-- Per-SERVING buy logging. Off: the client fires one BuyFood per serving, so this was
+-- 24 lines per full tank. Flip on only to debug the purchase remote itself.
+local VERBOSE_BUY = false
+
 local foods = FoodMenu.LIST
 -- Titan Gut is the top of the free path; Primal is a Robux-only premium gut. (The line that
 -- used to be here described a getMaxHeight() from the source game and a tier called "Iron" --
@@ -142,11 +146,37 @@ local function setupStats(player)
 	if player:FindFirstChild("leaderstats") then return end
 	local ls = Instance.new("Folder"); ls.Name = "leaderstats"; ls.Parent = player
 	local function num(name, v) local n = Instance.new("IntValue"); n.Name = name; n.Value = v; n.Parent = ls; return n end
-	-- 120 buys most of a first tank of Eggs. At 25 you could not afford enough food
-	-- for a profitable first flight and the run dead-locked before island 2.
-	num("Coins", 120)            -- starting coins
+	-- 500 = ONE EGG AND CHANGE. This one number sets the shape of the whole opening crossing,
+	-- because a player spends everything they have on food every time they land, and the
+	-- opening is the only crossing with no income history behind it.
+	--
+	-- IT IS SET AGAINST THE MEAL SIZE, NOT PICKED. Eggs are 320 coins for 32 power, and
+	-- crossing 1 takes THREE of them (FoodMenu's rule for every crossing in the tower):
+	--     1 x 320 =  320  -> 32 power, 27% tank,  34% of the gap
+	--     2 x 320 =  640  -> 64 power, 53% tank,  70% of the gap   <- the last miss
+	--     3 x 320 =  960  -> 96 power, 80% tank, 135% of the gap   <- clears, comfortably
+	-- 500 buys exactly one, and the ladder walks itself from there: the first flight banks
+	-- 622 coins, which with the 180 left over affords two meals but not three; the second
+	-- banks 1276, which affords the rest. Three flights, and the same three whether or not
+	-- the player pops a single coin bubble -- the window is ~200 coins wide at each rung.
+	--
+	-- The bank has to sit in [320, 639]:
+	--     >= 640 -> the opening starts at two meals and finishes in TWO flights. 900 used to
+	--         buy the crossing outright, which is why island 2 fell on the first try.
+	--      < 320 -> cannot afford a meal at all, so the anti-strand floor hands one over and
+	--         the number stops meaning anything.
+	--
+	-- Retune this against ladder.py, not by feel, and re-check it whenever FoodMenu row 1
+	-- moves: the window above is defined entirely by that row's price.
+	num("Coins", 2000)             -- starting coins
 	num("CurrentPower", 0)       -- current fart fuel in the tank
-	num("StomachMax", 100)       -- tank size = Hatchling Belly (Tiny Gut tier)
+	-- 120 = StomachTiers.LIST[1].maxPower (Hatchling Belly). It is FIVE servings of Eggs
+	-- (24 power each) exactly -- every tank in the game is exactly five servings of its
+	-- island's food, so a tank always fills without truncation. Keep it in step with
+	-- StomachTiers.LIST[1] or a new player starts on a tank that matches no tier.
+	-- Five, not twenty: see the note at the top of FoodMenu for why the serving size is
+	-- the only thing that decides how far short the last failed attempt falls.
+	num("StomachMax", 120)       -- tank size = Hatchling Belly
 	num("TotalFartPower", 0)     -- cosmetic lifetime counter
 	num("TotalCoinsEarned", 0)
 	num("Island", 1)
@@ -204,11 +234,57 @@ end)
 --
 -- IT USED TO FUND THE WHOLE CROSSING (powerShortfall = fill to what the gap needs),
 -- which quietly capped every island at two attempts: fail once, get topped up to full,
--- succeed. That defeated the point of the price curve. It now funds a QUARTER TANK --
--- the floor that keeps the loop alive, not a free crossing. A quarter tank is always
--- enough to climb out of the hole because R > 1 at every row of `foods`: any flight,
--- however short, banks more coins than the fuel it burned, so the player compounds
--- back up to a full tank on their own.
+-- succeed. That defeated the point of the price curve.
+--
+-- IT THEN FUNDED A QUARTER TANK, on the reasoning that "R > 1 at every row of `foods`,
+-- so any flight banks more coins than the fuel it burned." THAT REASONING IS FALSE and
+-- it is what this constant exists to correct. R is not a property of the food row, it is
+-- a property of the food row AND HOW FULL THE TANK IS:
+--
+--     coins earned = climb(M, p) * COIN_PER_STUD,  climb(M, p) = (FLIGHT_SECONDS / M) * S(p)
+--
+-- The drain is NORMALISED (see FlightTuning): a full tank always burns in FLIGHT_SECONDS
+-- regardless of size, so raw fuel drains at M / FLIGHT_SECONDS per second -- a bigger tank
+-- burns proportionally faster. Fuel below a given band's cap flies at that band's speed on
+-- EVERY gut, because the bands are absolute, not a fraction of the tank. So a part-full big
+-- tank pays more fuel for the same distance. Measured R by fill, on the shipped tables:
+--
+--     gut   food      25%    50%    75%   100%   break-even
+--     120   20/10    1.63   1.63   1.63   1.63      10%
+--     144   24/12    1.36   1.36   1.36   1.57      10%
+--     168   27/14    1.21   1.21   1.26   1.62      10%
+--     192   30/16    1.09   1.09   1.26   1.70      10%
+--     228   35/19    0.93   0.93   1.28   1.69      60%
+--     264   40/22    0.81   0.89   1.31   1.71      60%
+--     360   54/30    0.60   0.88   1.30   1.71      60%
+--     492   73/41    0.46   0.88   1.30   1.70      60%
+--     780  113/65    0.46   0.89   1.29   1.71      60%
+--
+-- A flight under ~60% full still LOSES money on the upper guts. A quarter tank sits deep in
+-- that loss region, so the old floor did not break the death spiral -- it fed it: the player
+-- was topped back up to another LOSING quarter tank, launched, lost coins, and was topped up
+-- again, forever. Against the previous tables (capacities growing 1.70x per tier, so
+-- break-even sat at 80-90%) that was an unbounded stall at island 3 -- hundreds of top-ups,
+-- zero progress. Capacity growth is now 1.16x, well under the 1.70 full-tank return, which
+-- is what pulls break-even down to 60% and keeps a fresh gut solvent on its first launch.
+--
+-- 0.50 IS ABOVE THE BREAK-EVEN LINE FOR EVERY ROW, which is the entire requirement: the
+-- granted flight must at least pay for its own fuel, or the grant just funds the next loss.
+-- On the CURRENT tables break-even is 1 serving out of 12 on the lower guts and 5 of 12 on
+-- the upper ones -- 42% at worst -- so half a tank clears it everywhere with margin.
+--
+-- IT WAS 0.85, sized for a far harsher set of tables (capacity grew 1.70x per tier against
+-- a 1.16 return, which put break-even at 80-90% and stalled the tower outright). Capacity
+-- growth is 1.28x against a 2.20 return now, so the loss region has nearly vanished and
+-- 0.85 was handing over most of a tank for nothing. Re-derive this from the break-even
+-- table above whenever the tiers move; do not carry the old number forward on faith.
+--
+-- THERE IS NO FILL FRACTION ANY MORE. The grant is exactly ONE MEAL, read off the food sold
+-- where the player is standing -- see the function below, and FoodMenu's header for why one
+-- and not two. The old ANTI_STRAND_FILL = 0.50 constant is gone with it: half a tank rounded
+-- UP to two meals at most slots, which handed over the middle rung of every three-rung ladder
+-- in the tower. One meal is a quarter to a third of a tank depending on the slot, and the
+-- lightest crossing in the game needs 71.9%, so the floor cannot hand anybody a crossing.
 local function ensureCanRefuel(player)
 	local ls = player:FindFirstChild("leaderstats"); if not ls then return end
 	local coins = ls:FindFirstChild("Coins")
@@ -222,24 +298,47 @@ local function ensureCanRefuel(player)
 	local food = foods[slot]
 	if not food or food.power <= 0 then return end
 
-	-- A QUARTER of the tank, in servings -- the smallest launch worth making, not the
-	-- crossing. A serving is indivisible, so round UP: being one egg short of being
-	-- able to fly at all is the exact situation this exists to prevent.
-	local missing = (sm.Value * 0.25) - cp.Value
-	if missing <= 0 then return end                  -- already holding a quarter tank
-	local servings = math.max(1, math.ceil(missing / food.power))
-	-- ...but never more than the tank can actually hold, or we would fund food that
-	-- gets rejected as "not_enough_room".
-	local roomServings = math.floor((sm.Value - cp.Value) / food.power)
-	servings = math.min(servings, math.max(0, roomServings))
-	if servings <= 0 then return end
+	-- THE DEAD-END TEST, AND IT IS THE ONLY TRIGGER: can they buy even ONE serving?
+	--
+	-- WITHOUT THIS LINE THIS FUNCTION IS A COIN FAUCET, and a playtest log caught it doing
+	-- exactly that. The rule below tops the player up to ANTI_STRAND_FILL of a tank, and it
+	-- ran on EVERY dry landing -- so a player who had 74 coins, could comfortably afford
+	-- three Eggs and fly again, was still handed 146 coins for free because 74 was short of
+	-- a 220-coin 85% tank. Repeat that after every failed attempt and the player is never
+	-- short of anything: the crossings stop being paced by earning and the flight counts
+	-- collapse. Landing dry is the NORMAL failure case this whole progression is built on;
+	-- it is not the emergency.
+	--
+	-- The emergency is being unable to launch AT ALL -- no fuel, and not one serving's worth
+	-- of coins. That is the dead end with no way out, and it is the only thing worth paying
+	-- for. Above that line the player can always fly, and every flight returns more than its
+	-- fuel cost (see the table above), so they climb out under their own power.
+	if coins.Value >= food.price then return end
+	-- EXACTLY ONE MEAL, NEVER TWO, AND THAT IS THE WHOLE RULE.
+	--
+	-- Every crossing in this tower is three meals (see FoodMenu's header), so one meal is
+	-- precisely "enough to launch, nowhere near enough to cross" -- a floor, not a leg-up.
+	-- Two would hand over the middle rung of a three-rung ladder and quietly delete an
+	-- attempt from every crossing the player ever gets stuck on.
+	--
+	-- It used to grant up to ANTI_STRAND_FILL (50%) of a tank, which rounded UP to two meals
+	-- at most slots and did exactly that. The fill fraction is kept below only so the log
+	-- line and BalanceDebug can still report what fraction of a tank one meal comes to.
+	local servings = 1
+	if cp.Value + food.power > sm.Value then
+		-- No room for a whole meal. The shop tops off and clamps in that case (see BuyFood),
+		-- so this is still a launchable flight -- but if the tank is genuinely full there is
+		-- nothing to grant and nothing stranding them.
+		if sm.Value - cp.Value <= 0 then return end
+	end
 
 	local needCoins = servings * food.price
 	if coins.Value >= needCoins then return end      -- they can already afford it
 	local grant = needCoins - coins.Value
 	coins.Value = coins.Value + grant
-	print(("[Shop] anti-strand: %s landed dry on slot %d with %d coins, needs %d for %d x %s (quarter tank) -> granted %d")
-		:format(player.Name, slot, coins.Value - grant, needCoins, servings, food.name, grant))
+	print(("[Shop] anti-strand: %s landed dry on slot %d with %d coins, needs %d for %d x %s (%.0f%% of tank -- a crossing is 3) -> granted %d")
+		:format(player.Name, slot, coins.Value - grant, needCoins, servings, food.name,
+			food.power / math.max(1, sm.Value) * 100, grant))
 end
 
 BurnFuelEvent.OnServerEvent:Connect(function(player, remaining)
@@ -256,7 +355,12 @@ end)
 -- BUY FOOD (VERBATIM)
 -- ============================================================================
 BuyFoodEvent.OnServerEvent:Connect(function(player, foodName)
-	print("SERVER RECEIVED BUY:", player.Name, foodName)
+	-- WAS AN UNCONDITIONAL PRINT, AND IT FIRED PER SERVING. The client sends one BuyFood
+	-- per serving, so filling a 12-serving tank produced 12 of these plus 12 "BOUGHT:"
+	-- lines -- 24 lines for one shop visit, repeated every launch. That is what buried the
+	-- progression telemetry in the playtest logs. The per-launch summary the tuning
+	-- actually needs is PROGDATA in BottomHUD.client (F7); this is per-serving plumbing.
+	if VERBOSE_BUY then print("SERVER RECEIVED BUY:", player.Name, foodName) end
 	local stats = player:FindFirstChild("leaderstats")
 	if not stats then return end
 	local coins        = stats:FindFirstChild("Coins")
@@ -285,6 +389,10 @@ BuyFoodEvent.OnServerEvent:Connect(function(player, foodName)
 		pcall(function() StomachFullEvent:FireClient(player, "food_locked") end)
 		return
 	end
+	-- NO LOCAL-STAND RULE. Any UNLOCKED food is buyable from any stand, deliberately -- the shop is
+	-- an open-choice system and mixing foods is a player decision, not an exploit. A stand-lock was
+	-- tried here and removed; if you are reading this because the ladder is smooth again, the answer
+	-- is the BUY MAX rule and the efficiency curve, not a restriction. See FoodMenu's header.
 	-- FAILURE CHECK 1 (COINS FIRST -- the common blocker): not enough coins -> "not_enough_coins".
 	if coins.Value < food.price then
 		print("NOT ENOUGH COINS:", player.Name, coins.Value, "<", food.price)
@@ -304,17 +412,34 @@ BuyFoodEvent.OnServerEvent:Connect(function(player, foodName)
 	local effectiveMax = has2x and math.floor(stomachMax.Value * POWER_PASS_MULT) or stomachMax.Value
 	local newPower = currentPower.Value + powerGain
 	-- FAILURE CHECK 2 (only reached when coins are sufficient): does it fit the REMAINING stomach space?
-	-- Distinguish TRULY FULL (no room at all -> "stomach_full") from HAS-ROOM-but-too-big ("not_enough_room").
+	--
+	-- TRULY FULL is still a refusal. A LAST SERVING THAT OVERFLOWS IS NOT -- it tops the tank
+	-- off and clamps, at full price. That used to be refused outright ("not_enough_room"),
+	-- and refusing it is what was quietly manufacturing the near-misses this progression
+	-- keeps being accused of.
+	--
+	-- Here is the mechanism. You keep whatever fuel you land with, so you arrive at the next
+	-- island holding a few percent of a tank -- never a whole number of servings. The tank
+	-- then fits one FEWER serving than it holds: land on slot 2 with 7 power, buy Raptor
+	-- servings of 36 into a 180 tank, and floor((180-7)/36) = 4, so you launch on 151/180 =
+	-- 84.1% when the crossing needs 84.3%. Short by a fifth of a percent, with the coins to
+	-- cover it sitting in your pocket and the shop refusing to take them. Across the tower
+	-- that artefact was worth five crossings that ended in a 95-98% miss.
+	--
+	-- IT CANNOT BE FARMED, because the overflow is charged in full: the top-off is the worst
+	-- value in the game, not the best, and it only exists at all when the tank is within one
+	-- serving of full. The next buy after it sees remaining <= 0 and refuses as before, so
+	-- the client's fill-up loop still terminates on "stomach_full".
 	if newPower > effectiveMax then
 		local remaining = effectiveMax - currentPower.Value
 		if remaining <= 0 then
 			print("STOMACH FULL:", player.Name, currentPower.Value, "/", effectiveMax, "(no room at all)")
 			pcall(function() StomachFullEvent:FireClient(player, "stomach_full") end)    -- truly full
-		else
-			print("NOT ENOUGH ROOM:", player.Name, "+"..powerGain, ">", remaining, "remaining")
-			pcall(function() StomachFullEvent:FireClient(player, "not_enough_room") end) -- has room, this food won't fit
+			return
 		end
-		return
+		-- has room, but not a whole serving's worth -> top off and clamp
+		powerGain = remaining
+		newPower  = effectiveMax
 	end
 	coins.Value = coins.Value - food.price
 	coinsSpentOnFood[player] = (coinsSpentOnFood[player] or 0) + food.price -- [BALANCE LOGGING] track food spend
@@ -323,8 +448,11 @@ BuyFoodEvent.OnServerEvent:Connect(function(player, foodName)
 	local bonusPower = has2x and food.power or 0
 	totalPower.Value = totalPower.Value + food.power + bonusPower
 	if totalEarned then totalEarned.Value = totalEarned.Value + food.price end
-	pcall(function() RegenEvent:FireClient(player, food.power, currentPower.Value, stomachMax.Value) end)
-	print("BOUGHT:", player.Name, foodName, "+", food.power, "power, total:", currentPower.Value)
+	-- The float text reads the FIRST argument. Send the smaller of the listed power and what
+	-- actually went in, so a clamped top-off does not announce "+36" after adding 29 -- the
+	-- 2x pass case is unaffected, since powerGain is larger there and food.power still wins.
+	pcall(function() RegenEvent:FireClient(player, math.min(food.power, powerGain), currentPower.Value, stomachMax.Value) end)
+	if VERBOSE_BUY then print("BOUGHT:", player.Name, foodName, "+", food.power, "power, total:", currentPower.Value) end
 	-- PET XP (cosmetic-only): eating food = "collecting gas" -> XP for the equipped pet.
 	if _G.petOnGas then _G.petOnGas(player, powerGain) end
 end)
@@ -395,35 +523,39 @@ BuyStomachEvent.OnServerEvent:Connect(function(player, newMax, cost)
 	end
 	coins.Value = coins.Value - costN
 	coinsSpentOnGuts[player] = (coinsSpentOnGuts[player] or 0) + costN -- [BALANCE LOGGING] track gut spend
-	local oldMax = stomachMaxStat.Value
+	local oldMax = stomachMaxStat.Value  -- logging only; fuel is NOT rescaled by it
 	stomachMaxStat.Value = newMaxN
-	-- fillMeterForNextIsland: top the tank up to what the NEXT island needs, +10%.
-	-- Flight time is power/stomachMax, so a bigger tank makes the SAME food give a
-	-- much shorter flight -- carrying power over unchanged made every upgrade crater
-	-- the player's income and could bankrupt them outright. Scale the existing fill
-	-- to the new tank so an upgrade never leaves you worse off than before it.
-	-- ...which is what the comment above always CLAIMED, but the code only ever
-	-- scaled the old fill across (frac * newMax). That is not "what the next island
-	-- needs" -- an upgrade bought on an empty tank stayed empty. It now fills to
-	-- FlightTuning.courtesyPower: the crossing this gut unlocks, plus 10%.
+	-- FUEL CARRIES OVER RAW. It does NOT keep its fill FRACTION, and that distinction is
+	-- the whole purchase wall.
 	--
-	-- MEASURED AGAINST THE GAP THE PLAYER IS ACTUALLY AT, not the new gut's own tier gap.
-	-- Passing no slot gave a FULL tank every time, and that was the arithmetic being
-	-- honest about a wrong question: a full tank is sized for the tier's OWN gap, but a
-	-- gut is bought at the END of the previous tier, so the next crossing is the shorter
-	-- one underneath it. Raptor Gut on slot 2 now arrives at 172/182 rather than 182/182.
+	-- This used to do `scaled = floor(cp.Value / oldMax * newMaxN)` -- keep the same PERCENT
+	-- of the tank across the upgrade -- under a comment about never leaving a player "worse
+	-- off". It reads generous and it is actually a free fuel grant that scales with the size
+	-- of the upgrade. A playtest caught it exactly: 82 fuel in a 120 tank, buy the 180 Raptor
+	-- Gut, and the tank comes out holding 123. Forty-one fuel from nowhere, 50% more than was
+	-- paid for, handed over at the precise moment the design wants the player to be empty and
+	-- saving. That crossing is meant to take ~4 flights; it took ONE.
+	--
+	-- The wall only exists because buying the gut leaves you with a big tank you cannot yet
+	-- fill. Pre-filling it to the old percentage removes the wall and refunds the upgrade.
+	-- You keep every unit of fuel you paid for -- you are never worse off in absolute terms --
+	-- but a bigger tank now reads as emptier, which is the honest and intended result.
+	--
+	-- COURTESY_FRACTION is 0 for the same reason; see FlightTuning. If you ever want a
+	-- welcome gift on upgrade, put it here deliberately rather than smuggling it in as a
+	-- percentage, and re-run the progression solve with it.
 	local cp = ls:FindFirstChild("CurrentPower")
 	local carried = 0
 	if cp then
 		local slot = math.floor(tonumber(player:GetAttribute("HighestSlot")) or 1)
 		local gap  = FlightTuning.gapFromSlot(slot)
-		local frac = (oldMax > 0) and (cp.Value / oldMax) or 0
-		local scaled   = math.floor(frac * newMaxN)               -- never worse off than before
-		local courtesy = FlightTuning.courtesyPower(newMaxN, gap) -- the trip in front of them + 10%
-		cp.Value = math.clamp(math.max(scaled, courtesy), cp.Value, newMaxN)
+		local courtesy = FlightTuning.courtesyPower(newMaxN, gap)   -- 0 unless deliberately raised
+		cp.Value = math.clamp(math.max(cp.Value, courtesy), 0, newMaxN)
 		carried = cp.Value
-		print(("[Shop] %s gut -> %d: courtesy fill %d/%d (next gap %s)")
-			:format(player.Name, newMaxN, carried, newMaxN, gap and tostring(math.floor(gap)) or "unknown"))
+		print(("[Shop] %s gut %d -> %d: carried %d/%d fuel (%d%% full, next gap %s)"):format(
+			player.Name, oldMax, newMaxN, carried, newMaxN,
+			math.floor(carried / newMaxN * 100 + 0.5),
+			gap and tostring(math.floor(gap)) or "unknown"))
 	end
 	pcall(function() RegenEvent:FireClient(player, 0, carried, newMaxN) end)
 	local tierNameStr = "Gut"

@@ -1089,7 +1089,20 @@ do
 	rightGui.IgnoreGuiInset = true; rightGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 	rightGui.Parent = PlayerGui
 	rightPanel.Name = "RightPanel"
-	rightPanel.Size = UDim2.new(0,230,0,500); rightPanel.Position = UDim2.new(1,-5,0,85)
+	-- ===== y = 112, DOWN FROM 85: THE CURRENCY CAPSULE OWNS THE TOP-RIGHT CORNER =====
+	-- CurrencyCapsule builds its row at TOP=10 with CAP_H=60 in an inset-ignoring gui, so it
+	-- occupies y 10..70 -- plus its drop shadow and the settings gear it adopts into the same
+	-- row. At 85 this panel was landing in that, and both are anchored to the RIGHT edge, so
+	-- there is nowhere sideways for either of them to go.
+	--
+	-- MOVED VERTICALLY ONLY, on purpose. The horizontal -5 lines this up with the rest of the
+	-- right-edge HUD, and ResponsiveUI's phone pass measures its nudge against this exact X --
+	-- shifting it sideways would throw that off on every phone.
+	--
+	-- The PHONE case improves for free: ResponsiveUI adds a fixed -43 authored offset to
+	-- whatever it finds here, so the phone panel comes down by the same 27 studs of UI and
+	-- stops being shoved up underneath the capsule.
+	rightPanel.Size = UDim2.new(0,230,0,500); rightPanel.Position = UDim2.new(1,-5,0,112)
 	rightPanel.AnchorPoint = Vector2.new(1,0); rightPanel.BackgroundColor3 = PARCHMENT
 	rightPanel.ZIndex = 3; rightPanel.Parent = rightGui
 end
@@ -1127,6 +1140,14 @@ do
 	-- glyph on the other.
 end
 
+-- ===== THE TOWER IS SCRAMBLED, AND THIS PANEL KEPT FORGETTING =====
+-- IslandOrder.SLOT_TO_ISLAND = { 1, 9, 5, 12, 3, 13, 7, 4, 10, 2, 8, 6, 11 }, so a
+-- Workspace MODEL number ("island13") has nothing to do with how far up you are (that
+-- model is the SIXTH rung). Both readouts below deal in CLIMB SLOT, 1..13, which is what
+-- a player means by "what island am I on". Shared so they cannot drift apart again.
+local IslandOrderHUD = require(
+	game:GetService("ReplicatedStorage"):WaitForChild("DinosaurRealm"):WaitForChild("IslandOrder"))
+
 local islandLabel = Instance.new("TextLabel")
 islandLabel.Size = UDim2.new(1,0,0,36); islandLabel.Position = UDim2.new(0,0,0,36)
 islandLabel.BackgroundTransparency = 1; islandLabel.Text = "\xF0\x9F\x8F\x9d\xef\xb8\x8f Island: 1"
@@ -1134,16 +1155,36 @@ islandLabel.Font = Enum.Font.GothamBold; islandLabel.TextSize = 22; islandLabel.
 islandLabel.TextScaled = true; islandLabel.RichText = false
 islandLabel.TextXAlignment = Enum.TextXAlignment.Left; islandLabel.Parent = statsSection
 
--- live: STATS island number = the island the player is standing on (XZ footprint -> nearest), island1..island13
+-- ===== STATS island number = HOW FAR UP THE TOWER YOU ARE (climb slot 1..13) =====
+--
+-- THIS USED TO PRINT THE WORKSPACE MODEL NUMBER, WHICH IS NOT THE ISLAND YOU ARE ON.
+-- The tower is deliberately SCRAMBLED -- IslandOrder.SLOT_TO_ISLAND is
+--     { 1, 9, 5, 12, 3, 13, 7, 4, 10, 2, 8, 6, 11 }
+-- so the models are stacked in that order, not 1,2,3... The panel walked Workspace for
+-- "island1".."island13", found the model whose footprint you were standing in, and
+-- printed ITS NAME NUMBER. Stand on your 6th island of the climb and the model there is
+-- `island13`, so the HUD announced "Island: 13" while you were six rungs up a
+-- thirteen-rung ladder. Every island except the first and the summit read wrong.
+--
+-- The footprint search below is unchanged and correct -- it is only the LAST STEP that
+-- was wrong. ISLAND_TO_SLOT (derived in IslandOrder) turns the model number back into
+-- the climb position, which is the number a player means by "what island am I on".
+--
+-- Anything else that needs the MODEL number (quest text keyed by island1..13, for
+-- instance) must keep using the raw number -- do not "fix" those the same way.
 do
 	local WorkspaceSvc = game:GetService("Workspace")
-	local function curIsland()
+	local IslandOrderMod = IslandOrderHUD
+	local TOTAL = IslandOrderMod.COUNT or 13
+
+	-- the Workspace MODEL number the player is standing on: footprint match, else nearest
+	local function curIslandModel()
 		local char = player.Character
 		local hrp = char and char:FindFirstChild("HumanoidRootPart")
 		if not hrp then return 1 end
 		local pos = hrp.Position
 		local best, bestD = nil, math.huge
-		for i = 1, 13 do
+		for i = 1, TOTAL do
 			local isl = WorkspaceSvc:FindFirstChild("island" .. i)
 			if isl then
 				local ok, cf, size = pcall(function() return isl:GetBoundingBox() end)
@@ -1159,7 +1200,11 @@ do
 	end
 	task.spawn(function()
 		while true do
-			islandLabel.Text = "\xF0\x9F\x8F\x9d\xef\xb8\x8f Island: " .. curIsland()
+			local model = curIslandModel()
+			-- the climb position. Fall back to the model number only if the mapping is
+			-- somehow missing, so the label degrades to the old behaviour instead of blank.
+			local slot = IslandOrderMod.ISLAND_TO_SLOT[model] or model
+			islandLabel.Text = ("\xF0\x9F\x8F\x9d\xef\xb8\x8f Island: %d/%d"):format(slot, TOTAL)
 			task.wait(0.5)
 		end
 	end)
@@ -1195,14 +1240,30 @@ spacePctLabel.Size = UDim2.new(1,-8,1,0); spacePctLabel.Position = UDim2.new(0,4
 spacePctLabel.Font = Enum.Font.GothamBold; spacePctLabel.TextSize = 13; spacePctLabel.TextColor3 = Color3.new(1,1,1)
 spacePctLabel.TextScaled = true; spacePctLabel.RichText = false; spacePctLabel.ZIndex = 5; spacePctLabel.Parent = spaceBarBG
 mkStroke(spacePctLabel, Color3.new(0,0,0), 1)
+-- PROGRESS = HIGHEST CLIMB SLOT REACHED, not the highest MODEL number.
+--
+-- This read HighestIsland, which PetXPHooks sets to the Workspace model number. Because
+-- of the scramble, crossing to your SIXTH island lands you on `island13` -- so the bar
+-- snapped to "Island 13/13  -  100%" barely a third of the way up the tower and stayed
+-- there for the rest of the run. HighestSlot is the real progress counter (ReturnIsland
+-- and the next-island arrow both gate on it); HighestIsland is only mapped through
+-- ISLAND_TO_SLOT as a fallback for a save that predates HighestSlot.
 local function updateSpaceRealmProgress()
-	local hi = math.clamp(math.floor(tonumber(player:GetAttribute("HighestIsland")) or 1), 1, SPACE_TOTAL_ISLANDS)
+	local slot = tonumber(player:GetAttribute("HighestSlot"))
+	if not slot then
+		local model = tonumber(player:GetAttribute("HighestIsland"))
+		slot = model and IslandOrderHUD.ISLAND_TO_SLOT[math.floor(model)] or nil
+	end
+	local hi = math.clamp(math.floor(slot or 1), 1, SPACE_TOTAL_ISLANDS)
 	local frac = hi / SPACE_TOTAL_ISLANDS
 	spaceFill.Size = UDim2.new(frac, 0, 1, 0)
 	spaceFill.BackgroundColor3 = (hi >= SPACE_TOTAL_ISLANDS) and Color3.fromRGB(170,110,255) or Color3.fromRGB(90,200,120)
 	spacePctLabel.Text = "Island " .. hi .. "/" .. SPACE_TOTAL_ISLANDS .. "  -  " .. math.floor(frac * 100 + 0.5) .. "%"
 end
 updateSpaceRealmProgress()
+-- BOTH attributes: HighestSlot is what the bar now reads, HighestIsland is kept wired so
+-- the fallback path still refreshes on a save that only has the old one.
+player:GetAttributeChangedSignal("HighestSlot"):Connect(updateSpaceRealmProgress)
 player:GetAttributeChangedSignal("HighestIsland"):Connect(updateSpaceRealmProgress)
 
 -- divider (y=187)
@@ -1471,7 +1532,7 @@ end
 --======================================================================
 -- local gut state (CoreClient keeps these script-level; default to Tiny Gut)
 local stomachName  = "Hatchling Belly"
-local stomachMax   = 100
+local stomachMax   = 120   -- Hatchling Belly (StomachTiers.LIST[1].maxPower); overwritten by the server on join
 local currentPower = 0
 local stomachEmoji = _G.GUT_EMOJI["Hatchling Belly"]
 local updateStomachDisplay -- nil here (this clone has no bottom gut pill); stomach-shop handler guards on it
@@ -1505,7 +1566,7 @@ task.spawn(function()
 			mkCorner(sc,8); mkStroke(sc,Color3.fromRGB(160,20,20),2); if JC then pcall(function() JC.styleButton(sc) end) end
 			sc.MouseButton1Click:Connect(function() playUIClick(); stomachShopGui.Enabled=false; _G.MainMenuManager.notifyClosed("Stomach") end)
 		end
-		currentStomachLabel=mkLabel(stomachPanel,{Size=UDim2.new(1,-20,0,35),Position=UDim2.new(0,10,0,62),BackgroundColor3=Color3.fromRGB(40,52,38),BackgroundTransparency=0,Text="Current: Hatchling Belly (100 max power)",Font=Enum.Font.FredokaOne,TextScaled=true,TextColor3=Color3.fromRGB(250,242,214),BorderSizePixel=0})
+		currentStomachLabel=mkLabel(stomachPanel,{Size=UDim2.new(1,-20,0,35),Position=UDim2.new(0,10,0,62),BackgroundColor3=Color3.fromRGB(40,52,38),BackgroundTransparency=0,Text="Current: Hatchling Belly (120 max power)",Font=Enum.Font.FredokaOne,TextScaled=true,TextColor3=Color3.fromRGB(250,242,214),BorderSizePixel=0})
 		mkCorner(currentStomachLabel,10); mkStroke(currentStomachLabel,Color3.fromRGB(74,94,68),2)
 		scrollFrame=Instance.new("ScrollingFrame"); scrollFrame.Size=UDim2.new(1,-20,1,-110)
 		scrollFrame.Position=UDim2.new(0,10,0,105); scrollFrame.BackgroundTransparency=1
@@ -1624,6 +1685,13 @@ task.spawn(function()
 			-- that state changes the instant HighestSlot does -- so it is driven by the
 			-- attribute as well as the poll, and both go through the same function rather than
 			-- each writing the button's colours in their own way.
+			-- "Reach <island>" line, tucked under the buy button. Hidden unless gated.
+			local lockNote = mkLabel(card, {
+				Size = UDim2.new(0, 150, 0, 15), Position = UDim2.new(1, -158, 0.5, 27),
+				AnchorPoint = Vector2.new(0, 0.5), Text = "", Visible = false,
+				Font = Enum.Font.GothamMedium, TextScaled = true,
+				TextColor3 = Color3.fromRGB(226, 200, 120),
+			})
 			local UNLOCKED_COLOR, UNLOCKED_TEXT = buyBtn.BackgroundColor3, buyBtn.Text
 			local CARD_LIT, CARD_LOCKED = card.BackgroundColor3, Color3.fromRGB(74, 86, 58)
 			local locked = false
@@ -1634,14 +1702,24 @@ task.spawn(function()
 					locked = false
 					buyBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80); buyBtn.Text = "\xe2\x9c\x93 OWNED"
 					card.BackgroundColor3 = CARD_LIT
+					lockNote.Visible = false
 					return
 				end
 				locked = not StomachTiers.isUnlocked(tier, reachedSlot())
 				if locked then
+					-- THE PRICE STAYS ON THE BUTTON. It used to be REPLACED by the island name,
+					-- so a gut you were saving toward showed no number at all and the shop read
+					-- as broken rather than aspirational -- which is why the gate got removed
+					-- once. The lock is a second line underneath instead: you always see what it
+					-- costs AND what opens it. See the note on StomachTiers.isUnlocked for why
+					-- the rule itself has to stay -- it is worth 4 broken crossings.
 					buyBtn.BackgroundColor3 = Color3.fromRGB(68, 74, 62)
-					buyBtn.Text = "\xF0\x9F\x94\x92 " .. slotName(tier.unlockSlot or 1)
+					buyBtn.Text = UNLOCKED_TEXT .. "  \xF0\x9F\x94\x92"
+					lockNote.Text = "Reach " .. slotName(tier.unlockSlot or 1)
+					lockNote.Visible = true
 					card.BackgroundColor3 = CARD_LOCKED
 				else
+					lockNote.Visible = false
 					buyBtn.BackgroundColor3 = UNLOCKED_COLOR; buyBtn.Text = UNLOCKED_TEXT
 					card.BackgroundColor3 = CARD_LIT
 				end
@@ -1913,6 +1991,14 @@ do
 			ring(38, 4)
 			ring(22, 4)
 			box(8, 8, 0, 0, ICON_INK, 4)
+		elseif kind == "ticket" then
+			-- a crate ticket (the Send a Gift card): the stub, two punched notches, a perforation line
+			box(38, 24, 0, 0, ICON_INK, 4)             -- the ticket
+			box(10, 10, -19, 0, mask, 5)               -- left notch
+			box(10, 10, 19, 0, mask, 5)                -- right notch
+			for _, y in ipairs({ -7, 0, 7 }) do
+				box(3, 4, 7, y, mask)                  -- perforation dashes
+			end
 		end
 	end
 
@@ -1942,11 +2028,17 @@ do
 		-- Both dot groups ride this single row: readyDot for the crate, tasksDot kept for a
 		-- daily-tasks system if one is ever added. They stay INDEPENDENT, so claiming the
 		-- crate cannot clear the other badge.
-		{ order = 2, label = "Rewards", desc = "Daily crate and free rewards, all in one place.",
-		  tint = Color3.fromRGB(255, 175, 45), icon = "gift", readyDot = true, tasksDot = true,
+		--
+		-- NOW THE FIRST REALM'S THREE-TAB REWARDS HUB (DailyStreak.client.luau): DAILY (7-day login streak +
+		-- the Meteor Crate row), TIMED (playtime) and COMMUNITY (like / favourite / group). Tickets are capped at
+		-- 300 a day and every claim is shared with the other realms. OPEN, not toggle: a card means "show me".
+		-- ONE count badge replaces the old readyDot / tasksDot pair.
+		{ order = 2, label = "Rewards", desc = "Daily, timed and community rewards.",
+		  tint = Color3.fromRGB(255, 175, 45), icon = "gift", badge = true,
 		  action = function()
-			if _G.toggleSocialRewards then _G.toggleSocialRewards()
-			else warn("[Bootstrap] MORE+ -> Rewards: SocialRewards.client.luau not loaded") end
+			if _G.openDailyStreak then _G.openDailyStreak()
+			elseif _G.toggleSocialRewards then _G.toggleSocialRewards()
+			else warn("[Bootstrap] MORE+ -> Rewards: DailyStreak.client.luau not loaded") end
 		end },
 		-- WORMHOLE swapped in here from the left sidebar (the Pets button took its rail slot).
 		-- Same OpenWormhole BindableEvent the side button used to fire; get-or-create it so
@@ -1957,6 +2049,15 @@ do
 			local sig = rs:FindFirstChild("OpenWormhole")
 			if not sig then sig = Instance.new("BindableEvent"); sig.Name = "OpenWormhole"; sig.Parent = rs end
 			sig:Fire()
+		end },
+		-- SEND A GIFT -- the first realm's and Space's fourth card, which makes the grid a real 2x2. Gives
+		-- another player some of your Crate Tokens (GiftingClient publishes _G.openGiftPanel; OPEN, not toggle).
+		-- A drawn ticket icon, not the gift box: the Rewards card already wears the gift box.
+		{ order = 4, label = "Send a Gift", desc = "Give another player some of your Crate Tokens.",
+		  tint = Color3.fromRGB(80, 200, 120), icon = "ticket", action = function()
+			if _G.openGiftPanel then _G.openGiftPanel()
+			elseif _G.toggleGiftPanel then _G.toggleGiftPanel()
+			else warn("[Bootstrap] MORE+ -> Send a Gift: GiftingClient.client.luau not loaded") end
 		end },
 		-- Skin Crates card REMOVED from the HUD menu (by request): crates are reached
 		-- through the Pet Hub only -- its CRATES / TOKENS tabs route to
@@ -1986,6 +2087,20 @@ do
 	local CARD_W, CARD_H, GAP = 304, 116, 20 -- 2 x 304 + 20 = 628, the content box exactly (was 324, sized for the old 700 panel)
 	local FULL_W, FULL_H, FULL_Y = 628, 82, 342 -- FULL_W spans both columns; FULL_Y still assumes the old 424-tall box, so re-check it if a full-width card is ever re-enabled
 
+	-- ===== THE CARDS: the first realm's current MORE+ tile (RailGuard, push 8a5041b), in jungle colours =====
+	-- Added to this realm's tile (gloss, hover shine and drawn icons all kept): a soft radial DROP SHADOW, a
+	-- GLOW behind the icon square in its own colour, the first realm's text block (title at 96/22, a 44px
+	-- description at 96/50), ONE red COUNT badge instead of the two dots, a press dip to 97%, and a 0.35s click
+	-- debounce (a phone double-tap on a toggle used to open-then-close).
+	-- NO inset sheen on the icon, unlike the first realm: the drawn icons knock their gaps out with boxes in
+	-- the icon's own tint, and a sheen underneath would turn every one of those gaps into a visible patch.
+	local GLOW_IMAGE = "rbxassetid://1316045217" -- soft radial (the first realm's glow asset)
+	local CARD_FILL  = Color3.fromRGB(96, 116, 66)
+	local CARD_HOVER = Color3.fromRGB(116, 140, 80)
+	local HOVER_TI = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	local PRESS_TI = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	local badgeRefs = {} -- [card label] = { frame, count }  (filled by the loop, read by the poll below)
+
 	local halfIdx = 0
 	for _, e in ipairs(MORE_ENTRIES) do
 		local w = e.full and FULL_W or CARD_W
@@ -1999,10 +2114,18 @@ do
 			halfIdx += 1
 		end
 
+		-- DROP SHADOW: an image, so it has no corners to leak past the card's rounding; a touch low so
+		-- the light reads as overhead. Scaled in step with the card on hover/press so it never detaches.
+		local shadow = Instance.new("ImageLabel")
+		shadow.Name = "Shadow"; shadow.BackgroundTransparency = 1; shadow.Image = GLOW_IMAGE
+		shadow.ImageColor3 = Color3.fromRGB(10, 14, 6); shadow.ImageTransparency = 0.5
+		shadow.Size = UDim2.fromOffset(w + 26, h + 26); shadow.Position = UDim2.fromOffset(cx, cy + 4)
+		shadow.AnchorPoint = Vector2.new(0.5, 0.5); shadow.ZIndex = 2; shadow.Parent = entryScroll
+
 		-- anchored from the CENTRE so the hover scale grows evenly on all four sides
 		-- instead of shoving the card down and right
 		local row = mkButton(entryScroll, { Size = UDim2.fromOffset(w, h), Position = UDim2.fromOffset(cx, cy),
-			AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor3 = e.locked and Color3.fromRGB(88, 96, 70) or Color3.fromRGB(96, 116, 66),
+			AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor3 = e.locked and Color3.fromRGB(88, 96, 70) or CARD_FILL,
 			Text = "", AutoButtonColor = false, ClipsDescendants = true, ZIndex = 3 })
 		mkCorner(row, 16); mkStroke(row, Color3.fromRGB(40, 52, 38), 2)
 
@@ -2023,39 +2146,77 @@ do
 			NumberSequenceKeypoint.new(1, 1) })
 		shineGrad.Offset = Vector2.new(-1, 0); shineGrad.Parent = shine
 
+		-- ICON GLOW: a soft radial in the icon's own colour, one layer behind the square -- what makes the
+		-- first realm's icons look lit rather than pasted on. Locked cards stay flat.
+		if not e.locked then
+			local glow = Instance.new("ImageLabel")
+			glow.Name = "IconGlow"; glow.BackgroundTransparency = 1; glow.Image = GLOW_IMAGE
+			glow.ImageColor3 = e.tint; glow.ImageTransparency = 0.55
+			glow.Size = UDim2.fromOffset(86, 86); glow.Position = UDim2.new(0, 16 + 31, 0.5, 0)
+			glow.AnchorPoint = Vector2.new(0.5, 0.5); glow.ZIndex = 5; glow.Parent = row
+		end
+
 		local icon = mkFrame(row, { Size = UDim2.fromOffset(62, 62), Position = UDim2.new(0, 16, 0.5, 0),
 			AnchorPoint = Vector2.new(0, 0.5), BackgroundColor3 = e.locked and Color3.fromRGB(92, 96, 74) or e.tint, ZIndex = 6 })
 		mkCorner(icon, 14); mkStroke(icon, Color3.fromRGB(40, 52, 38), 2)
 		drawCardIcon(icon, e.icon, e.locked and Color3.fromRGB(92, 96, 74) or e.tint)
 
+		-- TITLE + DESCRIPTION on the first realm's roomier grid: text block from x96, title 22 down, a 44px
+		-- description at 50 (two full lines of 13px without clipping).
 		mkLabel(row, { Text = e.label, Font = Enum.Font.GothamBold, TextSize = 21,
 			TextColor3 = e.locked and Color3.fromRGB(196, 186, 150) or Color3.new(1, 1, 1),
-			Size = UDim2.new(0, w - 126, 0, 24), Position = UDim2.new(0, 92, 0, e.full and 14 or 18),
+			Size = UDim2.new(0, w - 136, 0, 24), Position = UDim2.new(0, 96, 0, e.full and 14 or 22),
 			TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 6 })
 		mkLabel(row, { Text = e.locked and (e.lockNote or "Not in this realm yet.") or e.desc, Font = Enum.Font.Gotham, TextSize = 13,
 			TextColor3 = Color3.fromRGB(232, 209, 158),
-			Size = UDim2.new(0, w - 126, 0, e.full and 24 or 36), Position = UDim2.new(0, 92, 0, e.full and 42 or 44),
+			Size = UDim2.new(0, w - 136, 0, e.full and 24 or 44), Position = UDim2.new(0, 96, 0, e.full and 42 or 50),
 			TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, TextWrapped = true, ZIndex = 6 })
 		mkLabel(row, { Text = "\xE2\x9D\xAF", Font = Enum.Font.FredokaOne, TextSize = 20,
 			TextColor3 = Color3.fromRGB(160, 200, 120), Size = UDim2.new(0, 24, 1, 0),
 			Position = UDim2.new(0, w - 34, 0, 0), ZIndex = 6 })
 
-		-- badges sit SIDE BY SIDE, not stacked -- they are independent, and stacking hid
-		-- whichever one drew second
-		if e.readyDot then mkDot(row, crateReadyDots, -10) end
-		if e.tasksDot then mkDot(row, taskPendingDots, -32) end
+		-- ONE BADGE WITH A COUNT, gently pulsing. Tucked INSIDE the top-right corner rather than hanging over
+		-- it as in the first realm: the card list is a clipping ScrollingFrame here, and an overhanging badge on
+		-- the top row would be cut in half.
+		if e.badge then
+			local b = mkFrame(row, { Size = UDim2.fromOffset(30, 30), AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.new(1, -16, 0, 16), BackgroundColor3 = Color3.fromRGB(228, 46, 46), ZIndex = 9, Visible = false })
+			b.Name = "CountBadge"
+			mkCorner(b, 15); mkStroke(b, Color3.new(1, 1, 1), 2)
+			local n = mkLabel(b, { Text = "1", Font = Enum.Font.GothamBlack, TextSize = 16, TextColor3 = Color3.new(1, 1, 1),
+				Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 10 })
+			local bs = Instance.new("UIScale"); bs.Parent = b
+			TweenService:Create(bs, TweenInfo.new(0.75, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Scale = 1.14 }):Play()
+			badgeRefs[e.label] = { frame = b, count = n }
+		end
 
+		-- HOVER + PRESS. A UIScale (not a Size tween) so the card grows from its centre with every child in
+		-- proportion; the shadow scales in step so it never detaches from the card.
 		if not e.locked then
-			local scale = Instance.new("UIScale"); scale.Parent = row
+			local sc = Instance.new("UIScale"); sc.Parent = row
+			local shSc = Instance.new("UIScale"); shSc.Parent = shadow
+			local function to(scale, fill, ti)
+				TweenService:Create(sc, ti, { Scale = scale }):Play()
+				TweenService:Create(shSc, ti, { Scale = scale }):Play()
+				if fill then TweenService:Create(row, ti, { BackgroundColor3 = fill }):Play() end
+			end
+			local hovering = false
 			row.MouseEnter:Connect(function()
-				TweenService:Create(scale, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1.03 }):Play()
+				hovering = true; to(1.03, CARD_HOVER, HOVER_TI)
 				shineGrad.Offset = Vector2.new(-1, 0)
 				TweenService:Create(shineGrad, TweenInfo.new(0.5), { Offset = Vector2.new(1, 0) }):Play()
 			end)
-			row.MouseLeave:Connect(function()
-				TweenService:Create(scale, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+			row.MouseLeave:Connect(function() hovering = false; to(1, CARD_FILL, HOVER_TI) end)
+			row.MouseButton1Down:Connect(function() to(0.97, nil, PRESS_TI) end)
+			row.MouseButton1Up:Connect(function() to(hovering and 1.03 or 1, nil, PRESS_TI) end)
+			-- DEBOUNCED: 0.35s swallows a phone double-tap; a deliberate second press still works.
+			local lastClick = 0
+			row.MouseButton1Click:Connect(function()
+				local now = os.clock()
+				if now - lastClick < 0.35 then return end
+				lastClick = now
+				playUIClick(); setMoreOpen(false); pcall(e.action)
 			end)
-			row.MouseButton1Click:Connect(function() playUIClick(); setMoreOpen(false); pcall(e.action) end)
 		end
 	end
 
@@ -2107,9 +2268,17 @@ do
 			-- wiggles the rail button
 			local ready   = (_G.crateIsClaimable  and _G.crateIsClaimable())  == true
 			local pending = (_G.dailyTasksPending and _G.dailyTasksPending()) == true
-			for _, d in ipairs(crateReadyDots)  do d.Visible = ready end
+			-- The Rewards hub owns "anything to claim?" across its three tabs + the Meteor Crate row
+			-- (_G.rewardsPending, the first realm's name). The crate predicate is the fallback while it loads.
+			local rewards = (_G.rewardsPending and _G.rewardsPending()) == true or ready
+			local ref = badgeRefs["Rewards"]
+			if ref then
+				ref.frame.Visible = rewards
+				ref.count.Text = "1"
+			end
+			for _, d in ipairs(crateReadyDots)  do d.Visible = rewards end -- the "!" on the MORE+ rail button
 			for _, d in ipairs(taskPendingDots) do d.Visible = pending end
-			if ready or pending then startMoreWiggle() else stopMoreWiggle() end
+			if rewards or pending then startMoreWiggle() else stopMoreWiggle() end
 			task.wait(1)
 		end
 	end)
@@ -2121,6 +2290,9 @@ do
 		panel.Visible = moreOpenState
 		catcher.Visible = moreOpenState
 	end
+	-- Published so a menu opened FROM a MORE+ card can send the player back here: the Rewards hub's BACK
+	-- button calls _G.setMoreOpen(true) (the first realm's name for this).
+	_G.setMoreOpen = function(open) setMoreOpen(open) end
 	-- deliberately NO catcher click-to-close: a stray tap must not shut the panel
 	moreX.MouseButton1Click:Connect(function() playUIClick(); setMoreOpen(false) end)
 end
@@ -2142,21 +2314,21 @@ do
 	-- -- IslandLayout.server.luau maps number -> slot (quest / no-quest alternating).
 	local ISLANDS = {
 		-- QUEST islands
-		[1]  = { name = "Nesting Nook",     task = "Bring the lost eggs to the nest" },
-		[2]  = { name = "Fern Frontier",    task = "Find and hatch the Triceratops egg" },
-		[3]  = { name = "Fossil Frontier",  task = "Dig up the ancient fossils to find the egg" },
-		[4]  = { name = "Coastal Crossing", task = "Fish the ButterLake to hatch a Megalodon" },
-		[5]  = { name = "Misty Mire",       task = "Swat the mosquitos, then feed the egg!" },
+		[1]  = { name = "Nesting Nook",     task = "Return the lost eggs" },
+		[2]  = { name = "Fern Frontier",    task = "Find the hidden egg" },
+		[3]  = { name = "Fossil Frontier",  task = "Dig up the fossils" },
+		[4]  = { name = "Coastal Crossing", task = "Fish up the egg" },
+		[5]  = { name = "Misty Mire",       task = "Swat every mosquito" },
 		[6]  = { name = "Redwood Ridge",    task = "Explore Redwood Ridge" },
-		[7]  = { name = "Raptor Ridge",     task = "Carry meat to the nest -- feed it 5 pieces!" },
+		[7]  = { name = "Claw Cliffs",     task = "Carry meat to the nest" },
 		-- VOLCANIC VISTA (island11) = THE ENDING ISLAND, pinned to the TOP tower slot
 		-- (slot 13, see IslandLayout.server.luau). It owns the volcano / geyser FINALE
 		-- quest and grants the T-Rex. The geyser quest USED to live on island8 -- it
 		-- moved here, so island8 is now a BLANK island named "Inferno Isle".
-		[11] = { name = "Volcanic Vista",   task = "Plug all 6 geysers before the volcano erupts!" },
+		[11] = { name = "Volcanic Vista",   task = "Plug all six geysers" },
 		-- BLANK islands (no code, no quest) -- name only, empty task
 		[8]  = { name = "Inferno Isle",     task = "" },  -- volcanic (NO quest -- it moved to island11)
-		[9]  = { name = "Jungle Junction",  task = "" },  -- jungle
+		[9]  = { name = "Frostbite Flats",  task = "" },  -- snow
 		[10] = { name = "Petrified Pass",   task = "" },  -- desert
 		[12] = { name = "Sunscorch Sands",  task = "" },  -- desert
 		[13] = { name = "Glacier Gulch",    task = "" },  -- snow / glacier
@@ -2187,24 +2359,44 @@ do
 	islandGui.Name = "IslandBanner"; islandGui.ResetOnSpawn = false; islandGui.IgnoreGuiInset = true
 	islandGui.DisplayOrder = 40; islandGui.Parent = PlayerGui
 
-	local holder = mkFrame(islandGui,{Name="Holder",Size=UDim2.fromOffset(440,78),Position=UDim2.new(0.5,0,0,8),AnchorPoint=Vector2.new(0.5,0),BackgroundTransparency=1,ZIndex=2})
+	-- ===================================================================
+	-- OBJECTIVE CARD -- the first realm's ObjectiveHUD look, ported.
+	-- ===================================================================
+	-- THE ISLAND NAME IS GONE ON PURPOSE. This widget used to be two stacked bars: a
+	-- wood one naming the island you were standing on, and a parchment one under it
+	-- with the actual instruction. The name was the larger, louder of the two and told
+	-- the player nothing they could act on -- they can see where they are. Only the
+	-- DIRECTIONS survive, and they inherit the prime slot the name used to hold.
+	--
+	-- The look is the first realm's ObjectiveHUD card, not this game's wood/parchment
+	-- pair: 470x78, dark navy with a 90-degree gradient, a 3px gold stroke, FredokaOne
+	-- title over a Gotham sub-line. Kept at the same y as the old holder so nothing
+	-- else on the HUD has to move.
+	--
+	-- TWO LINES, like the original: the title carries the instruction, the sub-line
+	-- carries progress ("3/5") when a quest folder is publishing it. On islands with no
+	-- quest the whole card hides rather than showing an empty frame.
+	local holder = mkFrame(islandGui,{Name="Holder",Size=UDim2.fromOffset(470,78),Position=UDim2.new(0.5,0,0,8),AnchorPoint=Vector2.new(0.5,0),BackgroundTransparency=1,ZIndex=2})
 
-	-- island NAME banner (wood)
-	local nameBar = mkFrame(holder,{Name="IslandName",Size=UDim2.fromOffset(300,42),Position=UDim2.new(0.5,0,0,0),AnchorPoint=Vector2.new(0.5,0),BackgroundColor3=WOOD_DARK,ZIndex=3})
-	mkCorner(nameBar,14); mkStroke(nameBar,Color3.fromRGB(40,26,14),3)
-	glossGradient(nameBar, WOOD_DARK); addShadow(nameBar,14); addInnerHighlight(nameBar,14)
-	-- Foliage removed. On a 300x42 bar the two corner vines ate both ends of the island
-	-- name, which is the one thing this banner exists to show.
-	local nameLbl = mkLabel(nameBar,{Name="Text",Text="Nesting Nook",TextColor3=Color3.new(1,1,1),TextScaled=true,Size=UDim2.new(1,-56,1,-8),Position=UDim2.fromScale(0.5,0.5),AnchorPoint=Vector2.new(0.5,0.5),TextXAlignment=Enum.TextXAlignment.Center,BackgroundTransparency=1,ZIndex=20})
-	styleText(nameLbl)
-	do local c=Instance.new("UITextSizeConstraint"); c.MaxTextSize=26; c.Parent=nameLbl end
+	-- Built by the shared DinoCard module. The storm banner uses the SAME builder, so the
+	-- two are pixel-identical in shape and the storm can hide this card and stand in its
+	-- place without the panel appearing to move. Only the palette differs.
+	local DinoCard = require(game:GetService("ReplicatedStorage"):WaitForChild("DinosaurRealm"):WaitForChild("DinoCard"))
+	local card = DinoCard.build(holder, DinoCard.ISLAND, "ObjectiveCard")
+	-- BONE, written as Lua decimal escapes on purpose. This was a literal emoji and it
+	-- had been DOUBLE-ENCODED, so the card rendered four junk characters instead of a
+	-- bone. Escapes are the exact bytes and cannot be re-mangled by an editor or tool
+	-- guessing this file's encoding.
+	card:setIcon("\240\159\166\180")   -- bone
 
-	-- TASK banner (parchment, below)
-	local taskBar = mkFrame(holder,{Name="Task",Size=UDim2.fromOffset(430,30),Position=UDim2.new(0.5,0,0,46),AnchorPoint=Vector2.new(0.5,0),BackgroundColor3=PARCHMENT,ZIndex=3})
-	mkCorner(taskBar,12); mkStroke(taskBar,WOOD_DARK,2)
-	glossGradient(taskBar, PARCHMENT); addShadow(taskBar,12); addInnerHighlight(taskBar,12)
-	local taskLbl = mkLabel(taskBar,{Name="Text",Text="Go Talk To The Researcher To Accept The Quest",TextColor3=Color3.fromRGB(60,42,20),Font=JUNGLE_FONT,TextScaled=true,Size=UDim2.new(1,-16,1,-6),Position=UDim2.fromScale(0.5,0.5),AnchorPoint=Vector2.new(0.5,0.5),TextXAlignment=Enum.TextXAlignment.Center,BackgroundTransparency=1,ZIndex=20})
-	do local c=Instance.new("UITextSizeConstraint"); c.MaxTextSize=17; c.Parent=taskLbl end
+	-- How long the objective card is up, and how often it comes back. 6 of every 20 seconds
+	-- is enough to re-read a one-line instruction without the card becoming furniture; the
+	-- other 14 leave the top of the screen to the banners that only fire when something is
+	-- actually happening. A CHANGE to the text or the progress always overrides the timer --
+	-- see the block at the end of refresh().
+	local REMIND_SECONDS = 6
+	local REMIND_PERIOD  = 20
+	local lastKey, showUntil, nextRemind = nil, 0, 0
 
 	-- live wiring: island name + task (+ egg progress from the quest folder)
 	task.spawn(function()
@@ -2214,38 +2406,78 @@ do
 		local function refresh()
 			local n = currentIslandNum()
 			local data = ISLANDS[n] or { name = "Island " .. n, task = "" }
-			nameLbl.Text = data.name
+			-- data.name is deliberately unread: the island name bar was removed and the
+			-- name is not shown anywhere on this card. The field stays in ISLANDS because
+			-- the table is the readable index of which quest belongs to which island.
 			local txt = data.task
+			local prog = ""   -- the sub-line: progress only, never the island name
 			if n == 1 then
 				if not player:GetAttribute("NestingNookQuestClaimed") then
-					txt = "Go Talk To The Researcher To Accept The Quest"
+					txt = "Talk to the Researcher"
 				elseif total and got then
 					if total.Value > 0 and got.Value >= total.Value then
-						txt = "All eggs returned - quest complete!"
+						txt = "All eggs returned!"
 					else
-						txt = ("%s  (%d/%d)"):format(data.task, got.Value, total.Value)
+						-- progress moves to the sub-line rather than being appended to the
+						-- instruction, so the instruction keeps its full width
+						txt = data.task
+						prog = ("%d / %d"):format(got.Value, total.Value)
 					end
 				end
 			elseif n == 3 then
 				if not player:GetAttribute("DigQuestAccepted") then
-					txt = "Go Talk To The Digger To Accept The Quest"
+					txt = "Talk to the Digger"
 				else
-					txt = "Dig up the ancient fossils to find the egg!"
+					txt = "Dig up the fossils"
 				end
 			elseif n == 2 or n == 4 or n == 5 or n == 6 or n == 7 or n == 11 then
 				-- other QUEST islands (11 = Volcanic Vista, the geyser finale -- it used
 				-- to be 8, but that quest moved and island8 is a blank island now):
 				-- direct the player to the Researcher until they accept (Island<N>QuestAccepted)
 				if not player:GetAttribute("Island" .. n .. "QuestAccepted") then
-					txt = "Go Talk To The Researcher To Accept The Quest"
+					txt = "Talk to the Researcher"
 				else
 					txt = data.task
 				end
 			end
-			taskLbl.Text = txt
-			-- blank islands (9-13) have no quest -> hide the task banner entirely
-			-- rather than show an empty parchment bar under the island name.
-			taskBar.Visible = (txt ~= "")
+			card:setText(txt, prog)
+			-- ===== IT BLINKS, IT DOES NOT SIT THERE =====
+			-- This card used to be up permanently. On a quest island that is a 470x78 slab
+			-- parked over the top of the screen for the entire visit, and because it holds
+			-- the top-centre stack's last lane it also pushed every windstorm / event /
+			-- eruption banner further down the screen for no reason.
+			--
+			-- It now behaves like a reminder instead of a fixture: REMIND_SECONDS visible
+			-- out of every REMIND_PERIOD, and hidden the rest of the time.
+			--
+			-- THE EXCEPTION IS THE ONE THAT MATTERS: any CHANGE to the instruction or the
+			-- progress line shows it immediately and restarts the window. Picking an egg up
+			-- and going 0/5 -> 1/5 is exactly when the player wants to see this, and waiting
+			-- up to fourteen seconds to be told would be worse than never showing it.
+			--
+			-- Blank islands have no quest, so there is nothing to remind anybody of.
+			--
+			-- HOLDER, not the card, because TopCenterStack reads Holder.Visible to decide
+			-- whether this lane takes up vertical space -- hiding only the card inside
+			-- would leave the stack reserving 78px for something nobody can see.
+			--
+			-- AND the storm override, because MonsoonRain stands in this card's place.
+			local key = txt .. "\1" .. prog
+			if txt == "" then
+				lastKey = key
+				holder.Visible = false
+				return
+			end
+			local now = os.clock()
+			if key ~= lastKey then                      -- new island, new step, new count
+				lastKey = key
+				showUntil = now + REMIND_SECONDS
+				nextRemind = now + REMIND_PERIOD
+			elseif now >= nextRemind then               -- the periodic nudge
+				showUntil = now + REMIND_SECONDS
+				nextRemind = now + REMIND_PERIOD
+			end
+			holder.Visible = (now < showUntil) and not _G.__objectiveCardHidden
 		end
 		refresh()
 		player:GetAttributeChangedSignal("NestingNookQuestClaimed"):Connect(refresh)
@@ -2294,7 +2526,7 @@ local playerGui = player:WaitForChild("PlayerGui")
 local Constants = {
 	CRATE = {
 		COOLDOWN_SECONDS = 28800, -- 8 hours between free claims
-		FALLBACK_COINS = 500,     -- coins when every owned pet is maxed
+		FALLBACK_COINS = 250,     -- coins when every owned pet is maxed
 		PET_MAX_LEVEL = 25,
 		RARITY_WEIGHTS = { Uncommon = 55, Rare = 28, Epic = 13, Mythical = 4 },
 		RARITY_ORDER = { "Uncommon", "Rare", "Epic", "Mythical" },

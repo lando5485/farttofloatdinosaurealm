@@ -522,6 +522,86 @@ do
 	print("[Wormhole] Space Realm cross-place button added.")
 end
 
+-- ===== CANDY REALM (cross-place destination) -- same card as Space, candy-pink =====
+do
+	local CANDY_TINT = Color3.fromRGB(255, 140, 200)
+
+	local row = Instance.new("TextButton")
+	row.Name = "CandyRealm"
+	row.LayoutOrder = 103
+	row.Size = UDim2.new(1, -6, 0, 50)
+	row.AutoButtonColor = true -- tappable: cross-place teleport to the Candy Realm place
+	row.Active = true
+	row.Text = ""
+	row.BackgroundColor3 = PANEL_DEEP
+	row.Parent = scroll
+	do local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, 12); c.Parent = row end
+	local rowStroke = Instance.new("UIStroke"); rowStroke.Color = CANDY_TINT; rowStroke.Thickness = 1.5; rowStroke.Transparency = 0.35; rowStroke.Parent = row
+
+	local iconHolder = Instance.new("Frame")
+	iconHolder.Name = "Icon"
+	iconHolder.AnchorPoint = Vector2.new(0, 0.5)
+	iconHolder.Position = UDim2.new(0, 11, 0.5, 0)
+	iconHolder.Size = UDim2.new(0, 30, 0, 30)
+	iconHolder.BackgroundTransparency = 1
+	iconHolder.Parent = row
+	local glow = Instance.new("Frame")
+	glow.AnchorPoint = Vector2.new(0.5, 0.5)
+	glow.Position = UDim2.new(0.5, 0, 0.5, 0)
+	glow.Size = UDim2.new(1, 0, 1, 0)
+	glow.BackgroundColor3 = CANDY_TINT
+	glow.BackgroundTransparency = 0.55
+	glow.BorderSizePixel = 0
+	glow.ZIndex = 2
+	glow.Parent = iconHolder
+	do local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(1, 0); c.Parent = glow end
+	local disc = Instance.new("TextLabel")
+	disc.AnchorPoint = Vector2.new(0.5, 0.5)
+	disc.Position = UDim2.new(0.5, 0, 0.5, 0)
+	disc.Size = UDim2.new(0.82, 0, 0.82, 0)
+	disc.BackgroundColor3 = CANDY_TINT
+	disc.BorderSizePixel = 0
+	disc.Font = Enum.Font.FredokaOne
+	disc.Text = "\u{1F36D}" -- 🍭 candy
+	disc.TextColor3 = Color3.new(1, 1, 1)
+	disc.TextScaled = true
+	disc.ZIndex = 3
+	disc.Parent = iconHolder
+	do
+		local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(1, 0); c.Parent = disc
+		local s = Instance.new("UIStroke"); s.Color = Color3.fromRGB(60, 16, 40); s.Thickness = 1; s.Transparency = 0.2; s.Parent = disc
+	end
+
+	local nameLbl = Instance.new("TextLabel")
+	nameLbl.BackgroundTransparency = 1
+	nameLbl.AnchorPoint = Vector2.new(0, 0.5)
+	nameLbl.Position = UDim2.new(0, 50, 0.5, 0)
+	nameLbl.Size = UDim2.new(0.5, 0, 1, -12)
+	nameLbl.Font = Enum.Font.FredokaOne
+	nameLbl.Text = "Candy Realm"
+	nameLbl.TextColor3 = WHITE
+	nameLbl.TextScaled = true
+	nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+	nameLbl.Parent = row
+	do local cns = Instance.new("UITextSizeConstraint"); cns.MaxTextSize = 22; cns.Parent = nameLbl end
+
+	local statusLbl = Instance.new("TextLabel")
+	statusLbl.Name = "Status"
+	statusLbl.BackgroundTransparency = 1
+	statusLbl.AnchorPoint = Vector2.new(1, 0.5)
+	statusLbl.Position = UDim2.new(1, -14, 0.5, 0)
+	statusLbl.Size = UDim2.new(0.5, -10, 1, -14)
+	statusLbl.Font = Enum.Font.GothamBold
+	statusLbl.Text = "Warp \u{27A4}"
+	statusLbl.TextColor3 = CANDY_TINT
+	statusLbl.TextScaled = true
+	statusLbl.TextXAlignment = Enum.TextXAlignment.Right
+	statusLbl.Parent = row
+	do local cns = Instance.new("UITextSizeConstraint"); cns.MaxTextSize = 15; cns.Parent = statusLbl end
+
+	print("[Wormhole] Candy Realm cross-place button added.")
+end
+
 print("[Wormhole] row indicators upgraded to planet icons (matching STATS race-row style).")
 
 -- ===== WARP TRANSITION — delegated to the shared WarpEffect module =====
@@ -752,8 +832,14 @@ do
 			if not warping then warpToRealm("Space") end
 		end)
 	end
+	local candyRow = scroll:FindFirstChild("CandyRealm")
+	if candyRow and candyRow:IsA("TextButton") then
+		candyRow.Activated:Connect(function()
+			if not warping then warpToRealm("Candy") end
+		end)
+	end
 end
 
 print("[Wormhole][client] online (Dino Realm) — island travel menu + warp transition")
 print("[WormholeSound] warp sound fires on destination-select → teleport.")
-print("[Wormhole] destinations: 13 Dino islands (visited-gated) + Food Realm + Space Realm cross-place hops.")
+print("[Wormhole] destinations: 13 Dino islands (visited-gated) + Food / Space / Candy Realm cross-place hops.")

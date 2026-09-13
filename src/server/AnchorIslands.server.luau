@@ -24,6 +24,10 @@
 
 local Workspace = game:GetService("Workspace")
 
+-- VERBOSE: per-item boot spam. OFF by default -- it buried the progression telemetry.
+-- Same flag name in every file that had a noisy loop, so it greps as one switch.
+local VERBOSE = false
+
 local TOP_ISLAND = 13
 
 -- skip the DINOSAURS (managed elsewhere so they can move): dino1, RaptorModel, MamaRaptor
@@ -81,7 +85,7 @@ local function anchorPass(label: string): number
 				end
 			end
 			total += n
-			if n > 0 then
+			if VERBOSE and n > 0 then
 				print(("[Anchor][%s] island%d -> anchored %d part(s)"):format(label, i, n))
 			end
 		else

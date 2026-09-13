@@ -321,7 +321,7 @@ local function setWorldUiHidden(hide: boolean)
 		-- the cinema's gui is the ONE gui allowed to stay up. st.exclude is set by
 		-- setAllGuis once it exists; the name check covers the window before that.
 		local function isCinema(inst: Instance)
-			if inst.Name == "IntroCinema" then return true end
+			if inst.Name == "IntroCinema" or inst.Name == "IntroTitle" then return true end -- IntroTitle: the end card is born mid-cinematic too, and this watcher was hiding it the instant it appeared
 			return st.exclude ~= nil and (inst == st.exclude or inst:IsDescendantOf(st.exclude))
 		end
 		local function grab(d: Instance)
@@ -711,7 +711,7 @@ local function showTitleCard()
 	title.TextScaled = true
 	title.TextColor3 = Color3.fromRGB(88, 40, 16)
 	title.TextTransparency = 1
-	title.Text = "\xF0\x9F\xA6\x95  FART TO FLOAT"
+	title.Text = "FART TO FLOAT" -- no emoji: this realm's UI fonts render them as tofu boxes
 	title.Parent = g
 	do local c = Instance.new("UITextSizeConstraint"); c.MaxTextSize = 88; c.Parent = title end
 	local ts = Instance.new("UIStroke"); ts.Color = Color3.fromRGB(255, 255, 255); ts.Thickness = 5; ts.Parent = title
@@ -725,7 +725,7 @@ local function showTitleCard()
 	sub.TextScaled = true
 	sub.TextColor3 = Color3.fromRGB(56, 92, 48)
 	sub.TextTransparency = 1
-	sub.Text = "DINOSAUR REALM"
+	sub.Text = "WELCOME TO THE DINOSAUR REALM"
 	sub.Parent = g
 	do local c = Instance.new("UITextSizeConstraint"); c.MaxTextSize = 40; c.Parent = sub end
 	local ss = Instance.new("UIStroke"); ss.Color = Color3.fromRGB(255, 255, 255); ss.Thickness = 3; ss.Parent = sub

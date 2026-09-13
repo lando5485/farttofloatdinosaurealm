@@ -28,13 +28,24 @@ local function floatText(pos, text)
 end
 
 -- the GRANT (identical path to BurritoDig -> Raptor)
+--
+-- ===== FERN FRONTIER HATCHES A STEGOSAURUS NOW, NOT A TRICERATOPS =====
+-- The Triceratops moved down to Nesting Nook, where the mother standing over the nest is a
+-- Triceratops -- see QuestGate. This end of the swap is just as good a fit: Fern Frontier is
+-- fern country, and the Stego is the game's other big plant-eater, so the herbivore is still
+-- being earned on the island covered in the thing it eats.
+--
+-- THE FILE AND THE REMOTES KEEP THEIR OLD NAMES ON PURPOSE. Renaming this script, the
+-- _G.GrantTriceratops hook and the marker it reads would touch the PetCommand /trike alias,
+-- the island2 quest attribute and the egg placement, all to rename a thing that works. The
+-- egg itself is generic, so only the species granted at the end of it changed.
 local function grant(cf)
 	if st.owns then return end
 	st.owns = true
-	if _G.SpawnTriceratopsFollower then pcall(function() _G.SpawnTriceratopsFollower(cf) end) end
-	if _G.PetHubAddPet then pcall(function() _G.PetHubAddPet("TriceratopsPet", { petId="TriceratopsPet", displayName="Triceratops", level=1, xp=0, xpNeed=100, maxLevel=25, milestone="Newly hatched!" }) end) end
-	do local th = RS:FindFirstChild("TriceratopsHatched"); if th then pcall(function() th:FireServer() end) end end
-	print("[Trike] Triceratops granted (follower + Pet Hub card + server grant)")
+	if _G.SpawnStegoFollower then pcall(function() _G.SpawnStegoFollower(cf) end) end
+	if _G.PetHubAddPet then pcall(function() _G.PetHubAddPet("StegoPet", { petId="StegoPet", displayName="Stegosaurus", level=1, xp=0, xpNeed=100, maxLevel=25, milestone="Newly hatched!" }) end) end
+	do local th = RS:FindFirstChild("StegoHatched"); if th then pcall(function() th:FireServer() end) end end
+	print("[Trike] Stegosaurus granted on Fern Frontier (follower + Pet Hub card + server grant)")
 end
 _G.GrantTriceratops = grant
 
@@ -49,7 +60,22 @@ player.Chatted:Connect(function(msg)
 end)
 
 -- ===== island2 "Fern Frontier" EGG + Hatch prompt (the assigned grant) =====
+--
+-- ===== THE EGG IS RETIRED -- ISLAND2'S GRANT IS THE FERN THIEF NOW =====
+-- FernThief.client.luau replaced it: you trap the fern-stealing BABY STEGO around the
+-- island and BEFRIEND it, and the caught thief becomes the pet. That script fires the
+-- exact same grant this egg used (_G.GrantTriceratops above), so the follower, the Pet
+-- Hub card and the server StegoHatched event are identical -- only the doorway changed.
+-- EVERYTHING ABOVE THIS LINE STAYS LIVE: grant(), /trike and _G.GrantTriceratops are
+-- what FernThief (and the dev shortcut) call. Flip EGG_QUEST_ACTIVE back to true to
+-- restore the egg (and remove FernThief, or the island grants the same pet twice).
+local EGG_QUEST_ACTIVE = false
+
 task.spawn(function()
+	if not EGG_QUEST_ACTIVE then
+		print("[Trike] island2 egg retired -- the Fern Thief quest (FernThief.client.luau) grants the Stego now")
+		return
+	end
 	local isl = Workspace:FindFirstChild("island2") or Workspace:WaitForChild("island2", 60)
 	if not isl then warn("[Trike] island2 not found -> no egg placed (use /trike or _G.GrantTriceratops)"); return end
 

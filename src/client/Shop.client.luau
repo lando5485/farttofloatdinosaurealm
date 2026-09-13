@@ -489,6 +489,11 @@ foodBuyBtn.MouseButton1Click:Connect(function()
 		return
 	end
 	pcall(function() _G.BuyFoodEvent:FireServer(f.name) end)
+	-- PROGDATA (BottomHUD) logs the purchase SEQUENCE, which is the thing the balance is
+	-- actually solved against -- a crossing stalls when BUY MAX falls back on cheap food, and
+	-- that is invisible in a coins-and-launches log. The client is the only side that knows
+	-- which row was chosen and in what order, so every FireServer here reports itself.
+	if _G.PROGDATA_buy then pcall(_G.PROGDATA_buy, f.name, f.price, f.power, "BUY") end
 	print("FIRED BUYFOOD:", f.name)
 	local fl=Instance.new("TextLabel"); fl.Text="+"..f.power.." power!"; fl.Font=Enum.Font.GothamBold; fl.TextSize=20; fl.TextColor3=Color3.fromRGB(0,200,50); fl.BackgroundTransparency=1; fl.Size=UDim2.new(0,200,0,40); fl.Position=UDim2.new(0.3,0,0.6,0); fl.ZIndex=10; fl.Parent=FoodShopGui
 	TweenService:Create(fl,TweenInfo.new(1.5,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),{Position=UDim2.new(0.3,0,0.4,0),TextTransparency=1}):Play()
@@ -516,18 +521,78 @@ foodBuyMaxBtn.MouseButton1Click:Connect(function()
 	-- island9 is the 2nd food of the climb, so `for i = feat.island, 1, -1` walked the wrong range.
 	local featIdx = 1
 	for i, ff in ipairs(_G.foods) do if ff.island == feat.island then featIdx = i; break end end
-	for i = featIdx, 1, -1 do  -- fill from the FEATURED food downward (its max), biggest power first
+	-- ===== BEST VALUE FIRST, THEN KEEP SPENDING =====
+	-- Food is no longer flat: power per coin rises 1.00x -> 2.00x up the tower (FoodMenu), so
+	-- "the biggest food" and "the best deal" are no longer automatically the same row and array
+	-- order is the wrong thing to walk. Sort by fuel PER COIN, best first, and fall through to
+	-- the next-best only when the better one will not fit or cannot be afforded.
+	--
+	-- It still spends everything it can -- that is what the button says on the tin, and leaving
+	-- usable coins idle when a cheaper food would convert them is the one thing it must not do.
+	local order = {}
+	for i = 1, featIdx do
 		local f = _G.foods[i]
-		if f and isUnlocked(f.island) then
-			local qty = math.min(math.floor(remaining / f.power), math.floor(coinsLeft / f.price))
-			if qty > 0 then
-				for _=1,qty do pcall(function() _G.BuyFoodEvent:FireServer(f.name) end) end
-				remaining = remaining - qty * f.power
-				coinsLeft = coinsLeft - qty * f.price
-				totalPower = totalPower + qty * f.power
+		if f and isUnlocked(f.island) then table.insert(order, f) end
+	end
+	table.sort(order, function(a, b)
+		local ea, eb = a.power / a.price, b.power / b.price
+		if ea ~= eb then return ea > eb end
+		return a.power > b.power        -- same value: fewer, larger purchases
+	end)
+	-- ===== KNOWN BALANCE HOLE, LEFT OPEN ON PURPOSE PENDING A DECISION =====
+	-- Walking DOWN the whole unlocked menu lets a fill be any sum of meals, so the effective fuel
+	-- step is the SMALLEST unlocked food (32-power Eggs) at every island in the game -- 2.4% of the
+	-- last crossing. A playtest measured the consequence directly:
+	--       slot 3 bought 200 + 100       = 300 and crossed FIRST TRY (its meal is 200)
+	--       slot 4 bought 200 + 100 + 32  = 332 and crossed FIRST TRY (its meal is 200)
+	--       slot 5, 6, 8, 9, 10 -- all assembled out of smaller meals
+	-- Crossings solved for four to eight flights were falling in one or two, and the failures that
+	-- did happen landed at 83-99% of the gap instead of the designed 51-73%.
+	--
+	-- A stand-lock fixed it and was REJECTED: the open-choice shop is intentional. The replacement
+	-- is a BUY MAX rule plus a rising efficiency curve, not a restriction -- do not re-add one here.
+	for _, f in ipairs(order) do   -- best fuel-per-coin first
+		local qty = math.min(math.floor(remaining / f.power), math.floor(coinsLeft / f.price))
+		if qty > 0 then
+			for _=1,qty do
+				pcall(function() _G.BuyFoodEvent:FireServer(f.name) end)
+				if _G.PROGDATA_buy then pcall(_G.PROGDATA_buy, f.name, f.price, f.power, "MAX") end
 			end
+			remaining = remaining - qty * f.power
+			coinsLeft = coinsLeft - qty * f.price
+			totalPower = totalPower + qty * f.power
 		end
-		if remaining < _G.foods[1].power or coinsLeft < _G.foods[1].price then break end
+		if remaining <= 0 or coinsLeft < _G.foods[1].price then break end
+	end
+	-- ===== THE TOP-OFF, AND IT IS NOT OPTIONAL =====
+	-- The loop above floors by `remaining / power`, so it can only buy meals that fit WHOLE. Meals
+	-- do not divide the tanks (they are solved against the CROSSING, which almost never lands on an
+	-- exact divisor of the tank), so it stops up to one meal short and the tank never reaches full.
+	--
+	-- That is fatal on the long crossings, which need 97.2% of a tank. Slot 3 is a 320 tank and
+	-- Lettuce is 200: the loop buys one, cannot fit a second, and stops at 62% -- with the coins for
+	-- it sitting right there. The crossing would be flatly impossible via BUY MAX.
+	--
+	-- So finish with ONE more of the SAME food. The server tops the tank off and clamps rather than
+	-- refusing (see BuyFood in Shop.server), and charging full price for a partial meal is
+	-- deliberate: the top-off is the worst value in the game, so it can never be farmed, and it only
+	-- exists within one meal of full.
+	if remaining > 0 then
+		local cheapest = _G.foods[1]
+		for i = featIdx, 1, -1 do
+			local f = _G.foods[i]
+			if f and isUnlocked(f.island) and f.price <= coinsLeft then cheapest = f end
+		end
+		if cheapest and isUnlocked(cheapest.island) and coinsLeft >= cheapest.price then
+			pcall(function() _G.BuyFoodEvent:FireServer(cheapest.name) end)
+			-- Tagged separately from the main loop: the top-off is deliberately the worst value
+			-- in the game (full price for a partial serving), so it must be distinguishable from
+			-- a real purchase when reading the sequence back.
+			if _G.PROGDATA_buy then pcall(_G.PROGDATA_buy, cheapest.name, cheapest.price, cheapest.power, "MAX-topoff") end
+			totalPower = totalPower + remaining      -- the server clamps to the tank
+			coinsLeft = coinsLeft - cheapest.price
+			remaining = 0
+		end
 	end
 	if totalPower <= 0 then
 		-- coins checked FIRST; then TRULY full (no room) vs HAS room but the cheapest food still won't fit

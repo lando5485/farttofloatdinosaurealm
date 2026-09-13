@@ -66,15 +66,28 @@ local SHARED = {
 	FALLBACK_PREFIX  = "Island",
 
 	-- ---- GAP GEOMETRY (orig WorldClient:368) ----------------------------
-	GAP_BOTTOM_PAD   = 120,  -- studs above the LOWER island -- clears its airspace
-	GAP_TOP_PAD      = 200,  -- studs below the UPPER island -- clears its underside
+	-- RESCALED x0.455 with the tower (was 120 / 200). These are carved out of the GAP, and
+	-- the smallest gap is now 552 studs -- at the old pads they would have eaten 58% of it
+	-- and left barely any airspace to put a bubble in.
+	GAP_BOTTOM_PAD   = 55,   -- studs above the LOWER island -- clears its airspace
+	GAP_TOP_PAD      = 91,   -- studs below the UPPER island -- clears its underside
 
 	-- ---- DRIFT / MOVEMENT (orig WorldClient:26 -- shared by BOTH types) --
-	DRIFT_SPEED      = 12,   -- (orig) studs/sec: ~2.4x the old 5 -- a real chase, but still catchable by a determined flyer
+	-- DRIFT_SPEED is a SPEED and sits at its original 12: the player's climb speed is back
+	-- to its original value too, so "catchable by a determined flyer" means the same thing
+	-- it always did. (An interim pass cut it to 5 to match a slowed-down player.)
+	--
+	-- DRIFT_VR is a vertical DISTANCE and scaled x0.455 with the gaps (was 280). DRIFT_HR is
+	-- horizontal and the X/Z spiral did not move, so it stays.
+	--
+	-- REAIM_MIN/MAX are TIMES and scaled x0.455 (were 0.35 and 1.30) -- a bubble now covers
+	-- its shorter wander box in proportionally less time, so the drift pattern a player sees
+	-- while crossing is unchanged in shape.
+	DRIFT_SPEED      = 12,   -- (orig) studs/sec -- a real chase, but still catchable by a determined flyer
 	DRIFT_HR         = 180,  -- (orig) horizontal half-extent  -- ~4x bigger wander zone (was 45)
-	DRIFT_VR         = 280,  -- (orig) vertical half-extent    -- ~4x bigger wander zone (was 70)
-	REAIM_MIN        = 0.35, -- (orig) new heading every ~0.35-1.3s (was 2-4.5s)
-	REAIM_MAX        = 1.30,
+	DRIFT_VR         = 127,  -- vertical half-extent
+	REAIM_MIN        = 0.16, -- new heading every ~0.16-0.59s
+	REAIM_MAX        = 0.59,
 	TURN_INERTIA     = 0.25, -- (orig) new random heading dominates -> abrupt direction changes (not smooth)
 	VERTICAL_BIAS    = 0.7,  -- Y component of a random heading is damped -> wanders wide, not up/down
 
@@ -93,7 +106,9 @@ local SHARED = {
 	--
 	-- FAR_DISTANCE is comfortably past the widest gap's worth of visible airspace. Set
 	-- it to math.huge to get the kit's stock behaviour back.
-	FAR_DISTANCE     = 1500, -- studs from the player
+	FAR_DISTANCE     = 682,  -- studs from the player (rescaled x0.455 from 1500 -- it is
+	                         -- defined as "past the widest gap's worth of visible airspace"
+	                         -- and the widest gap went 7438 -> 3384, so it stays ~20% of it)
 	FAR_INTERVAL     = 0.25, -- seconds between updates out there
 
 	DEBUG            = true, -- one print per pop, like the original [BUBBLE] log
@@ -139,7 +154,9 @@ local GAS = {
 	                      -- surface. Held at ~11 past the surface of the 30-wide ball, so
 	                      -- the pickup is no easier than shipped; it just is not now
 	                      -- possible to overlap the ball visually without collecting it.
-	RESPAWN        = 45,  -- (orig) re-spawns after 45s so the pickup stays available
+	RESPAWN        = 20,  -- re-spawns so the pickup stays available (was 45; x0.455 with the
+	                      -- shorter flights, so a bubble is back before the NEXT attempt at
+	                      -- the same crossing, exactly as it used to be)
 	FLOAT_TEXT     = "+\240\159\146\168 GAS BOOST!",
 	FLOAT_COLOR    = Color3.fromRGB(0, 255, 100),
 
@@ -237,7 +254,7 @@ local COIN = {
 	COLLECT_RADIUS = 22,  -- still TIGHTER than gas relative to the ball (4 studs past the
 	                      -- surface, vs gas's 11) -- coins are meant to cost more precision.
 	                      -- Was 16 against a 24-wide ball, i.e. 4 past the surface: same.
-	RESPAWN        = 30,  -- (orig) re-spawns after 30s -- faster than gas, they're worth less each
+	RESPAWN        = 14,  -- faster than gas, they're worth less each (was 30; x0.455)
 	FLOAT_COLOR    = Color3.fromRGB(255, 215, 0),
 
 	-- pop: NO visual burst in the original -- the part is destroyed instantly and
@@ -267,8 +284,69 @@ local COIN = {
 	-- more things to fly at, no more reward, which is not what "more bubbles" should mean.
 	-- This way each bubble holds its value and the extra ones raise what is AVAILABLE; the
 	-- limit is how many you can actually reach, which is the interesting constraint.
-	BUBBLE_SHARE     = 0.032,
-	COIN_PER_STUD    = 0.14, -- must match BottomHUD's COIN_PER_STUD (the climb payout rate)
+	-- CUT FROM 0.032 TO 0.008, for the same reason GasBubble's GRANT_PERCENT came down.
+	-- Six coin bubbles per gap with the 1 + 0.2*streak multiplier summed to 0.032 * 9 =
+	-- 28.8% of (gap x COIN_PER_STUD) -- i.e. popping a gap's worth of coin bubbles paid
+	-- almost a THIRD of a crossing on top of the crossing itself.
+	--
+	-- That matters because of a hard, spacing-locked law: a crossing pays gap x
+	-- COIN_PER_STUD, and that pays for the NEXT crossing's fuel, so the next crossing is a
+	-- one-flight crossing as soon as
+	--       R_eff x gap[c]  >=  gap[c+1]
+	-- (the tier climb cancels out). Across the tower the tightest consecutive pair with no
+	-- gut purchase between it is 3638/2763 = 1.317, so R_eff -- the per-flight return on
+	-- fuel INCLUDING every bubble -- has to stay under 1.317. Base R is 1.100; a 28.8%
+	-- bubble bonus put R_eff at ~1.42 and blew straight through it.
+	--
+	-- CUT AGAIN, 0.008 -> 0.0008, AND THIS TIME IT IS THE ATTEMPT RAMP THAT FORCES IT.
+	--
+	-- Six bubbles at the 1 + 0.2*streak multiplier sum to 9x this share, so 0.008 paid 7.2%
+	-- of a whole flight for a clean chain. That was fine when a flight returned twice its
+	-- fuel. It is not fine now: above the starter island the tower runs at R ~1.10, i.e. a
+	-- flight nets 10% of what it spent, and the crossings take 4-8 tries precisely BECAUSE
+	-- that margin is thin. A 7.2% bonus on top of a 10% margin is not a bonus, it is very
+	-- nearly a second flight -- measured, it collapsed the tower from
+	--       3, 7, 4, 5, 5, 5, 6, 6, 7, 7, 8, 8      (no bubbles)
+	--       3, 3, 2, 1, 2, 2, 3, 2, 3, 2, 4, 2      (bubbles popped)
+	-- including a ONE-FLIGHT crossing, which this progression is not allowed to have.
+	--
+	-- At 0.0008 a chain is ~0.7% of a flight, about a fourteenth of the margin, and the whole
+	-- climb moves by at most one attempt per crossing whether you pop every bubble or none.
+	--
+	-- THE COST IS REAL AND IT IS THE RIGHT TRADE. A bubble is now worth ~1 coin at the bottom
+	-- and ~100 at the top -- small change against food. That is what a long attempt ladder
+	-- costs: any bonus big enough to feel generous is also big enough to delete half the
+	-- climb. If fat coin bubbles ever matter more than the ramp, raise this AND raise the
+	-- tier returns in FlightTuning.BASE_TIERS together, or the crossings collapse again.
+	BUBBLE_SHARE     = 0.0008,
+	-- ===== WHAT A BUBBLE IS WORTH DURING RING FEVER =====
+	-- Not a multiplier on the line above -- a share of the crossing in its own right.
+	--
+	-- RING_FEVER used to be ringMult 4 on a bubble worth about three coins, i.e. twelve
+	-- coins, while a full tank costs thousands. The only reason it ever FELT like an event
+	-- is that it was also setting serverEventCoinMult, which is what flights are paid on --
+	-- so a bubble buff was quietly quadrupling the entire flight economy for 30 seconds and
+	-- one flight inside the window bought two to three full tanks. That is fixed (see the
+	-- eventMult note further down); this is what replaces it.
+	--
+	-- 0.05 pays about 2% OF A FULL TANK per bubble at every height, because baseBonus() is
+	-- gap-scaled: 27 coins on crossing 1, 109 on crossing 7, 223 on crossing 12. Six coin
+	-- bubbles sit in a gap and the streak multiplier stacks on top, so a well-flown fever is
+	-- worth roughly a fifth of a tank -- a real reason to steer through them, and bounded by
+	-- the bubble count so it can never hand over a crossing the way the old bug did.
+	FEVER_SHARE      = 0.05,
+	-- must match BottomHUD's COIN_PER_STUD (the climb payout rate). BASE rate: baseBonus()
+	-- below divides it by FlightTuning.SPACING_SCALE, exactly as BottomHUD does.
+	-- 0.444 with the progression rebuild -- see the derivation in BottomHUD; it sets R (2.20
+	-- at the bottom) and must sit above BOTH R > 1 and R > gut capacity growth, and below the
+	-- level where a crossing bankrolls the next. Change both files together.
+	-- READ FROM FlightTuning, not typed out. This was a literal in three files and they had
+	-- drifted -- see the note on FlightTuning.COIN_PER_STUD_BASE. Set below, once the module
+	-- is required (this table is built before the require).
+	-- FALLBACK ONLY -- line ~363 overwrites this from FlightTuning.COIN_PER_STUD_BASE. It is
+	-- kept in step with the live value anyway: a stale constant sitting next to live behaviour
+	-- is exactly what cost this realm a whole tuning pass once already.
+	COIN_PER_STUD    = 0.637,
 }
 
 -- BASE_BONUS, SCALED TO WHERE THE PLAYER ACTUALLY IS.
@@ -295,7 +373,15 @@ function COIN.baseBonus()
 	local slot = math.floor(tonumber(player:GetAttribute("HighestSlot")) or 1)
 	local gap  = FlightTuning.gapFromSlot(slot)
 	if not gap or gap <= 0 then return COIN.BASE_BONUS end
-	return gap * COIN.COIN_PER_STUD * COIN.BUBBLE_SHARE
+	-- COIN_PER_STUD is divided by SPACING_SCALE for the same reason BottomHUD does it:
+	-- `gap` shrank with the tower but the gut prices it was solved against did not, so a
+	-- flat rate would pay out proportionally less at every spacing. Dividing here keeps
+	-- `gap * rate` -- and therefore a bubble's worth -- invariant when the tower is retuned.
+	-- Prefer the shared constant; the field above is only a fallback for a realm whose
+	-- FlightTuning predates it. See FlightTuning.COIN_PER_STUD_BASE for why it moved.
+	COIN.COIN_PER_STUD = FlightTuning.COIN_PER_STUD_BASE or COIN.COIN_PER_STUD
+	local rate = COIN.COIN_PER_STUD / (FlightTuning.SPACING_SCALE or 1)
+	return gap * rate * COIN.BUBBLE_SHARE
 end
 
 -- runtime streak state (module-level so onPop and the landing watcher share it)
@@ -683,10 +769,37 @@ local function collectType(spec, hrp)
 					coinStreak = coinStreak + 1
 					coinMultiplier = 1 + coinStreak * spec.STREAK_STEP
 					-- baseBonus() is gap-scaled here rather than the flat BASE_BONUS -- see
-					-- its note. The event multiplier is this realm's _G.serverEventCoinMult
-					-- (BottomHUD's name for it); the kit's _G.serverEventRingMult is read too
-					-- so a realm that sets either still gets its double-coins event.
-					local eventMult = _G.serverEventCoinMult or _G.serverEventRingMult or 1
+					-- its note. Either global still works, so a realm that sets either one
+					-- gets its coin event -- but the ORDER matters, and getting it wrong
+					-- cost a whole crossing.
+					--
+					-- RING_MULT IS READ FIRST, DELIBERATELY. It used to be coinMult first,
+					-- and because bubbles only ever read this global, RING_FEVER had to set
+					-- coinMult to reach them at all. But coinMult is ALSO what BottomHUD
+					-- multiplies flight income by, at all three payout sites -- both climb
+					-- ticks and the descent lump. So a bubble buff was quietly quadrupling
+					-- the entire flight economy for 30 seconds.
+					--
+					-- The scale of that: RING_FEVER is worth about 7 coins on a bubble and
+					-- was worth +17,000 on a single late flight -- two to three FULL TANKS
+					-- from one windfall. It is what turned a 14-flight crossing into a
+					-- one-shot in the 22:09 playtest.
+					--
+					-- With ringMult first, RING_FEVER sets ringMult alone and never touches
+					-- flight income, while COIN_RUSH (which sets coinMult and is genuinely
+					-- meant to double flight coins) still falls through and buffs bubbles
+					-- too. Both events keep doing exactly what their banners say.
+					-- RING FEVER is not a multiplier on a three-coin bubble -- at ringMult 4
+					-- that was twelve coins and the event may as well not have fired. It
+					-- swaps the SHARE instead, so a fever bubble is worth ~2% of a tank at
+					-- any height (see FEVER_SHARE). COIN_RUSH still multiplies normally,
+					-- because doubling coins is exactly what its banner promises.
+					local eventMult = 1
+					if _G.serverEventRingMult then
+						eventMult = spec.FEVER_SHARE / spec.BUBBLE_SHARE
+					elseif _G.serverEventCoinMult then
+						eventMult = _G.serverEventCoinMult
+					end
 					local base = spec.BASE_BONUS
 					local okBase, scaled = pcall(spec.baseBonus)
 					if okBase and type(scaled) == "number" and scaled > 0 then base = scaled end

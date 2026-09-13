@@ -277,6 +277,36 @@ local function buildTyrannosaurusIcon(scale)
 	local r = Instance.new("Part"); r.Name = "Root"; r.Size = Vector3.new(0.4,0.4,0.4); r.Transparency = 1; r.Anchored = true; r.CanCollide = false; r.Parent = ph; ph.PrimaryPart = r
 	return ph
 end
+-- The Therizinosaurus icon clones ReplicatedStorage.TherizinosaurusTemplate (mirrors the others exactly).
+local function buildTherizinosaurusIcon(scale)
+	local t = RS:FindFirstChild("TherizinosaurusTemplate") or RS:WaitForChild("TherizinosaurusTemplate", 20)
+	if t then
+		local c = t:Clone(); c.Name = "Therizinosaurus"; petAnims[c] = nil
+		local n = 0; for _, d in ipairs(c:GetDescendants()) do if d:IsA("BasePart") then n += 1 end end
+		print(("[PetHub] Therizinosaurus icon -> CLONED TherizinosaurusTemplate (%d parts)"):format(n))
+		applyBlink(c)
+		return c
+	end
+	warn("[PetHub] TherizinosaurusTemplate missing -> empty icon (resync + REPLAY Therizinosaurus.server.luau)")
+	local ph = Instance.new("Model"); ph.Name = "Therizinosaurus"
+	local r = Instance.new("Part"); r.Name = "Root"; r.Size = Vector3.new(0.4,0.4,0.4); r.Transparency = 1; r.Anchored = true; r.CanCollide = false; r.Parent = ph; ph.PrimaryPart = r
+	return ph
+end
+-- The Brachiosaurus icon clones ReplicatedStorage.BrachiosaurusTemplate (mirrors the others exactly).
+local function buildBrachiosaurusIcon(scale)
+	local t = RS:FindFirstChild("BrachiosaurusTemplate") or RS:WaitForChild("BrachiosaurusTemplate", 20)
+	if t then
+		local c = t:Clone(); c.Name = "Brachiosaurus"; petAnims[c] = nil
+		local n = 0; for _, d in ipairs(c:GetDescendants()) do if d:IsA("BasePart") then n += 1 end end
+		print(("[PetHub] Brachiosaurus icon -> CLONED BrachiosaurusTemplate (%d parts)"):format(n))
+		applyBlink(c)
+		return c
+	end
+	warn("[PetHub] BrachiosaurusTemplate missing -> empty icon (resync + REPLAY Brachiosaurus.server.luau)")
+	local ph = Instance.new("Model"); ph.Name = "Brachiosaurus"
+	local r = Instance.new("Part"); r.Name = "Root"; r.Size = Vector3.new(0.4,0.4,0.4); r.Transparency = 1; r.Anchored = true; r.CanCollide = false; r.Parent = ph; ph.PrimaryPart = r
+	return ph
+end
 local PET_ICON_BUILDER = {
 	CoconutCrab = buildCoconutCrab, PopcornSheep = buildPopcornSheep, ButterDuck = buildButterDuck,
 	BroccoliPet = buildBroccoliBlob, BurritoArmadillo = buildBroccoliBlob, -- (armadillo builder omitted; broccoli stand-in)
@@ -286,6 +316,8 @@ local PET_ICON_BUILDER = {
 	Triceratops = buildTriceratopsIcon, TriceratopsPet = buildTriceratopsIcon,
 	Spinosaurus = buildSpinosaurusIcon, SpinosaurusPet = buildSpinosaurusIcon,
 	Tyrannosaurus = buildTyrannosaurusIcon, TyrannosaurusPet = buildTyrannosaurusIcon,
+	Therizinosaurus = buildTherizinosaurusIcon, TherizinosaurusPet = buildTherizinosaurusIcon,
+	Brachiosaurus = buildBrachiosaurusIcon, BrachiosaurusPet = buildBrachiosaurusIcon,
 }
 
 -- ============================================================================
@@ -321,6 +353,11 @@ PET_ICON_BUILDER.SunflowerBee     = foodTemplateIcon("SunflowerBeeTemplate")
 PET_ICON_BUILDER.MapleFox         = foodTemplateIcon("MapleFoxTemplate")
 PET_ICON_BUILDER.FrostPenguin     = foodTemplateIcon("FrostPenguinTemplate")
 PET_ICON_BUILDER.BlossomBunny     = foodTemplateIcon("BlossomBunnyTemplate")
+-- SPACE REALM pets (the SPACE tab): clones of the exact Space templates SpacePetTemplates.server.luau builds.
+PET_ICON_BUILDER.SolarSlug        = foodTemplateIcon("SolarSlugTemplate")
+PET_ICON_BUILDER.RoverRaccoon     = foodTemplateIcon("RoverRaccoonTemplate")
+PET_ICON_BUILDER.BlackholeBat     = foodTemplateIcon("BlackholeBatTemplate")
+PET_ICON_BUILDER.CometCat         = foodTemplateIcon("CometCatTemplate")
 
 -- ============================================================================
 -- THE FULL PET CATALOG (realm 1 parity: the Hub always shows EVERY pet).
@@ -339,23 +376,36 @@ PET_ICON_BUILDER.BlossomBunny     = foodTemplateIcon("BlossomBunnyTemplate")
 -- original pet order, which stopped matching the tower when Misty Mire and Fern Frontier
 -- swapped: Spinosaurus is now the 3rd island's pet and Triceratops the 8th's. Tiers follow
 -- where the pet is actually EARNED, so the ladder still climbs with the tower --
---   slot 1 Stego / slot 3 Spino (Common) -> slot 5 Raptor / slot 7 Shark (Rare)
---   -> slot 8 Trike (Epic) -> slot 13 T-Rex (Legendary, the summit finale).
+--   slot 1 Stego / slot 3 Spino (Common) -> slot 5 Raptor / slot 8 Shark (Rare)
+--   -> slot 10 Trike (Epic) -> slot 13 T-Rex (Legendary, the summit finale).
+--
+-- Slots 7 and 12 (Claw Cliffs, Redwood Ridge) are not in that ladder: both grant
+-- RaptorPet, the same pet Fossil Frontier already gave you at slot 5. They sit where
+-- they do so the two unavoidable back-to-back quest islands never hand you two
+-- DIFFERENT pets in a row -- see the order note in IslandOrder.
 --
 -- `rareName` is the first realm's RARE VARIANT idea (see FOOD_RARE_NAMES below, keyed
 -- petId.."#R"): the same pet, pulled in its rare form, gets its own name rather than a
 -- suffix. Named here so the two realms' pets read as one collection.
 local PET_CATALOG = {
-	{ key = "StegoPet",         displayName = "Stegosaurus",  island = "Nesting Nook",    how = "Hatch the egg by the nest",
-		rarity = "Common",    rareName = "Crystal Stegosaurus" },
-	{ key = "TriceratopsPet",   displayName = "Triceratops",  island = "Fern Frontier",   how = "Find and hatch the egg on the island",
-		rarity = "Epic",      rareName = "Obsidian Triceratops" },
-	{ key = "RaptorPet",        displayName = "Velociraptor", island = "Fossil Frontier", how = "Dig up the buried egg",
-		rarity = "Rare",      rareName = "Phantom Velociraptor" },
-	{ key = "SharkPet",         displayName = "Megalodon",    island = "Coastal Crossing",how = "Fish the egg out of the lake",
-		rarity = "Rare",      rareName = "Abyssal Megalodon" },
+	-- ISLAND + HOW ARE THE PLAYER-FACING ANSWER TO "where do I get this", so they have to track
+	-- the grants. Three of these were stale: the Stego and Triceratops swapped islands when the
+	-- Mama Triceratops on Nesting Nook turned out to be handing out a Stego, and the Raptor kept
+	-- only Redwood Ridge when Fossil Frontier and Claw Cliffs stopped duplicating it.
+	{ key = "TriceratopsPet",   displayName = "Triceratops",  island = "Nesting Nook",    how = "Hatch the egg by the nest",
+		rarity = "Common",    rareName = "Obsidian Triceratops" },
 	{ key = "SpinosaurusPet",   displayName = "Spinosaurus",  island = "Misty Mire",      how = "Swat the mosquitos in the swamp",
 		rarity = "Common",    rareName = "Storm Spinosaurus" },
+	{ key = "BrachiosaurusPet", displayName = "Brachiosaurus",island = "Fossil Frontier", how = "Dig up the buried egg",
+		rarity = "Rare",      rareName = "Ancient Bonewalker" },
+	{ key = "TherizinosaurusPet", displayName = "Therizinosaurus", island = "Claw Cliffs", how = "Carry meat to the nest",
+		rarity = "Rare",      rareName = "Scythe Lord" },
+	{ key = "SharkPet",         displayName = "Megalodon",    island = "Coastal Crossing",how = "Fish the egg out of the lake",
+		rarity = "Rare",      rareName = "Abyssal Megalodon" },
+	{ key = "StegoPet",         displayName = "Stegosaurus",  island = "Fern Frontier",   how = "Find and hatch the egg on the island",
+		rarity = "Epic",      rareName = "Crystal Stegosaurus" },
+	{ key = "RaptorPet",        displayName = "Velociraptor", island = "Redwood Ridge",   how = "Snipe the raptors on the ridge",
+		rarity = "Epic",      rareName = "Phantom Velociraptor" },
 	{ key = "TyrannosaurusPet", displayName = "T-Rex",        island = "Volcanic Vista",  how = "Plug all six geysers",
 		rarity = "Legendary", rareName = "Molten T-Rex" },
 }
@@ -427,9 +477,49 @@ end
 -- ============================================================================
 -- PET HUB PANEL -- VERBATIM from PetFollow.client.lua (Pet Hub region).
 -- ============================================================================
+-- ============================================================================
+-- SPACE REALM PET CATALOG -- the Hub's SPACE tab, read-only exactly like FOOD. The Space Realm's four
+-- planet pets (one per planet task there -- its PetGrants.PLANET_PETS). They ride the SAME rift payload as
+-- the food pets: Space's DinoRift sends ownedPets = _G.playerOwnedPets[player], which holds BOTH that realm's
+-- food collection and these four (keys SolarSlug / RoverRaccoon / BlackholeBat / CometCat, each
+-- { level, xp }). ArrivalReceiver keeps it in _G.arrivedSpacePets and FoodPetsEvent already delivers it --
+-- the FOOD grid simply ignores the keys it doesn't know. Tier words + XP curve are Space's own (SpacePetsTab).
+-- ONE table rather than a row of locals: this file sits close to Luau's 200-local ceiling.
+-- ============================================================================
+local SPACE = {
+	CATALOG = {
+		{ key = "SolarSlug",    displayName = "Solar Slug",    where = "Venus",   task = "take the heat readings",   emoji = "\xE2\x98\x80" },
+		{ key = "RoverRaccoon", displayName = "Rover Raccoon", where = "Mars",    task = "mine the gem crystals",    emoji = "\xF0\x9F\x9A\x80" },
+		{ key = "BlackholeBat", displayName = "Blackhole Bat", where = "Saturn",  task = "clear the ring fragments", emoji = "\xF0\x9F\xA6\x87" },
+		{ key = "CometCat",     displayName = "Comet Cat",     where = "Neptune", task = "drill the ice cores",      emoji = "\xE2\x98\x84" },
+	},
+	subtitle = "Space Realm collection \xE2\x80\x94 return there to equip & level",
+	latest = {},
+}
+function SPACE.xpNeeded(level) return 50 + (level - 1) * 25 end -- the Space Realm's curve (SpacePetsTab)
+function SPACE.tier(level)
+	if level <= 5 then return "Common", Color3.fromRGB(175,180,190)
+	elseif level <= 10 then return "Uncommon", Color3.fromRGB(90,210,90)
+	elseif level <= 15 then return "Rare", Color3.fromRGB(70,140,255)
+	elseif level <= 20 then return "Epic", Color3.fromRGB(180,90,235)
+	else return "Legendary", Color3.fromRGB(255,170,40) end
+end
+
 local invGui = Instance.new("ScreenGui")
 invGui.Name = "PetInventoryUI"; invGui.ResetOnSpawn = false; invGui.DisplayOrder = 100
 invGui.Parent = pg
+-- FIRST-REALM SWEEP: every word in this hub gets a black outline. Only TRANSPARENT-background, solid text (on a
+-- filled text object a UIStroke outlines the border, not the glyphs; faded watermarks stay soft); anything that
+-- already carries a UIStroke keeps its own. Deferred a step so labels judged on their final state.
+invGui.DescendantAdded:Connect(function(o)
+	task.defer(function()
+		if o.Parent == nil then return end
+		if not (o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox")) then return end
+		if o.BackgroundTransparency < 1 or o.TextTransparency > 0.3 or o:FindFirstChildOfClass("UIStroke") then return end
+		local st = Instance.new("UIStroke"); st.Color = Color3.new(0, 0, 0)
+		st.Thickness = (o.TextScaled or o.TextSize >= 16) and 2 or 1.5; st.LineJoinMode = Enum.LineJoinMode.Round; st.Parent = o
+	end)
+end)
 local function uicorner(o, r) local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, r); c.Parent = o; return c end
 local function uistroke(o, col, t) local s = Instance.new("UIStroke"); s.Color = col; s.Thickness = t or 2; s.Parent = o; return s end
 local function gloss(btn) local gl = Instance.new("Frame"); gl.AnchorPoint = Vector2.new(0.5,0); gl.Position = UDim2.new(0.5,0,0,3); gl.Size = UDim2.new(1,-10,0,9); gl.BackgroundColor3 = Color3.new(1,1,1); gl.BorderSizePixel = 0; gl.ZIndex = (btn.ZIndex or 1) + 1; gl.Parent = btn; uicorner(gl, 6); local gg = Instance.new("UIGradient"); gg.Rotation = 90; gg.Transparency = NumberSequence.new(0.45, 1); gg.Parent = gl end -- glossy top highlight
@@ -501,7 +591,7 @@ for _, sl in ipairs({ {3,-3,11,-28}, {-3,7,9,28}, {21,5,8,58} }) do local le = I
 -- no plaque behind the title -- just the text on the header. The text NAMES THE PAGE
 -- you are on (PETS / TRADE / QUESTS -- the tab entry points below retitle it).
 local title = Instance.new("TextLabel"); title.Name = "HubTitle"; title.BackgroundTransparency = 1; title.Font = Enum.Font.FredokaOne; title.TextSize = 26; title.ZIndex = 3
-title.TextColor3 = Color3.fromRGB(255,215,0); title.Text = "PETS"; title.TextXAlignment = Enum.TextXAlignment.Left
+title.TextColor3 = Color3.fromRGB(255,215,0); title.Text = "PET HUB"; title.TextXAlignment = Enum.TextXAlignment.Left
 title.Size = UDim2.new(0,212,0,34); title.Position = UDim2.new(0,50,0,7); title.Parent = header
 uistroke(title, Color3.fromRGB(18,38,20), 2)
 local subtitle = Instance.new("TextLabel"); subtitle.BackgroundTransparency = 1; subtitle.Font = Enum.Font.Gotham; subtitle.TextSize = 13
@@ -526,9 +616,22 @@ local function makeSection(x, w, titleText)
 	return sec, sc
 end
 local petsSection, petsScroll = makeSection(12, 676, "\xF0\x9F\x90\xBe PETS")
-petsSection.Size = UDim2.new(1, -24, 1, -74); petsSection.Position = UDim2.new(0, 12, 0, 68)
+petsSection.Size = UDim2.new(1, -24, 1, -116); petsSection.Position = UDim2.new(0, 12, 0, 110) -- the first realm's band: under the tab bar, section title on show
 local petsGrid = Instance.new("UIGridLayout"); petsGrid.CellSize = UDim2.new(0,322,0,252); petsGrid.CellPadding = UDim2.new(0,10,0,12)
 petsGrid.HorizontalAlignment = Enum.HorizontalAlignment.Center; petsGrid.Parent = petsScroll
+-- TRADE UP chip (the first realm's pets-page action): burn duplicate skins you own for one of the next rarity.
+-- The crate panel owns that page; this is only its door. Orange = the first realm's "primary" colour.
+do
+	local chip = Instance.new("TextButton"); chip.Name = "TradeUpChip"; chip.AnchorPoint = Vector2.new(1, 0)
+	chip.Size = UDim2.new(0, 112, 0, 24); chip.Position = UDim2.new(1, -10, 0, 5)
+	chip.BackgroundColor3 = Color3.fromRGB(255, 150, 40); chip.Text = "\xE2\x86\x91 TRADE UP"; chip.Font = Enum.Font.FredokaOne
+	chip.TextSize = 13; chip.TextColor3 = Color3.fromRGB(60, 30, 0); chip.AutoButtonColor = true; chip.ZIndex = 5; chip.Parent = petsSection
+	uicorner(chip, 8); uistroke(chip, Color3.new(0, 0, 0), 2)
+	chip.MouseButton1Click:Connect(function()
+		if _G.playUIClick then pcall(_G.playUIClick) end
+		if _G.toggleSkinCrates then pcall(_G.toggleSkinCrates, true, "tradeup") end
+	end)
+end
 do
 	local pad = Instance.new("UIPadding"); pad.Name = "PetsTopPad"
 	pad.PaddingTop = UDim.new(0,10); pad.PaddingLeft = UDim.new(0,4); pad.PaddingRight = UDim.new(0,4)
@@ -536,7 +639,7 @@ do
 end
 
 -- QUESTS overlay
-local questsOverlay = Instance.new("Frame"); questsOverlay.Name = "QuestsOverlay"; questsOverlay.Size = UDim2.new(1,-24,1,-114); questsOverlay.Position = UDim2.new(0,12,0,108)
+local questsOverlay = Instance.new("Frame"); questsOverlay.Name = "QuestsOverlay"; questsOverlay.Size = UDim2.new(1,-24,1,-116); questsOverlay.Position = UDim2.new(0,12,0,110)
 questsOverlay.BackgroundColor3 = Color3.fromRGB(28,50,30); questsOverlay.Visible = false; questsOverlay.Parent = panel; uicorner(questsOverlay, 12); uistroke(questsOverlay, Color3.fromRGB(40,46,36), 2)
 local qoTitle = Instance.new("TextLabel"); qoTitle.Size = UDim2.new(1,-120,0,28); qoTitle.Position = UDim2.new(0,12,0,8); qoTitle.BackgroundTransparency = 1
 qoTitle.Font = Enum.Font.GothamBold; qoTitle.TextSize = 18; qoTitle.TextColor3 = Color3.fromRGB(255,215,0); qoTitle.TextXAlignment = Enum.TextXAlignment.Left; qoTitle.Text = "\xF0\x9F\x97\xBA Pet Quests"; qoTitle.Parent = questsOverlay
@@ -556,7 +659,7 @@ questsEmpty.TextColor3 = Color3.fromRGB(200,220,255); questsEmpty.Text = "Land o
 -- the PETS page has neither; the tab bar does the navigating.
 local foodOverlay, foodScroll = makeSection(12, 676, "\xF0\x9F\x8D\x94 PETS")
 foodOverlay.Name = "FoodOverlay" -- the tab router's fallback shows/hides by this name
-foodOverlay.Size = UDim2.new(1, -24, 1, -74); foodOverlay.Position = UDim2.new(0, 12, 0, 68) -- same band as petsSection
+foodOverlay.Size = UDim2.new(1, -24, 1, -116); foodOverlay.Position = UDim2.new(0, 12, 0, 110) -- same band as petsSection
 foodOverlay.Visible = false
 local foTitle = foodOverlay:FindFirstChildOfClass("TextLabel") -- the section title (sits behind the tab bar, same as PETS')
 local foodGrid = Instance.new("UIGridLayout"); foodGrid.CellSize = UDim2.new(0,322,0,252); foodGrid.CellPadding = UDim2.new(0,10,0,12)
@@ -565,6 +668,21 @@ do
 	local pad = Instance.new("UIPadding"); pad.Name = "PetsTopPad"
 	pad.PaddingTop = UDim.new(0,10); pad.PaddingLeft = UDim.new(0,4); pad.PaddingRight = UDim.new(0,4)
 	pad.Parent = foodScroll
+end
+
+-- SPACE REALM PETS page -- the SPACE tab. Same furniture as the FOOD page above (makeSection, same band,
+-- same 2-wide grid); only the cards differ (the Space Realm's navy).
+do
+	local ov, sc = makeSection(12, 676, "\xF0\x9F\x9A\x80 PETS")
+	ov.Name = "SpaceOverlay"
+	ov.Size = UDim2.new(1, -24, 1, -116); ov.Position = UDim2.new(0, 12, 0, 110) -- same band as petsSection
+	ov.Visible = false
+	local g = Instance.new("UIGridLayout"); g.CellSize = UDim2.new(0,322,0,252); g.CellPadding = UDim2.new(0,10,0,12)
+	g.HorizontalAlignment = Enum.HorizontalAlignment.Center; g.Parent = sc
+	local pad = Instance.new("UIPadding"); pad.Name = "PetsTopPad"
+	pad.PaddingTop = UDim.new(0,10); pad.PaddingLeft = UDim.new(0,4); pad.PaddingRight = UDim.new(0,4); pad.Parent = sc
+	SPACE.overlay, SPACE.scroll = ov, sc
+	SPACE.title = ov:FindFirstChildOfClass("TextLabel")
 end
 
 -- Forward-declared: the PET DETAIL PAGE (built after the card builders it serves --
@@ -609,7 +727,7 @@ local function openPanel(open)
 		if open then
 			-- always land on the pets grid, never on a stale detail page or another tab's overlay
 			pcall(function()
-				questsOverlay.Visible = false; foodOverlay.Visible = false; petsSection.Visible = true
+				questsOverlay.Visible = false; foodOverlay.Visible = false; SPACE.overlay.Visible = false; petsSection.Visible = true
 				if detailPage then detailPage.Visible = false end; detailSpecies = nil; detailIsFood = false
 			end)
 			-- the tab bar keeps its own highlight; snap it back to PETS so it agrees with the page
@@ -621,7 +739,7 @@ local function openPanel(open)
 		else
 			_G.MainMenuManager.notifyClosed("PetInv")
 			pcall(function()
-				questsOverlay.Visible = false; foodOverlay.Visible = false; petsSection.Visible = true
+				questsOverlay.Visible = false; foodOverlay.Visible = false; SPACE.overlay.Visible = false; petsSection.Visible = true
 				if detailPage then detailPage.Visible = false end; detailSpecies = nil; detailIsFood = false
 			end)
 		end
@@ -1100,11 +1218,106 @@ local function rebuildFoodPets(spacePets)
 	end)
 	if not ok then warn("[PetInv] ERROR building food pets: " .. tostring(err)) end
 end
+-- ============================================================================
+-- SPACE REALM PET CARDS (the SPACE tab). Same 322x252 cell and layout rhythm as the FOOD cards, in the Space
+-- Realm's navy. Read-only: these pets equip and level in the Space Realm, so no EQUIP row and no detail page
+-- (the detail page is built around this realm's own pets and the food catalog). No emoji in the text -- this
+-- realm's UI fonts render them as tofu; the emoji only stands in as the viewport placeholder while the
+-- template builds, the same as FOOD.
+-- ============================================================================
+function SPACE.icon(card, entry, level)
+	local vp = makeViewportIcon(card, entry.key, level, false, UDim2.new(0,310,0,140), UDim2.new(0.5,0,0,6), Vector2.new(0.5,0))
+	vp.BackgroundColor3 = Color3.fromRGB(14,22,46)
+	local ph = vp:FindFirstChild("IconPlaceholder"); if ph and entry.emoji then ph.Text = entry.emoji end
+	return vp
+end
+function SPACE.text(card, props)
+	local l = Instance.new("TextLabel"); l.BackgroundTransparency = 1; l.Font = Enum.Font.GothamBold
+	for k, v in pairs(props) do l[k] = v end
+	l.Parent = card; return l
+end
+-- one OWNED space pet: Space tier word + level, XP bar on Space's curve, pointer home.
+function SPACE.ownedCard(entry, p, order)
+	local level = math.clamp(tonumber(p.level) or 1, 1, 25)
+	local tierName, tierColor = SPACE.tier(level)
+	local card = Instance.new("Frame"); card.Name = "Space_" .. entry.key; card.LayoutOrder = order
+	card.BackgroundColor3 = Color3.fromRGB(26,38,74); card.Parent = SPACE.scroll
+	uicorner(card, 12); uistroke(card, Color3.fromRGB(62,90,160), 1)
+	SPACE.icon(card, entry, level)
+	SPACE.text(card, { Size = UDim2.new(1,-16,0,18), Position = UDim2.new(0,8,0,150), TextSize = 16,
+		TextColor3 = Color3.new(1,1,1), Text = entry.displayName })
+	SPACE.text(card, { Size = UDim2.new(1,-16,0,16), Position = UDim2.new(0,8,0,170), TextSize = 13,
+		TextColor3 = tierColor, Text = tierName .. "  Lv " .. level })
+	local maxed = level >= 25
+	local barBG = Instance.new("Frame"); barBG.Size = UDim2.new(1,-16,0,14); barBG.Position = UDim2.new(0,8,0,188)
+	barBG.BackgroundColor3 = Color3.fromRGB(14,22,46); barBG.BorderSizePixel = 0; barBG.Parent = card
+	uicorner(barBG, 7); uistroke(barBG, Color3.fromRGB(10,16,34), 1)
+	local need = SPACE.xpNeeded(level)
+	local frac = maxed and 1 or math.clamp((tonumber(p.xp) or 0) / math.max(1, need), 0, 1)
+	local fill = Instance.new("Frame"); fill.Size = UDim2.new(frac, 0, 1, 0); fill.BorderSizePixel = 0
+	fill.BackgroundColor3 = maxed and Color3.fromRGB(255,200,40) or Color3.fromRGB(80,220,120); fill.Parent = barBG; uicorner(fill, 7)
+	SPACE.text(barBG, { Size = UDim2.new(1,0,1,0), TextSize = 10, TextColor3 = Color3.new(1,1,1),
+		Text = maxed and "MAX" or (math.floor(tonumber(p.xp) or 0) .. " / " .. need .. " XP") })
+	local home = SPACE.text(card, { Size = UDim2.new(1,-16,0,26), Position = UDim2.new(0,8,0,208), TextSize = 12,
+		TextColor3 = Color3.new(1,1,1), Text = "EQUIP & LEVEL IN THE SPACE REALM" })
+	home.BackgroundTransparency = 0; home.BackgroundColor3 = Color3.fromRGB(62,90,160)
+	uicorner(home, 8); uistroke(home, Color3.fromRGB(20,32,70), 1)
+	SPACE.text(card, { Size = UDim2.new(1,-16,0,14), Position = UDim2.new(0,8,0,236), Font = Enum.Font.Gotham, TextSize = 11,
+		TextColor3 = Color3.fromRGB(150,190,255), Text = "Earned on " .. entry.where })
+end
+-- one LOCKED space pet: full-colour picture, gold border + gold LOCKED line, and the task that earns it.
+function SPACE.lockedCard(entry, order, idx)
+	local card = Instance.new("Frame"); card.Name = "SpaceLocked_" .. entry.key; card.LayoutOrder = order
+	card.BackgroundColor3 = Color3.fromRGB(26,38,74); card.Parent = SPACE.scroll
+	uicorner(card, 12); uistroke(card, Color3.fromRGB(255,190,60), 2)
+	SPACE.icon(card, entry, 1)
+	local badge = SPACE.text(card, { Size = UDim2.new(0,66,0,20), Position = UDim2.new(1,-12,0,12), AnchorPoint = Vector2.new(1,0),
+		TextSize = 11, TextColor3 = Color3.fromRGB(60,40,0), Text = "LOCKED", ZIndex = 3 })
+	badge.BackgroundTransparency = 0; badge.BackgroundColor3 = Color3.fromRGB(255,190,60); uicorner(badge, 6)
+	SPACE.text(card, { Size = UDim2.new(1,-16,0,18), Position = UDim2.new(0,8,0,150), TextSize = 16,
+		TextColor3 = Color3.new(1,1,1), Text = entry.displayName })
+	SPACE.text(card, { Size = UDim2.new(1,-16,0,16), Position = UDim2.new(0,8,0,170), TextSize = 13,
+		TextColor3 = Color3.fromRGB(255,205,90), Text = "LOCKED  \xE2\x80\xA2  " .. entry.where })
+	SPACE.text(card, { Size = UDim2.new(1,-20,0,14), Position = UDim2.new(0,10,0,188), Font = Enum.Font.Gotham, TextSize = 12,
+		TextColor3 = Color3.fromRGB(150,190,255), TextXAlignment = Enum.TextXAlignment.Left,
+		Text = "Space Realm   \xC2\xB7   Pet " .. tostring(idx) .. " of " .. #SPACE.CATALOG })
+	SPACE.text(card, { Size = UDim2.new(1,-20,0,26), Position = UDim2.new(0,10,0,204), Font = Enum.Font.Gotham, TextSize = 12,
+		TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top, TextColor3 = Color3.fromRGB(205,222,255),
+		Text = "In the Space Realm, " .. entry.task .. " on " .. entry.where .. " to earn this pet" })
+	local more = SPACE.text(card, { Size = UDim2.new(1,-16,0,20), Position = UDim2.new(0,8,0,230), TextSize = 12,
+		TextColor3 = Color3.new(1,1,1), Text = "COLLECT IN THE SPACE REALM" })
+	more.BackgroundTransparency = 0; more.BackgroundColor3 = Color3.fromRGB(150,110,30)
+	uicorner(more, 6); uistroke(more, Color3.fromRGB(90,66,16), 1)
+end
+-- Repaint the SPACE grid from the rift pet table (the same table FOOD reads). Empty (direct join) -> all 4 locked.
+function SPACE.rebuild(t)
+	local ok, err = pcall(function()
+		if type(t) == "table" then SPACE.latest = t end
+		for i = #iconQueue, 1, -1 do
+			local q = iconQueue[i]
+			if q.vp and (not q.vp.Parent or q.vp:IsDescendantOf(SPACE.scroll)) then table.remove(iconQueue, i) end
+		end
+		for _, c in ipairs(SPACE.scroll:GetChildren()) do if c:IsA("Frame") then c:Destroy() end end
+		local owned = 0
+		for i, entry in ipairs(SPACE.CATALOG) do
+			local p = SPACE.latest[entry.key]
+			if type(p) == "table" then owned = owned + 1; pcall(SPACE.ownedCard, entry, p, i)
+			else pcall(SPACE.lockedCard, entry, i, i) end
+		end
+		SPACE.scroll.CanvasSize = UDim2.new(0,0,0, math.ceil(#SPACE.CATALOG / 2) * 264 + 20)
+		if SPACE.title then SPACE.title.Text = ("\xF0\x9F\x9A\x80 PETS   %d / %d"):format(owned, #SPACE.CATALOG) end
+		SPACE.subtitle = ("Space Realm collection  %d / %d \xE2\x80\x94 return there to equip & level"):format(owned, #SPACE.CATALOG)
+		if SPACE.overlay.Visible then pcall(function() subtitle.Text = SPACE.subtitle end) end
+		print(("[PetInv] SPACE tab: %d/%d species owned"):format(owned, #SPACE.CATALOG))
+	end)
+	if not ok then warn("[PetInv] ERROR building space pets: " .. tostring(err)) end
+end
+SPACE.rebuild({}) -- paint the full locked catalog immediately; live data overwrites it
 rebuildFoodPets({}) -- paint the full locked catalog immediately; live data overwrites it
 task.spawn(function()
 	local ev = RS:FindFirstChild("FoodPetsEvent") or RS:WaitForChild("FoodPetsEvent", 20)
 	if not ev then return end -- no server half -> the locked catalog stands
-	ev.OnClientEvent:Connect(rebuildFoodPets)
+	ev.OnClientEvent:Connect(function(t) rebuildFoodPets(t); SPACE.rebuild(t) end) -- one rift table feeds FOOD and SPACE
 	pcall(function() ev:FireServer() end) -- request (covers this script loading after the arrival push)
 end)
 
@@ -1129,7 +1342,7 @@ do
 
 	detailPage = Instance.new("Frame")
 	detailPage.Name = "DetailPage"; detailPage.BackgroundTransparency = 1
-	detailPage.Position = UDim2.new(0, 12, 0, 108); detailPage.Size = UDim2.new(1, -24, 1, -114) -- same band as the quests/trade overlays
+	detailPage.Position = UDim2.new(0, 12, 0, 110); detailPage.Size = UDim2.new(1, -24, 1, -116) -- same band as the quests/trade overlays
 	detailPage.Visible = false; detailPage.ZIndex = 3; detailPage.Parent = panel
 
 	local backBtn = Instance.new("TextButton"); backBtn.Size = UDim2.new(0,132,0,30); backBtn.Position = UDim2.new(0,10,0,8)
@@ -1399,7 +1612,7 @@ do
 		-- SWAP pages, never stack -- the translucent sections bleed through each other.
 		-- (TradeOverlay is looked up by name: its local is declared BELOW this block, so
 		-- referencing it here would silently hit a nil global instead.)
-		petsSection.Visible = false; foodOverlay.Visible = false
+		petsSection.Visible = false; foodOverlay.Visible = false; SPACE.overlay.Visible = false
 		questsOverlay.Visible = false
 		local tov = panel:FindFirstChild("TradeOverlay"); if tov then tov.Visible = false end
 		detailPage.Visible = true
@@ -1499,7 +1712,7 @@ local function rebuildInventory(payload)
 		-- sits behind the PetHubTabs bar, so it can't carry it). Don't stomp the FOOD
 		-- page's subtitle if that tab is the one on screen.
 		subtitleDino = ("Collection  %d / %d hatched"):format(ownedCount, math.max(totalCards, #PET_CATALOG))
-		if not foodOverlay.Visible then pcall(function() subtitle.Text = subtitleDino end) end
+		if not foodOverlay.Visible and not SPACE.overlay.Visible then pcall(function() subtitle.Text = subtitleDino end) end
 		print(("[PetInv] hub grid: %d owned + %d locked = %d cards"):format(ownedCount, lockedCount, totalCards))
 		if totalCards == 0 then
 			-- ===== styled EMPTY STATE: paw watermark + heading + subtitle + egg-in-twig-nest =====
@@ -1574,9 +1787,9 @@ end
 
 local tradeBtn = Instance.new("TextButton"); tradeBtn.Size = UDim2.new(0,96,0,34); tradeBtn.Position = UDim2.new(1,-150,0,13)
 tradeBtn.BackgroundColor3 = Color3.fromRGB(48,110,210); tradeBtn.Font = Enum.Font.FredokaOne; tradeBtn.TextSize = 15; tradeBtn.TextColor3 = Color3.new(1,1,1)
-tradeBtn.Text = "\xF0\x9F\x94\x81 TRADE"; tradeBtn.Parent = header; uicorner(tradeBtn, 8); uistroke(tradeBtn, Color3.new(0,0,0), 2); gloss(tradeBtn)
+tradeBtn.Text = "\xF0\x9F\x94\x81 TRADE"; tradeBtn.Parent = header; uicorner(tradeBtn, 8); uistroke(tradeBtn, Color3.new(0,0,0), 2); gloss(tradeBtn); tradeBtn.Visible = false -- first-realm header: X only (the tab bar navigates)
 
-local tradeOverlay = Instance.new("Frame"); tradeOverlay.Name = "TradeOverlay"; tradeOverlay.Size = UDim2.new(1,-24,1,-114); tradeOverlay.Position = UDim2.new(0,12,0,108)
+local tradeOverlay = Instance.new("Frame"); tradeOverlay.Name = "TradeOverlay"; tradeOverlay.Size = UDim2.new(1,-24,1,-116); tradeOverlay.Position = UDim2.new(0,12,0,110)
 tradeOverlay.BackgroundColor3 = Color3.fromRGB(28,50,30); tradeOverlay.Visible = false; tradeOverlay.Parent = panel; uicorner(tradeOverlay, 12); uistroke(tradeOverlay, Color3.fromRGB(40,46,36), 2)
 local ovTitle = Instance.new("TextLabel"); ovTitle.Size = UDim2.new(1,-120,0,28); ovTitle.Position = UDim2.new(0,12,0,8); ovTitle.BackgroundTransparency = 1
 ovTitle.Font = Enum.Font.GothamBold; ovTitle.TextSize = 18; ovTitle.TextColor3 = Color3.fromRGB(255,215,0); ovTitle.TextXAlignment = Enum.TextXAlignment.Left; ovTitle.Text = "Trade"; ovTitle.Parent = tradeOverlay
@@ -1660,7 +1873,7 @@ end)
 
 local questsBtn = Instance.new("TextButton"); questsBtn.Size = UDim2.new(0,96,0,34); questsBtn.Position = UDim2.new(1,-252,0,13)
 questsBtn.BackgroundColor3 = Color3.fromRGB(74,150,58); questsBtn.Font = Enum.Font.FredokaOne; questsBtn.TextSize = 15; questsBtn.TextColor3 = Color3.new(1,1,1)
-questsBtn.Text = "\xF0\x9F\x97\xBA QUESTS"; questsBtn.Parent = header; uicorner(questsBtn, 8); uistroke(questsBtn, Color3.new(0,0,0), 2); gloss(questsBtn)
+questsBtn.Text = "\xF0\x9F\x97\xBA QUESTS"; questsBtn.Parent = header; uicorner(questsBtn, 8); uistroke(questsBtn, Color3.new(0,0,0), 2); gloss(questsBtn); questsBtn.Visible = false -- first-realm header: X only
 questsBtn.MouseButton1Click:Connect(function()
 	if _G.PetHubTabs then _G.PetHubTabs.select("quests"); return end
 	tradeOverlay.Visible = false; questsOverlay.Visible = not questsOverlay.Visible
@@ -1685,36 +1898,49 @@ end)
 -- (11 food cards -> the last row's right cell is a window straight onto the dino
 -- grid's last card). The quests/trade overlays are opaque, so they just cover it.
 _G.PetHubShowPets = function()
+	SPACE.overlay.Visible = false
 	if detailPage then detailPage.Visible = false end; detailSpecies = nil; detailIsFood = false -- tab switch closes the detail page
 	tradeOverlay.Visible = false
 	questsOverlay.Visible = false
 	foodOverlay.Visible = false
 	petsSection.Visible = true
-	title.Text = "PETS"; subtitle.Text = subtitleDino
+	title.Text = "PET HUB"; subtitle.Text = subtitleDino
 end
 _G.PetHubShowFood = function()
+	SPACE.overlay.Visible = false
 	if detailPage then detailPage.Visible = false end; detailSpecies = nil; detailIsFood = false -- tab switch closes the detail page
 	tradeOverlay.Visible = false
 	questsOverlay.Visible = false
 	petsSection.Visible = false -- swap, never stack (see note above)
 	foodOverlay.Visible = true
-	title.Text = "PETS"; subtitle.Text = subtitleFood -- named PETS like the food realm's own menu; the subtitle says which realm
+	title.Text = "PET HUB"; subtitle.Text = subtitleFood -- named PETS like the food realm's own menu; the subtitle says which realm
+end
+_G.PetHubShowSpace = function()
+	if detailPage then detailPage.Visible = false end; detailSpecies = nil; detailIsFood = false -- tab switch closes the detail page
+	tradeOverlay.Visible = false
+	questsOverlay.Visible = false
+	petsSection.Visible = false -- swap, never stack (see note above)
+	foodOverlay.Visible = false
+	SPACE.overlay.Visible = true
+	title.Text = "PET HUB"; subtitle.Text = SPACE.subtitle
 end
 _G.PetHubShowQuests = function()
+	SPACE.overlay.Visible = false
 	if detailPage then detailPage.Visible = false end; detailSpecies = nil; detailIsFood = false -- tab switch closes the detail page
 	tradeOverlay.Visible = false
 	foodOverlay.Visible = false
 	petsSection.Visible = true
 	questsOverlay.Visible = true
-	title.Text = "QUESTS"; subtitle.Text = subtitleDino
+	title.Text = "PET HUB"; subtitle.Text = subtitleDino
 end
 _G.PetHubShowTrade = function()
+	SPACE.overlay.Visible = false
 	if detailPage then detailPage.Visible = false end; detailSpecies = nil; detailIsFood = false -- tab switch closes the detail page
 	questsOverlay.Visible = false
 	foodOverlay.Visible = false
 	petsSection.Visible = true
 	tradeOverlay.Visible = true
-	title.Text = "TRADE"; subtitle.Text = subtitleDino
+	title.Text = "PET HUB"; subtitle.Text = subtitleDino
 	-- mid-trade: show the live window. Otherwise the player picker, refreshed.
 	if tradeState and tradeState.active then renderTradeWindow(tradeState) else showPicker() end
 end
@@ -1727,7 +1953,7 @@ if PetTradeState then PetTradeState.OnClientEvent:Connect(function(state)
 	tradeState = state
 	if state and state.active then
 		openPanel(true); tradeOverlay.Visible = true; renderTradeWindow(state)
-		title.Text = "TRADE"
+		title.Text = "PET HUB"
 		if _G.PetHubTabs then pcall(function() _G.PetHubTabs.setActive("trade") end) end
 	else
 		local reason = state and state.reason

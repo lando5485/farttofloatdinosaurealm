@@ -425,6 +425,15 @@ local function equipSkin(player, petId, skinId, traitId)
 	if traitId == false then traitId = nil end
 	if traitId ~= nil and not PetTraits.exists(traitId) then return false, "bad_trait" end
 
+	-- UPGRADE LEGACY IDS ON THE WAY IN. The first-generation skins/traits (Stone, Galaxy, Crowned,
+	-- Sparkly...) still exist in old saves and in trades; exists() accepts them, so without this they
+	-- would be stored back verbatim forever and every reader would have to re-map them. normalise()
+	-- resolves each to its modern identity once, here, at the single point where an equip is recorded.
+	-- Both maps cover every id this realm ever shipped, so nothing is dropped -- see PetSkins.LEGACY
+	-- and PetTraits.LEGACY.
+	skinId = PetSkins.normalise and PetSkins.normalise(skinId) or skinId
+	if traitId ~= nil and PetTraits.normalise then traitId = PetTraits.normalise(traitId) end
+
 	local key = PetSkins.makeKey(petId, skinId, traitId)
 	if countOf(player, key) <= 0 then return false, "not_owned" end
 	if not ownsPetSpecies(player, petId) then return false, "pet_locked" end
@@ -834,6 +843,41 @@ _G.crateTokensTrade = function(from, to, amount)
 	setTokens(from, getTokens(from) - amount)
 	setTokens(to,   getTokens(to)   + amount)
 	print(string.format("[SkinCrate] trade moved %d tokens: %s -> %s", amount, from.Name, to.Name))
+	return true
+end
+
+-- ===== GIFTING HOOKS (for Gifting.server -- the MORE+ "Send a Gift" card, same contract as Space / Food) =====
+-- ONLINE gift: debit and credit in one call with no yield between them, so a gift can never mint tokens.
+_G.giftCrateTokens = function(sender, recipient, amount)
+	amount = math.floor(tonumber(amount) or 0)
+	if amount <= 0 then return false, "bad amount" end
+	if not (typeof(sender) == "Instance" and sender:IsA("Player")
+		and typeof(recipient) == "Instance" and recipient:IsA("Player")) then
+		return false, "bad players"
+	end
+	if getTokens(sender) < amount then return false, "not enough tokens" end
+	if getTokens(recipient) + amount > CrateTokens.MAX_BALANCE then return false, "their token wallet is full" end
+	setTokens(sender, getTokens(sender) - amount)
+	setTokens(recipient, getTokens(recipient) + amount)
+	pushState(sender); pushState(recipient)
+	return true
+end
+-- OFFLINE debit: taken BEFORE the mailbox write (the reverse order is a minting bug).
+_G.debitCrateTokensForGift = function(sender, amount)
+	amount = math.floor(tonumber(amount) or 0)
+	if amount <= 0 then return false, "bad amount" end
+	if getTokens(sender) < amount then return false, "not enough tokens" end
+	setTokens(sender, getTokens(sender) - amount)
+	pushState(sender)
+	return true
+end
+-- RAW credit: mailbox claims and refunds. NOT routed through _G.crateTokensAward -- these tokens were already
+-- debited from a real sender, so the anti-farm caps must never eat part of them.
+_G.addCrateTokensRaw = function(player, amount, reason)
+	amount = math.floor(tonumber(amount) or 0)
+	if amount <= 0 then return false end
+	addTokens(player, amount, reason or "gift")
+	pushState(player)
 	return true
 end
 

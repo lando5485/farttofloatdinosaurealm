@@ -23,7 +23,7 @@ local PRODUCT_IDS = { [3600302990]=true, [3600303163]=true, [3600303265]=true, [
 -- ===== the banner (look + behavior verbatim from the spec) -- calls onDone after it dismisses =====
 local function showPurchaseBanner(playerName, itemName, isGamepass, onDone)
 	local g = Instance.new("ScreenGui"); g.Name = "PurchaseBanner"; g.ResetOnSpawn = false; g.IgnoreGuiInset = true; g.DisplayOrder = 80; g.Parent = PlayerGui
-	local b = Instance.new("Frame"); b.Size = UDim2.new(0,500,0,60); b.Position = UDim2.new(0.5,0,0,-70); b.AnchorPoint = Vector2.new(0.5,0)
+	local b = Instance.new("Frame"); b.Size = UDim2.new(0,500,0,65); b.Position = UDim2.new(0.5,0,0,-70); b.AnchorPoint = Vector2.new(0.5,0)
 	b.BackgroundColor3 = Color3.fromRGB(255,200,0); b.ZIndex = 20; b.Parent = g
 	Instance.new("UICorner", b).CornerRadius = UDim.new(0,12)
 	local s = Instance.new("UIStroke", b); s.Color = Color3.fromRGB(200,150,0); s.Thickness = 3

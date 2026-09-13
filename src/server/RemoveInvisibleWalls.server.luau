@@ -52,9 +52,13 @@ end
 
 local invisibleFixed, meshFixed = 0, 0
 local logged = 0
+-- VERBOSE: per-item boot spam. OFF by default -- it buried the progression telemetry.
+-- Same flag name in every file that had a noisy loop, so it greps as one switch.
+local VERBOSE = false
+
 local function logHit(kind: string, p: BasePart)
 	logged += 1
-	if logged <= LOG_LIMIT then
+	if VERBOSE and logged <= LOG_LIMIT then
 		print(("[NoWalls]   %s -> %s"):format(kind, p:GetFullName()))
 	elseif logged == LOG_LIMIT + 1 then
 		print("[NoWalls]   ... (further changes not listed)")

@@ -4,7 +4,7 @@
 -- SMALL CRITTERS DRIFTING THROUGH EACH ISLAND. A still scene reads as a diorama; a scene with things moving
 -- through it reads as a place. Every island in the tower gets its own flock, themed to what that island IS:
 -- butterflies and bees over the green islands, gulls wheeling over Coastal Crossing, midges over Misty Mire,
--- a couple of dark birds circling Raptor Ridge and nothing at all on Inferno Isle or Glacier Gulch -- an
+-- a couple of dark birds circling Claw Cliffs and nothing at all on Inferno Isle or Glacier Gulch -- an
 -- island with no life on it says something too, as long as the ones either side of it are busy.
 --
 -- ===== WHY CLIENT-SIDE =====
@@ -89,10 +89,10 @@ local ISLANDS = {
 	[5]  = { butterflies = 0,  bees = 9, birds = 2, wings = WINGS_PALE,   bee = BEE_MIDGE, bird = BIRD_DARK,  birdHeight = 50, birdSpread = 0.8 },
 	-- island6  Redwood Ridge -- forest canopy: birds high above the trees
 	[6]  = { butterflies = 6,  bees = 4, birds = 4, wings = WINGS_JUNGLE, bee = BEE_GOLD,  bird = BIRD_DARK,  birdHeight = 95, birdSpread = 1.0 },
-	-- island7  Raptor Ridge -- predators live here. Almost nothing small, and what circles is dark
+	-- island7  Claw Cliffs -- predators live here. Almost nothing small, and what circles is dark
 	[7]  = { butterflies = 0,  bees = 2, birds = 5, wings = WINGS_PALE,   bee = BEE_FLY,   bird = BIRD_DARK,  birdHeight = 90, birdSpread = 1.2 },
 	-- island8  Inferno Isle -- nothing lives here. Deliberate: the empty islands make the busy ones read
-	-- island9  Jungle Junction -- the richest island in the tower
+	-- island9  Frostbite Flats (snow) -- the richest island in the tower
 	[9]  = { butterflies = 12, bees = 7, birds = 4, wings = WINGS_JUNGLE, bee = BEE_GOLD,  bird = BIRD_DARK,  birdHeight = 80, birdSpread = 1.0 },
 	-- island10 Petrified Pass -- stone forest: sparse, quiet
 	[10] = { butterflies = 1,  bees = 1, birds = 3, wings = WINGS_PALE,   bee = BEE_FLY,   bird = BIRD_BROWN, birdHeight = 75, birdSpread = 1.0 },

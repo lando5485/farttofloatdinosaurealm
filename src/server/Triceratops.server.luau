@@ -12,6 +12,7 @@
 
 local RS        = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
+local PetFace   = require(RS:WaitForChild("DinosaurRealm"):WaitForChild("PetFace")) -- one shared face for all 6 pets
 
 -- ===== helpers (VERBATIM from Velociraptor/Shark.server.luau) =====
 local BAL, BLK, CYL = Enum.PartType.Ball, Enum.PartType.Block, Enum.PartType.Cylinder
@@ -34,10 +35,9 @@ local function fuse(model, src, name, color)
 	if ok and typeof(u) == "Instance" then
 		first:Destroy(); for _, p in ipairs(src) do p:Destroy() end
 		flagPart(u); u.Name = name; u.UsePartColor = true; u.Color = color
-		pcall(function() u.RenderFidelity = Enum.RenderFidelity.Precise end)
-		pcall(function() u.CollisionFidelity = Enum.CollisionFidelity.Box end)
 		pcall(function() u.SmoothingAngle = 60 end)
 		u.Parent = model
+		PetFace.forcePrecise(u, model.Name)
 		return u, nil
 	else
 		table.insert(src, 1, first)
@@ -93,10 +93,32 @@ local function buildTriceratops()
 	local MOUTH = Color3.fromRGB(90,58,52)       -- smile
 	local WHITE = Color3.fromRGB(250,250,250)
 
-	-- BODY: UNCHANGED rounded-cube union (only the colour differs)
+	-- ========================================================================================
+	-- BODY UNION. Cube unchanged. Body-coloured STRUCTURAL pieces (the tail) join the SAME
+	-- UnionAsync call instead of being welded on afterwards -- separate overlapping parts shade
+	-- independently, so Roblox creases at every join and the pet reads as blobs stuck to a box.
+	--
+	-- FEET ARE THE ONE EXCEPTION, AND IT IS NOT A STYLE CHOICE. They used to be S() pieces here,
+	-- which handed them to UnionAsync -- and fuse() DESTROYS every source part after unioning, so
+	-- the four Foot parts did not exist in the published template at all. PetFollow's walk cycle
+	-- finds its feet by name (p.Name:sub(1,4) == "Foot"), so it found ZERO on this pet and the
+	-- Triceratops was the only quest dino that slid around rigid while the others stepped.
+	-- Welded AFTER the union instead, exactly like Stegosaurus/Velociraptor/Spinosaurus do
+	-- (PetFace.fuseAll then keeps them out on its own -- see isMovingPart).
+	-- The cost is the documented faint seam at each ankle; the payoff is legs that actually step.
+	-- ========================================================================================
 	local src = {}
 	roundedCubeInto(src, P, 0,0,0, PSW,PSH,PSD, PSR, BODY)
+	local function S(...) src[#src+1] = P(...) end   -- structural: joins the body union
+	-- TAIL pulled in so the tip's centre is buried in the tail and the tail's in the body
+	S("Tail",    BAL, 1.1,0.95,0.95, BODY, -1.55,-0.10,0)
+	S("TailTip", BAL, 0.6,0.55,0.55, BODY, -2.05, 0.02,0)
 	local body, err = fuse(m, src, "BodyUnion", BODY)
+
+	-- FEET: welded onto the finished union so the walk cycle can step them.
+	for _, fp in ipairs({ {0.95,0.78}, {0.95,-0.78}, {-0.95,0.78}, {-0.95,-0.78} }) do
+		weldTo(P("Foot", BLK, 0.95,0.8,0.95, BODY, fp[1],-1.55,fp[2]), body)
+	end
 
 	-- ===== tapered-cone horn helper: 3 cylinder segments (thick base -> thin) + a rounded ball tip, laid along `dir`.
 	-- The base end sits at (bx,by,bz) so sinking that point into the face/frill embeds the horn (no float). =====
@@ -123,21 +145,13 @@ local function buildTriceratops()
 		weldTo(P("FrillScallop", BAL, 0.7, 1.05, 1.05, FRILL, wp.X, wp.Y, wp.Z), body)
 	end
 
-	-- FEET: 4 stubby feet (same as the others)
-	for _, fp in ipairs({ {0.95,0.78}, {0.95,-0.78}, {-0.95,0.78}, {-0.95,-0.78} }) do
-		weldTo(P("Foot", BLK, 0.95,0.8,0.95, BODY, fp[1],-1.55,fp[2]), body)
-	end
-
 	-- BELLY: lighter cream-green panel low on the front
 	weldTo(P("Belly", BAL, 0.5,1.3,2.2, BELLY, 1.3,-1.0,0), body)
 
 	-- FACE: two BIG glossy eyes close together (+X front): white eyeball + dark pupil + bright glint
-	for _, sgn in ipairs({1,-1}) do
-		local zc = 0.42 * sgn -- close together
-		weldTo(P("whitepartofeye", CYL, 0.20, 1.02, 1.02, WHITE, 1.66, 0.08, zc), body)
-		weldTo(P("blackpartofeye", CYL, 0.26, 0.56, 0.56, DARK,  1.74, 0.06, zc), body)
-		weldTo(P("Glint",          CYL, 0.12, 0.22, 0.22, WHITE, 1.90, 0.24, zc + 0.12), body)
-	end
+	-- shared PetFace (src/shared/PetFace.luau) -- this pet's proportions are the ones the whole set
+	-- is now tuned to, so it looks the same as before; the numbers just live in one place now.
+	PetFace.eyes{ P = P, weld = weldTo, body = body, x = 1.66, y = 0.08, white = WHITE, dark = DARK }
 
 	-- THREE TAPERED HORNS (cream/bone). Brow horns ~1.4x the nose horn; bases sunk into the upper face / snout.
 	horn("BrowHorn",  1.35, 0.75,  0.45, Vector3.new(0.45, 1.0,  0.34), 2.0, 0.40, 0.10) -- right brow: up + forward + out
@@ -146,18 +160,24 @@ local function buildTriceratops()
 
 	-- BEAK: a small parrot-like beak (tan) at the front of the mouth, with a hooked tip + 2 nostril dots
 	weldTo(P("BeakTop",  BAL, 0.8,0.5,0.8, BEAK, 1.68,-0.35,0), body)
-	weldTo(P("BeakHook", BAL, 0.45,0.45,0.55, BEAK, 1.98,-0.55,0), body)  -- the hooked point curving down
+	weldTo(P("BeakHook", BAL, 0.45,0.45,0.55, BEAK, 1.94,-0.53,0), body)  -- the hooked point curving down
 	weldTo(P("BeakLow",  BAL, 0.55,0.36,0.62, BEAK, 1.6,-0.66,0), body)
 	for _, sgn in ipairs({1,-1}) do
-		weldTo(P("Nostril", BAL, 0.17,0.17,0.17, DARK, 1.98,-0.28,0.2*sgn), body) -- 2 tiny nostril dots
+		weldTo(P("Nostril", BAL, 0.17,0.17,0.17, DARK, 1.94,-0.28,0.2*sgn), body) -- 2 tiny nostril dots, sunk into the beak
 	end
 	-- a small happy SMILE curve just below the beak
 	weldTo(P("Smile", BAL, 0.35,0.22,1.15, MOUTH, 1.5,-0.95,0), body)
 
-	-- TAIL: a short stubby tail off the BACK (-X)
-	weldTo(P("Tail", BAL, 1.1,0.95,0.95, BODY, -2.0,-0.1,0), body)
-	weldTo(P("TailTip", BAL, 0.6,0.55,0.55, BODY, -2.7,0.02,0), body)
-
+	-- ===== ONE SOLID =====
+	-- NOTE: this pet's GEOMETRY is deliberately untouched -- every part is the same size and in
+	-- the same place it has always been. Fusing changes only how those parts are RENDERED (one
+	-- surface instead of many), so it stays exactly the pet that was signed off, minus the seams.
+	-- Everything welded above is now fused into a single part (eyes excepted -- they blink).
+	-- This is what stops the pet reading as "shapes that aren't connected" in the world: a union
+	-- is ONE surface with one set of normals, so there are no part boundaries left for the
+	-- world's lighting to draw a hard line across. See the long note on PetFace.fuseAll.
+	PetFace.ensureRoot(m)
+	body = PetFace.fuseAll(m, body, PetFace.ANIMATED)
 	return m, err
 end
 

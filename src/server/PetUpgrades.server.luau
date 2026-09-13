@@ -46,8 +46,14 @@ local PETS = {
 	TriceratopsPet = { displayName = "Triceratops", maxLevel = 25 },
 	SpinosaurusPet = { displayName = "Spinosaurus", maxLevel = 25 },
 	TyrannosaurusPet = { displayName = "T-Rex", maxLevel = 25 },
+	-- The two islands that used to hand out a SECOND and THIRD Velociraptor now have their
+	-- own species: Fossil Frontier digs up the animal whose skeleton is its landmark, and
+	-- Claw Cliffs gives the dinosaur with the longest claws that ever existed. Eight quests,
+	-- eight distinct pets -- the Raptor stays on Redwood Ridge, where the raptors live.
+	TherizinosaurusPet = { displayName = "Therizinosaurus", maxLevel = 25 },
+	BrachiosaurusPet   = { displayName = "Brachiosaurus",   maxLevel = 25 },
 }
-local RARE_NAMES = { StegoPet = "Cosmic Stegosaurus", RaptorPet = "Alpha Velociraptor", SharkPet = "Ancient Megalodon", TriceratopsPet = "Elder Triceratops", SpinosaurusPet = "Swamp King Spinosaurus", TyrannosaurusPet = "Volcano Tyrant Rex" }
+local RARE_NAMES = { StegoPet = "Cosmic Stegosaurus", RaptorPet = "Alpha Velociraptor", SharkPet = "Ancient Megalodon", TriceratopsPet = "Elder Triceratops", SpinosaurusPet = "Swamp King Spinosaurus", TyrannosaurusPet = "Volcano Tyrant Rex", TherizinosaurusPet = "Scythe Lord Therizinosaurus", BrachiosaurusPet = "Ancient Bonewalker Brachiosaurus" }
 -- RARE hatch variants: rolled only the FIRST time a player ever hatches each pet. Re-hatching is
 -- always a guaranteed normal. Odds = 1/N. T-Rex is the ultra-rare 1/500 "Mythical"; the rest are 1/99 "Exotic".
 local RARE_ODDS = { TyrannosaurusPet = 500 } -- default 99 (see rollRare)
@@ -301,6 +307,10 @@ local SpinosaurusHatched = ev("SpinosaurusHatched") -- c->s: the player complete
 SpinosaurusHatched.OnServerEvent:Connect(function(player) grantPet(player, "SpinosaurusPet") end)
 local TyrannosaurusHatched = ev("TyrannosaurusHatched") -- c->s: the player plugged all island11 geysers -> grant it
 TyrannosaurusHatched.OnServerEvent:Connect(function(player) grantPet(player, "TyrannosaurusPet") end)
+local TherizinosaurusHatched = ev("TherizinosaurusHatched") -- c->s: the player finished the Claw Cliffs nest quest -> grant it
+TherizinosaurusHatched.OnServerEvent:Connect(function(player) grantPet(player, "TherizinosaurusPet") end)
+local BrachiosaurusHatched = ev("BrachiosaurusHatched")     -- c->s: the player finished the Fossil Frontier dig -> grant it
+BrachiosaurusHatched.OnServerEvent:Connect(function(player) grantPet(player, "BrachiosaurusPet") end)
 
 -- ===== EQUIP from the Pet Hub: set the equipped pet, refresh the hub badge, and tell the client to spawn
 -- THAT pet's follower (or despawn on unequip). This is what makes "equip any pet I press" actually work. =====
@@ -379,6 +389,8 @@ local function giveAllPets(player)
 	grantPet(player, "TriceratopsPet") -- same path as the Triceratops island grant
 	grantPet(player, "SpinosaurusPet") -- same path as the island5 mosquito grant
 	grantPet(player, "TyrannosaurusPet") -- same path as the island11 geyser grant
+	grantPet(player, "TherizinosaurusPet") -- same path as the Claw Cliffs nest grant
+	grantPet(player, "BrachiosaurusPet")   -- same path as the Fossil Frontier dig grant
 	local owned = {}
 	for id in pairs(_G.playerOwnedPets[player] or {}) do owned[#owned+1] = id end
 	print(("[/allpets] granted Stego + Raptor + Megalodon + Triceratops + Spinosaurus + T-Rex to %s; hub refreshed"):format(player.Name))

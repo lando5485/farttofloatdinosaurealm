@@ -16,6 +16,12 @@ local RunService       = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local TS               = game:GetService("TweenService")
 local Debris           = game:GetService("Debris")
+
+-- VERBOSE: per-item boot spam (one line per part/island/pet/serving). OFF by default --
+-- it buried the progression telemetry in hundreds of lines. Flip to true to debug THIS
+-- system specifically; every file that had a noisy loop uses the same flag name.
+local VERBOSE = false
+
 local player           = Players.LocalPlayer
 local PlayerGui        = player:WaitForChild("PlayerGui")
 
@@ -195,7 +201,7 @@ end
 -- RISING CEILING (PickupFloor pattern 1), with a verb of its own: sawing.
 --
 -- Picking meat up used to be one E on a ProximityPrompt, which made the whole of
--- Raptor Ridge a five-stop walk. Each piece is now sawed off the ridge with the
+-- Claw Cliffs a five-stop walk. Each piece is now sawed off the ridge with the
 -- bone: DRAG the saw across the cut and back, and each full traverse bites deeper.
 --
 -- The floor is exact rather than tuned. A ceiling climbs 0 -> 1 over 15s and the
@@ -207,8 +213,8 @@ end
 --
 -- Bail out (X, never the backdrop) and the meat is left exactly as it was.
 local function openCarveMinigame(entry, onDone)
-	local STROKES = 14      -- full traverses of the cut; each one bites 1/14 deeper
-	local SAG     = 0.02    -- the meat settles back into the ridge while you're not sawing
+	local STROKES = 8       -- full traverses of the cut; each one bites 1/8 deeper
+	local SAG     = 0.012   -- the meat settles back into the ridge while you're not sawing
 	-- DONE, not 1.0, for TWO reasons -- either one alone made the cut impossible to finish:
 	--   1. the fill is CLAMPED to the rising ceiling, so a stroke can add at most exactly
 	--      the ceiling's value, and the sag then takes a sliver back out on the very next
@@ -362,9 +368,15 @@ local function hatchEgg(egg)
 	pcall(function() egg:Destroy() end)
 	-- grant the Baby Raptor (Velociraptor pet)
 	local cf = CFrame.new(pos + Vector3.new(3,0,0))
-	if _G.PetHubAddPet then pcall(function() _G.PetHubAddPet("RaptorPet", { petId="RaptorPet", displayName="Baby Raptor", level=1, xp=0, xpNeed=100, maxLevel=25, milestone="Newly hatched!" }) end) end
-	if _G.SpawnRaptorFollower then pcall(function() _G.SpawnRaptorFollower(cf) end) end
-	do local rh = RS:FindFirstChild("RaptorHatched"); if rh then pcall(function() rh:FireServer() end) end end
+	-- ===== CLAW CLIFFS GIVES A THERIZINOSAURUS, NOT A THIRD VELOCIRAPTOR =====
+	-- This island, Fossil Frontier and Redwood Ridge all used to hand out RaptorPet, so two of
+	-- the three were giving you a pet you already owned. The Raptor stayed on Redwood Ridge
+	-- (its raptors are the quest there); this island took the dinosaur with the longest claws
+	-- of any animal that has ever lived, which is what its landmark is.
+	-- Only the species granted changed -- the meat, the nest and the markers are untouched.
+	if _G.PetHubAddPet then pcall(function() _G.PetHubAddPet("TherizinosaurusPet", { petId="TherizinosaurusPet", displayName="Therizinosaurus", level=1, xp=0, xpNeed=100, maxLevel=25, milestone="Newly hatched!" }) end) end
+	if _G.SpawnTherizinosaurusFollower then pcall(function() _G.SpawnTherizinosaurusFollower(cf) end) end
+	do local rh = RS:FindFirstChild("TherizinosaurusHatched"); if rh then pcall(function() rh:FireServer() end) end end
 	floatText(pos + Vector3.new(0,3,0), "\xF0\x9F\xA6\x96 Baby Raptor hatched!", Color3.fromRGB(140,255,150))
 end
 
@@ -416,6 +428,25 @@ local function deliver()
 		if i and meat[i] then meat[i].delivered = true; if meat[i].model then pcall(function() meat[i].model:Destroy() end) end end
 		st.delivered += 1
 		updateHUD(); updatePrompts()
+
+		-- THE CHOMP. Fires on a SUCCESSFUL feed only -- bailing out of the panel with the X
+		-- returns success=false and leaves you still carrying the meat, so it must sit here
+		-- rather than in the minigame's finish(), or you would hear the nest eat something
+		-- it never got. Positional on the egg so it comes from the nest, not your head.
+		if eggPart then
+			local s = Instance.new("Sound")
+			s.Name = "NestChomp"
+			s.SoundId = "rbxassetid://95877881142415"
+			s.Volume = 2.0
+			s.RollOffMode = Enum.RollOffMode.Linear
+			s.RollOffMinDistance = 12
+			s.RollOffMaxDistance = 120
+			s.Parent = eggPart
+			pcall(function() s:Play() end)
+			pcall(function() s.Ended:Once(function() pcall(function() s:Destroy() end) end) end)
+			Debris:AddItem(s, 12) -- backstop: eggPart survives the quest, so never leak onto it
+		end
+
 		if eggPart then floatText(eggPart.Position + Vector3.new(0,2.5,0), ("Fed!  %d/%d"):format(st.delivered, CONFIG.count), Color3.fromRGB(255,230,150)) end
 		if st.delivered >= CONFIG.count and eggPart then hatchEgg(eggPart) end
 	end)
@@ -513,7 +544,7 @@ task.spawn(function()
 			task.wait(1)
 			waited += 1
 			if waited % 30 == 0 then
-				print(("[RaptorNest]   still waiting for island7 to stream in (%ds)"):format(waited))
+				if VERBOSE then print(("[RaptorNest]   still waiting for island7 to stream in (%ds)"):format(waited)) end
 			end
 		end
 		print(("[RaptorNest] island7 streamed in after %ds -> looking for the Meat + EggSpot markers"):format(waited))

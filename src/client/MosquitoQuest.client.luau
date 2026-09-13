@@ -4,8 +4,8 @@
 -- THE FLOW:
 --   1. Big MOSQUITOS hover/drift in the air above island5 (clickable from the ground).
 --   2. Click one -> a "SWAT!" mini-game GUI pops up -> the bug flies around the
---      panel and you hit it each time it LANDS. 12 landings, 1.25s apart, so a
---      mosquito is a flat 15s of hunting however fast you tap (see PickupFloor).
+--      panel and you hit it each time it LANDS. 7 landings, 1.29s apart, so a
+--      mosquito is a flat 9s of hunting however fast you tap (see PickupFloor).
 --   3. Squash 5 -> a NEST + dino egg appears on the island.
 --   4. Press E to "Feed & Hatch" -> the mosquitos feed the baby dino -> cool hatch -> pet granted.
 --
@@ -18,6 +18,7 @@ local RunService = game:GetService("RunService")
 local TS         = game:GetService("TweenService")
 local RS         = game:GetService("ReplicatedStorage")
 local Debris     = game:GetService("Debris")
+local SoundService = game:GetService("SoundService")
 local player     = Players.LocalPlayer
 local HatchBurst   = require(RS:WaitForChild("DinosaurRealm"):WaitForChild("HatchBurst"))   -- shared cool hatch FX
 local ChevronTrail = require(RS:WaitForChild("DinosaurRealm"):WaitForChild("ChevronTrail")) -- shared ground chevron guide
@@ -27,8 +28,8 @@ local PickupFloor  = require(RS:WaitForChild("DinosaurRealm"):WaitForChild("Pick
 local CONFIG = {
 	islandName    = "island5",
 	count         = 5,            -- mosquitos to squash
-	hitsToSwat    = 12,           -- landings you have to connect with to squash one
-	escapeIdle    = 6,            -- seconds with NO swing at all before the mosquito escapes
+	hitsToSwat    = 7,            -- landings you have to connect with to squash one
+	escapeIdle    = 8.4,          -- seconds with NO swing at all before the mosquito escapes
 	petId         = "SpinosaurusPet", -- the swamp dino reward
 	petName       = "Spinosaurus",
 	spawnFollower = "SpawnSpinosaurusFollower",
@@ -211,6 +212,20 @@ local function smackSwatter()
 	local baseC0 = motor and motor.C0
 	smacking = true
 
+	-- SWATTER WHOOSH. Fires here, AFTER the `smacking` guard and the tool check -- so it
+	-- tracks actual swings and cannot double up if the player mashes mid-animation, and
+	-- never plays for a click with no swatter in hand. 2D: it is your own arm, and this
+	-- whole file is a LocalScript, so a rolloff would only quieten your own swing.
+	do
+		local s = Instance.new("Sound")
+		s.Name = "SwatterWhoosh"
+		s.SoundId = "rbxassetid://123796710194563"
+		s.Volume = 1.1
+		s.Parent = SoundService
+		pcall(function() s:Play() end)
+		Debris:AddItem(s, 4)
+	end
+
 	task.spawn(function()
 		local t0 = os.clock()
 		local conn
@@ -368,8 +383,102 @@ local function buildHUD()
 	end)
 	return g
 end
+--======================================================================
+-- SWARM BUZZ -- the drone that tells you the bugs are still out there.
+--======================================================================
+-- ONE emitter at the swarm's centre, NOT one per mosquito. Five copies of the same loop
+-- parented to five drifting models phase against each other and stack to five times the
+-- volume whenever two wander close, which reads as broken audio rather than a swarm.
+-- A single emitter with Roblox's 3-D rolloff gives the same "it gets louder as I walk
+-- in" for a fifth of the cost and none of the beating.
+--
+-- IT THINS AS YOU SWAT. Volume scales with how many are still alive, so every kill is
+-- audible before the last one -- and at zero it fades out and the emitter is destroyed.
+-- Every completion path funnels through onAllCaught (the normal finish AND /done both
+-- call it), so stopSwarmBuzz only has to be wired there to cover both.
+-- ===== IT IS DELIBERATELY QUIETER THAN EVERY OTHER ISLAND BED =====
+-- The island ambience loops (IslandAmbience.client) run at 0.28, with the louder few at 0.70.
+-- This ran at 1.6 -- more than twice the loudest bed in the game, on the one island that has
+-- no ambience of its own to sit under. Playtest verdict: "really annoying and loud".
+--
+-- 0.35 was half the loud tier. Still too much on a second pass -- HALVED AGAIN to 0.175, which
+-- is a quarter of the loudest island bed and below even the quiet ones (0.28). The swarm is now
+-- something you notice when you walk into it rather than something that dominates the island.
+-- With `quietest` it floors at 0.07 on the last bug.
+local BUZZ = {
+	soundId  = "rbxassetid://85476497328517",
+	volume   = 0.175, -- standing inside a full swarm; a quarter of the loudest island bed (0.70)
+	quietest = 0.40,  -- share of that still playing with a single mosquito left
+	fadeOut  = 1.1,   -- seconds to fade once the last one is squashed
+}
+
+local buzzSound   -- the Sound while the swarm lives; nil once it is cleared
+
+local function buzzLevel()
+	local alive = math.max(0, CONFIG.count - st.caught)
+	if alive <= 0 then return 0 end
+	return BUZZ.volume * (BUZZ.quietest + (1 - BUZZ.quietest) * (alive / CONFIG.count))
+end
+
+local function stopSwarmBuzz()
+	local s = buzzSound; buzzSound = nil
+	if not s then return end
+	task.spawn(function()
+		local v0, t0 = s.Volume, os.clock()
+		while s.Parent and os.clock() - t0 < BUZZ.fadeOut do
+			s.Volume = v0 * (1 - (os.clock() - t0) / BUZZ.fadeOut)
+			task.wait(0.05)
+		end
+		local anchor = s.Parent
+		pcall(function() s:Stop(); s:Destroy() end)
+		if anchor and anchor.Name == "MosquitoBuzzAnchor" then pcall(function() anchor:Destroy() end) end
+	end)
+end
+
+local function updateSwarmBuzz()
+	if buzzSound then buzzSound.Volume = buzzLevel() end
+end
+
+-- pos = swarm centre, radius = how far the mosquitos are scattered around it.
+local function startSwarmBuzz(pos, radius)
+	if buzzSound then return end
+	local anchor = Instance.new("Part")
+	anchor.Name = "MosquitoBuzzAnchor"
+	anchor.Size = Vector3.new(1, 1, 1)
+	anchor.CFrame = CFrame.new(pos)
+	anchor.Transparency = 1
+	anchor.Anchored, anchor.CanCollide, anchor.CanQuery, anchor.CanTouch = true, false, false, false
+	anchor.Parent = Workspace
+
+	local s = Instance.new("Sound")
+	s.Name = "MosquitoSwarmBuzz"
+	s.SoundId = BUZZ.soundId
+	s.Looped = true
+	s.RollOffMode = Enum.RollOffMode.Linear
+	-- ===== THE FALLOFF IS SIZED TO THE ISLAND, NOT TO A MULTIPLE OF THE SWARM =====
+	-- This was min = radius, max = radius * 4, under a comment claiming "the gap out of Misty
+	-- Mire is ~1,800 studs, so a 4x falloff cannot bleed onto the next island". That was true
+	-- when it was written and is NOT true now: the tower was compressed x0.455 and that gap is
+	-- 828 studs. With the measured swarm radius of 155 the old rule gave full volume out to 155
+	-- and audibility out to 621 -- three quarters of the way to the next island, and well past
+	-- the island's own ~185-stud half-width. You heard mosquitoes from open sky.
+	--
+	-- Sized off the island instead: you have to be among them for full volume, and it is gone
+	-- shortly past the shoreline. ANY falloff written as a multiple of the swarm spread will
+	-- drift again the next time the spacing moves -- keep it bounded in absolute studs.
+	s.RollOffMinDistance = 50
+	s.RollOffMaxDistance = math.clamp(radius * 1.6, 180, 280)
+	s.Volume = buzzLevel()
+	s.Parent = anchor
+	buzzSound = s
+	pcall(function() s:Play() end)
+	print(("[Mosquito] swarm buzz started at the island centre (full volume within %.0f studs, silent past %.0f)")
+		:format(s.RollOffMinDistance, s.RollOffMaxDistance))
+end
+
 local function updateHUD()
 	if hudLbl then hudLbl.Text = ("\xF0\x9F\xA6\x9F  Mosquitos: %d / %d"):format(st.caught, CONFIG.count) end
+	updateSwarmBuzz() -- every catch routes through here, so the drone thins with the swarm
 end
 
 -- ===== a big, clearly-visible mosquito model =====
@@ -600,7 +709,24 @@ local function squashMosquito(m)
 	local em = Instance.new("ParticleEmitter"); em.Texture="rbxasset://textures/particles/smoke_main.dds"
 	em.Color=ColorSequence.new(Color3.fromRGB(130,170,90)); em.Lifetime=NumberRange.new(0.4,0.8); em.Speed=NumberRange.new(7,14)
 	em.SpreadAngle=Vector2.new(180,180); em.Size=NumberSequence.new(1.4,0); em.Rate=0; em.Parent=fx; em:Emit(22)
-	Debris:AddItem(fx, 1.1)
+
+	-- THE SQUISH. Positional, and it rides the burst part that is already here rather than
+	-- spawning a second anchor -- the mosquito can be 30+ studs away across the island, so
+	-- it has to come from where the bug was, not from your head.
+	local sq = Instance.new("Sound")
+	sq.Name = "MosquitoSquish"
+	sq.SoundId = "rbxassetid://90416226721742"
+	sq.Volume = 2.0
+	sq.RollOffMode = Enum.RollOffMode.Linear
+	sq.RollOffMinDistance = 12
+	sq.RollOffMaxDistance = 140
+	sq.Parent = fx
+	pcall(function() sq:Play() end)
+
+	-- 1.1s was sized for the particle burst alone and would cut the squish off mid-clip.
+	-- The part is invisible, non-colliding and non-query with a Rate=0 emitter, so holding
+	-- it a few seconds longer costs nothing and lets the sound finish.
+	Debris:AddItem(fx, 6)
 	floatText(pos + Vector3.new(0,1,0), "Squashed!")
 	pcall(function() m:Destroy() end)
 end
@@ -849,6 +975,7 @@ task.spawn(function()
 	local function onAllCaught()
 		if st.done then return end
 		st.done = true
+		stopSwarmBuzz() -- the swarm is gone, so the drone goes with it (covers /done too)
 		-- find EggSpot5 NOW (it has surely streamed in by the time all mosquitos are swatted); fallback = island centre
 		local eggSpot = findSpot()
 		local eggPos = center
@@ -1005,6 +1132,10 @@ task.spawn(function()
 			floatText(m:GetPivot().Position + Vector3.new(0, 1, 0), why, Color3.fromRGB(240, 220, 120))
 		end)
 	end
+	-- The swarm is up, so start the drone. Centred on the island and sized to the spread
+	-- the mosquitos were actually scattered over, so it is loud where they are.
+	startSwarmBuzz(center, spreadR)
+
 	-- /done -> skip the swatting, spawn the Spinosaurus egg + nest at EggSpot5
 	DoneCommand.bind(isl, "Mosquito", function()
 		-- squash any survivors so the island isn't left with bugs buzzing around the egg

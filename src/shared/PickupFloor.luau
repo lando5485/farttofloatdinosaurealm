@@ -32,9 +32,19 @@
 local PickupFloor = {}
 
 -- The floor itself. One number, so an island can't drift off the standard.
-PickupFloor.SECONDS = 15
+--
+-- 15 -> 9 (a 40% cut, by request). EVERY rep count that feeds a ceiling or a cadence
+-- had to come down WITH it -- see the warning below. Shortening the clock alone does not
+-- make a minigame easier, it makes it FASTER: the same number of taps now has to land in
+-- 60% of the time. The per-quest counts were cut alongside this so the required input
+-- rate FELL in every one of the five:
+--     eggs 16->5 rocks | dig 11->6 swings | swat 12->7 hits | carve 14->8 | plug 16->10
+-- Verified rates (reps x (1/seconds + leak)), before -> after:
+--     1.84 -> 0.85 | 0.73 -> 0.67 | 0.80 -> 0.78 | 1.21 -> 0.98 | 1.39 -> 1.23 per sec
+PickupFloor.SECONDS = 9
 
--- ISLAND 1's LOST EGGS run 30% short of the standard, by request. They are the very
+-- ISLAND 1's LOST EGGS run 30% short of the standard, by request. Scaled with SECONDS
+-- (9 x 0.7 = 6.3) so the relationship survives the 40% cut. They are the very
 -- first collectible a new player touches, and five of them at the full floor is 75
 -- seconds of rocking before the tutorial island opens up.
 --
@@ -42,7 +52,7 @@ PickupFloor.SECONDS = 15
 -- CLIENT's rising ceiling and the SERVER's claim check must agree exactly. If they ever
 -- drift apart, the server silently refuses every egg the panel says is finished -- which
 -- is precisely the failure the eggs already shipped with once.
-PickupFloor.ISLAND1_EGG_SECONDS = 10.5
+PickupFloor.ISLAND1_EGG_SECONDS = 6.3
 
 -- What "full" means for a completion test. See the warning on newCeiling below --
 -- this is not a nicety, a bar-fill verb that tests against 1.0 cannot be finished.

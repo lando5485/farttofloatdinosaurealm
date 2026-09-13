@@ -13,6 +13,7 @@ local RS         = game:GetService("ReplicatedStorage")
 local UIS        = game:GetService("UserInputService")
 local TS         = game:GetService("TweenService")
 local Debris     = game:GetService("Debris")
+local SoundSvc   = game:GetService("SoundService")   -- only used to park the load-check sounds
 local StarterGui = game:GetService("StarterGui")
 local HatchBurst = require(RS:WaitForChild("DinosaurRealm"):WaitForChild("HatchBurst")) -- shared cool hatch FX
 
@@ -132,6 +133,59 @@ local function recoil(char)
 	end
 end
 
+--======================================================================
+-- SNIPER AUDIO. Both are FIRST-PERSON sounds -- the gun is in your hands, so they hang off
+-- the camera rather than the tool, and every player hears their own.
+--======================================================================
+-- Kept in one table so the ids are findable. If one of these ever goes silent it is almost
+-- certainly audio privacy -- Roblox refuses audio this place does not own -- and the load
+-- check below says so out loud instead of leaving you guessing.
+local SFX = {
+	SHOOT = "rbxassetid://140374131796632",
+	EQUIP = "rbxassetid://7405483764",
+}
+task.spawn(function()
+	for name, id in pairs(SFX) do
+		local s = Instance.new("Sound")
+		s.SoundId = id
+		s.Parent = SoundSvc
+		task.wait(3)
+		if not s.IsLoaded then
+			warn(("[Redwood] sniper %s sound %s did NOT load -- usually audio privacy "
+				.. "('Asset is not approved for the requester'). Reupload it on this account.")
+				:format(name, id))
+		end
+		s:Destroy()
+	end
+end)
+
+-- ===== EQUIP: one clip the moment the Sniper lands in your hands =====
+-- Driven off ChildAdded on the character rather than the Tool's Equipped event: the tool is
+-- handed over by the server (the locker clones it into the Backpack), so this LocalScript
+-- has no reference to it until it appears, and a tool re-equipped after a respawn is a
+-- brand new instance. Watching the character catches every case with one connection.
+do
+	local function playEquip()
+		pcall(function()
+			local s = Instance.new("Sound")
+			s.SoundId = SFX.EQUIP
+			s.Volume = 0.9
+			s.Parent = cam
+			s:Play()
+			Debris:AddItem(s, 5)
+		end)
+	end
+	local function watch(char: Model)
+		char.ChildAdded:Connect(function(c)
+			if c:IsA("Tool") and c.Name == "Sniper" then playEquip() end
+		end)
+		-- already holding it when this runs (respawn with the tool equipped)
+		if char:FindFirstChild("Sniper") then playEquip() end
+	end
+	if player.Character then watch(player.Character) end
+	player.CharacterAdded:Connect(watch)
+end
+
 local lastShot = 0
 local function shoot()
 	if not holdingSniper() then return end
@@ -163,7 +217,16 @@ local function shoot()
 		fl.BackgroundTransparency = 0.4; fl.BorderSizePixel = 0; fl.ZIndex = 50; fl.Parent = sg
 		TS:Create(fl, TweenInfo.new(0.12), { BackgroundTransparency = 1 }):Play(); Debris:AddItem(fl, 0.2)
 	end
-	pcall(function() local s = Instance.new("Sound"); s.SoundId = "rbxassetid://9114065998"; s.Volume = 0.7; s.Parent = cam; s:Play(); Debris:AddItem(s, 1) end)
+	-- THE SHOT. Parented to the camera, not the muzzle: this is your own gun going off next
+	-- to your head, so it should not fall off with distance the way a world sound does.
+	pcall(function()
+		local s = Instance.new("Sound")
+		s.SoundId = SFX.SHOOT
+		s.Volume = 0.85
+		s.Parent = cam
+		s:Play()
+		Debris:AddItem(s, 4)   -- was 1s, which cut a longer crack off mid-tail
+	end)
 	local hitMama = hit and hit.Instance and mamaModelOf(hit.Instance)
 	if hitMama then
 		RaptorShot:FireServer(hitMama) -- tell the server WHICH raptor was hit
@@ -327,5 +390,112 @@ task.spawn(function()
 	workspace.ChildAdded:Connect(tryAnimate)
 	print("[Redwood] raptor bone animation running for all raptors (tail/legs/head)")
 end)
+
+--======================================================================
+-- CHEVRON TRAIL TO THE SNIPER LOCKER
+--======================================================================
+-- Replaces the floating "Sniper Locker" sign that used to hang over the cabinet. That
+-- billboard was visible through the trees from 140 studs away, so the locker was never
+-- something you FOUND -- and it was the only island doing navigation that way.
+--
+-- This is the same flat green runway NPCGuide and FishingQuest lay down, and it hands over
+-- from NPCGuide cleanly: that script guides you to the RidgeWarden and stops the moment
+-- Island6QuestAccepted goes true, which is exactly when this one starts. Same handover
+-- FishingQuest does on island4 (NPC first, then the rod barrel).
+--
+-- It stops as soon as you HAVE a sniper -- carrying the rifle is proof you found the
+-- locker, so leaving the trail up would just be clutter for the rest of the hunt.
+do
+	local BRIGHT, EDGE = Color3.fromRGB(90, 200, 110), Color3.fromRGB(40, 120, 60)
+	local SPACING, MAX_ARROWS, STOP_DIST = 6, 18, 10
+	local rayParams = RaycastParams.new()
+	rayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+	local function part(model, name, sx, sy, sz, color, refl, cf)
+		local p = Instance.new("Part"); p.Name = name; p.Size = Vector3.new(sx, sy, sz); p.Color = color
+		p.Material = Enum.Material.SmoothPlastic; p.Reflectance = refl or 0
+		p.Anchored = true; p.CanCollide = false; p.CanQuery = false; p.CanTouch = false; p.CastShadow = false
+		p.CFrame = cf; p.Parent = model; return p
+	end
+	local function buildChevron()
+		local m = Instance.new("Model"); m.Name = "SniperGuideChevron"
+		local rootP = part(m, "Root", 0.2, 0.2, 0.2, BRIGHT, 0, CFrame.new())
+		rootP.Transparency = 1; m.PrimaryPart = rootP
+		local L, W, T, ANG = 2.6, 0.72, 0.22, math.rad(42)
+		local front = CFrame.new(0, 0, -0.9)
+		part(m, "EdgeR", W + 0.20, T * 0.65, L + 0.20, EDGE, 0, front * CFrame.Angles(0,  ANG, 0) * CFrame.new(0, -0.03, L / 2))
+		part(m, "EdgeL", W + 0.20, T * 0.65, L + 0.20, EDGE, 0, front * CFrame.Angles(0, -ANG, 0) * CFrame.new(0, -0.03, L / 2))
+		part(m, "ArmR",  W, T, L, BRIGHT, 0.14,             front * CFrame.Angles(0,  ANG, 0) * CFrame.new(0,  0.04, L / 2))
+		part(m, "ArmL",  W, T, L, BRIGHT, 0.14,             front * CFrame.Angles(0, -ANG, 0) * CFrame.new(0,  0.04, L / 2))
+		m.Parent = workspace
+		return m
+	end
+	local pool = {}
+	local function getNode(i) if not pool[i] then pool[i] = buildChevron() end return pool[i] end
+	local function setShown(nd, on)
+		for _, p in ipairs(nd:GetDescendants()) do
+			if p:IsA("BasePart") and p.Name ~= "Root" then p.Transparency = on and 0 or 1 end
+		end
+	end
+	local function hideFrom(n) for i = n, #pool do if pool[i] then setShown(pool[i], false) end end end
+
+	local function hasSniper(char: Model?): boolean
+		if char and char:FindFirstChild("Sniper") then return true end
+		local bp = player:FindFirstChildOfClass("Backpack")
+		return bp ~= nil and bp:FindFirstChild("Sniper") ~= nil
+	end
+
+	-- The cabinet's own glass is the aim point; falls back to the model pivot.
+	local function lockerPos(): Vector3?
+		local m = workspace:FindFirstChild("SniperLocker")
+		if not m then return nil end
+		local g = m:FindFirstChild("Glass") or m:FindFirstChild("Top") or m.PrimaryPart
+		if g and g:IsA("BasePart") then return g.Position end
+		local ok, cf = pcall(function() return m:GetPivot() end)
+		return ok and cf and cf.Position or nil
+	end
+
+	RunSvc.RenderStepped:Connect(function()
+		-- gate 1: the RidgeWarden has to have handed the job over
+		if player:GetAttribute("Island6QuestAccepted") ~= true then hideFrom(1); return end
+		local char = player.Character
+		local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		if not hrp then hideFrom(1); return end
+		-- gate 2: already holding a rifle -> you found it, stop pointing
+		if hasSniper(char) then hideFrom(1); return end
+		local tgt = lockerPos()
+		if not tgt then hideFrom(1); return end
+
+		local d = tgt - hrp.Position
+		local flat = Vector3.new(d.X, 0, d.Z)
+		local dist = flat.Magnitude
+		-- 400 studs out means you are not on this island -- with the tower respaced x1.5 the
+		-- islands are far enough apart that this can never point across a gap.
+		if dist > 400 or dist <= STOP_DIST then hideFrom(1); return end
+		local dir = flat.Unit
+
+		local excl = { char }
+		for _, nd in ipairs(pool) do excl[#excl + 1] = nd end
+		rayParams.FilterDescendantsInstances = excl
+
+		local maxAlong, placed = dist - STOP_DIST, 0
+		for i = 1, MAX_ARROWS do
+			local along = i * SPACING
+			if along > maxAlong then break end
+			placed += 1
+			local px = hrp.Position.X + dir.X * along
+			local pz = hrp.Position.Z + dir.Z * along
+			local hit = workspace:Raycast(Vector3.new(px, hrp.Position.Y + 14, pz), Vector3.new(0, -240, 0), rayParams)
+			local gy = (hit and hit.Position.Y) or (hrp.Position.Y - 2.5)
+			local nd = getNode(placed)
+			local p0 = Vector3.new(px, gy + 0.12, pz)
+			pcall(function() nd:PivotTo(CFrame.lookAt(p0, p0 + dir)) end)
+			pcall(function() nd:ScaleTo(1 + 0.10 * math.sin(os.clock() * 5 - i * 0.8)) end) -- flow pulse
+			setShown(nd, true)
+		end
+		hideFrom(placed + 1)
+	end)
+	print("[Redwood] sniper-locker chevron trail armed (shows after the RidgeWarden's quest, hides once you hold a Sniper)")
+end
 
 print("[Redwood] client ready -- RIGHT-CLICK to scope, LEFT-CLICK to fire")

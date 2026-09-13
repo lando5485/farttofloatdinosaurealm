@@ -13,7 +13,12 @@ local Workspace = game:GetService("Workspace")
 do local t0 = os.clock(); while not _G.islandsPositioned and os.clock() - t0 < 5 do task.wait() end end
 
 local TOTAL_EGGS = 5
-local EGG_FOOTPRINT = 1.2 -- target size in studs (~a player's head)
+-- Egg width in studs. Was 1.2 (~a player's head), which made the five LostEggs very hard to
+-- spot on island1 -- the FIRST island, the one that teaches the game. Now 5x that.
+-- The eggs are BOTTOM-aligned to their EggPlacement markers further down, so growing this
+-- makes them taller upward rather than sinking them into the ground. One number, both egg
+-- paths (the hand-made clone and the low-poly fallback) read it.
+local EGG_FOOTPRINT = 6.0 -- target size in studs
 local COLOR_MIN_DISTANCE = 0.28 -- min RGB distance (0..~1.73) from any excluded color
 
 ----------------------------------------------------------------------

@@ -25,8 +25,8 @@
 -- ===== WHAT CHANGED FROM THE KIT =====
 -- IT NAMES THE ISLAND. The kit says "Return to Island 7", because a portable copy only has
 -- an index. This realm has IslandOrder on the client too, so the button reads "Return to
--- Raptor Ridge" -- and the attribute is a CLIMB SLOT, which is not the island's number:
--- slot 2 is island9, "Jungle Junction". Printing the raw index would name the wrong place.
+-- Claw Cliffs" -- and the attribute is a CLIMB SLOT, which is not the island's number:
+-- slot 2 is island9, "Frostbite Flats". Printing the raw index would name the wrong place.
 --======================================================================
 
 local Players           = game:GetService("Players")

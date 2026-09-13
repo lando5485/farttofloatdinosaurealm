@@ -42,7 +42,7 @@ local LEAF      = Color3.fromRGB(160, 200, 120)
 local SHELL_MARGIN = 40
 
 -- The panels we restyle, and how to find the main 700x520 frame inside each.
-local TARGETS = { "SkinCrateGui", "SeasonPassGui", "SocialRewardsGui" }
+local TARGETS = { "SkinCrateGui", "SeasonPassGui", "SocialRewardsGui", "DailyStreakGui" } -- DailyStreakGui = the MORE+ Rewards hub (DailyStreak.client)
 
 -- The big panel is the widest 700-wide frame that is a direct child of the ScreenGui.
 -- Matching on size rather than name keeps this working if the vendor renames a frame.

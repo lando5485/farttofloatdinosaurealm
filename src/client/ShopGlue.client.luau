@@ -7,6 +7,10 @@
 -- (Per SHOP_SETUP.md.) The food/stomach economy + remotes live in Shop.server.luau.
 --======================================================================
 
+-- VERBOSE: per-item boot spam. OFF by default -- it buried the progression telemetry.
+-- Same flag name in every file that had a noisy loop, so it greps as one switch.
+local VERBOSE = false
+
 local Players   = game:GetService("Players")
 local RS        = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
@@ -181,8 +185,8 @@ task.spawn(function()
 	-- this report re-prints whenever the set changes.
 	local ISLAND_NAMES = {
 		[1]="Nesting Nook", [2]="Fern Frontier", [3]="Fossil Frontier", [4]="Coastal Crossing",
-		[5]="Misty Mire", [6]="Redwood Ridge", [7]="Raptor Ridge", [8]="Inferno Isle",
-		[9]="Jungle Junction", [10]="Petrified Pass", [11]="Volcanic Vista",
+		[5]="Misty Mire", [6]="Redwood Ridge", [7]="Claw Cliffs", [8]="Inferno Isle",
+		[9]="Frostbite Flats", [10]="Petrified Pass", [11]="Volcanic Vista",
 		[12]="Sunscorch Sands", [13]="Glacier Gulch",
 	}
 	local lastReport
@@ -194,22 +198,25 @@ task.spawn(function()
 		if key == lastReport then return end -- only re-print when the picture changes
 		lastReport = key
 
-		print("[ShopGlue] ---- FOOD STAND COVERAGE ----")
+		if VERBOSE then print("[ShopGlue] ---- FOOD STAND COVERAGE ----") end
 		local missing = {}
 		for i = 1, 13 do
 			local food; for _, ff in ipairs(_G.foods) do if ff.island == i then food = ff; break end end
 			local s = have[i]
 			if s then
-				print(("[ShopGlue]   island %-2d  %-17s  HAS stand '%s' (%s)  -> sells %s")
-					:format(i, ISLAND_NAMES[i] or "?", s.name, s.why, food and food.name or "??"))
+				if VERBOSE then print(("[ShopGlue]   island %-2d  %-17s  HAS stand '%s' (%s)  -> sells %s")
+					:format(i, ISLAND_NAMES[i] or "?", s.name, s.why, food and food.name or "??")) end
 			else
 				missing[#missing + 1] = i
-				print(("[ShopGlue]   island %-2d  %-17s  ** NO STAND **                      -> should sell %s")
-					:format(i, ISLAND_NAMES[i] or "?", food and food.name or "??"))
+				if VERBOSE then print(("[ShopGlue]   island %-2d  %-17s  ** NO STAND **                      -> should sell %s")
+					:format(i, ISLAND_NAMES[i] or "?", food and food.name or "??")) end
 			end
 		end
-		if #missing > 0 then
-			warn(("[ShopGlue] islands with NO food stand yet: %s  -- add a part/model named "
+		if #missing > 0 and not _G.__shopGlueWarned then
+			_G.__shopGlueWarned = true
+			warn(("[ShopGlue] islands with NO food stand yet (at this moment -- islands that have "
+				.. "not STREAMED IN yet look identical to islands with no stand, so treat this as a "
+				.. "hint, not a fault; the server's [FoodStands] summary is authoritative): %s  -- add a part/model named "
 				.. "'Stand' (or 'Stand<N>') to each. Any island model it sits under sets its number automatically.")
 				:format(table.concat(missing, ", ")))
 		else

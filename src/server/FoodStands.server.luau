@@ -31,6 +31,12 @@
 local Workspace = game:GetService("Workspace")
 local RS        = game:GetService("ReplicatedStorage")
 
+-- VERBOSE: per-item boot spam (one line per part/island/pet/serving). OFF by default --
+-- it buried the progression telemetry in hundreds of lines. Flip to true to debug THIS
+-- system specifically; every file that had a noisy loop uses the same flag name.
+local VERBOSE = false
+
+
 local IslandOrder = require(RS:WaitForChild("DinosaurRealm"):WaitForChild("IslandOrder"))
 local FoodMenu    = require(RS:WaitForChild("DinosaurRealm"):WaitForChild("FoodMenu"))
 local TOP_ISLAND  = IslandOrder.COUNT
@@ -321,8 +327,8 @@ task.spawn(function()
 			-- used to be a silent counter, so the only clue that a stand had been replaced
 			-- was a total that did not match what was on the island.
 			already += 1
-			print(("[FoodStands] island%d -> kept the hand-built stand '%s' (%s); nothing built")
-				:format(n, existing.Name, existing.ClassName))
+			if VERBOSE then print(("[FoodStands] island%d -> kept the hand-built stand '%s' (%s); nothing built")
+				:format(n, existing.Name, existing.ClassName)) end
 		else
 			-- no stand, OR only a placement marker. An explicit StandSpot beats a loose
 			-- Stand-named part if both exist.

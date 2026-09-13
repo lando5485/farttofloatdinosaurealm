@@ -13,46 +13,76 @@
 --   When the player EQUIPS something there is no level change, so PetFollow doesn't rebuild. This script keeps a
 --   weak set of the models it has painted and repaints those directly.
 --
--- WHAT A SKIN DOES        recolour + material + reflectance on the BODY parts (eyes, accessories and level FX are
---                         skipped -- the same exclusion list PetFollow's own applyRareLook uses).
--- WHAT A TRAIT DOES       particles / sparkles / light / orbiting parts / a floating halo or crown. Never a body
---                         change, so every trait works on every pet, including pets added later.
+-- WHAT A SKIN DOES        recolour + material + reflectance/transparency on the BODY parts, plus the skin's own
+--                         flavour effects (Lava embers, Ocean bubbles) and small deco geometry (Crystal shards,
+--                         Robot antenna). Eyes, accessories and level FX are skipped -- the same exclusion list
+--                         PetFollow's own applyRareLook uses.
+-- WHAT A TRAIT DOES       builds the trait's ACCESSORY SET (hats, glasses, capes, armour -- see PetTraits) on
+--                         named attach points derived from the pet's own bounding box, so ONE authored trait
+--                         fits every pet, including pets added later. Per-pet nudges come from
+--                         PetTraits.PET_OFFSETS, never from per-pet trait art. A trait may also carry small
+--                         effects (particles / light / orbiting bits) -- flavour, never a body change, and
+--                         never enough to hide what pet or skin is underneath.
 --
 -- ORIGINALS ARE SNAPSHOTTED before the first recolour, so switching skins (or clearing one) restores the pet's
 -- real colours rather than stacking tints.
 -- ============================================================================================================
 
-local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService        = game:GetService("RunService")
-
-local player = Players.LocalPlayer
 
 local Shared    = ReplicatedStorage:WaitForChild("DinosaurRealm")
 local PetSkins  = require(Shared:WaitForChild("PetSkins"))
 local PetTraits = require(Shared:WaitForChild("PetTraits"))
+local PetTier   = require(Shared:WaitForChild("PetTier"))
 
 local SkinRemotes    = ReplicatedStorage:WaitForChild("SkinRemotes", 30)
 local GetSkinState   = SkinRemotes and SkinRemotes:WaitForChild("GetSkinState", 10)
 local SkinStateEvent = SkinRemotes and SkinRemotes:WaitForChild("SkinStateEvent", 10)
 
 -- ===== LOCAL VIEW OF SERVER STATE =====
--- equipped[petId] = { skin = "Galaxy", trait = "Crowned" }. Authoritative copy lives on the server; this is only
+-- equipped[petId] = { skin = "Cosmic", trait = "King" }. Authoritative copy lives on the server; this is only
 -- what we were last told, and it is never used to decide what the player OWNS -- only what to draw.
 local equipped = {}
 _G.petSkinEquipped = equipped -- read by the crate/inventory UI so it doesn't need its own copy
 
+-- ===== DEV TRY-ON (client-side preview) =====
+-- When set, EVERY pet this client paints wears this combo instead of its real equip -- which is what lets
+-- /testpet put a skin/trait on the live follower so it can be seen walking around in the world. Purely
+-- local: nothing is granted or saved, other players still see the real equip, and it sits INSIDE the
+-- renderer (checked at paint time) so the constant repaints (level-ups, state pushes, evo refreshes) keep
+-- the try-on instead of wiping it. Cleared with _G.petSkinTryOn(nil).
+--
+-- BUT IT YIELDS TO ANY REAL ACTION. An override that survives everything turns the Pet Hub's buttons into
+-- liars: press EQUIP/UNEQUIP or switch pets and nothing visibly happens, because the preview silently
+-- outranks the result. So the try-on drops itself the moment the player equips/unequips a skin (a changed
+-- equip signature from the server) or a DIFFERENT pet starts following them. dropTryOn is a forward local:
+-- assigned below repaintAll, called only at runtime.
+local tryOn = nil -- { skin = skinId, trait = traitId } or nil
+-- LIVE PER-PET TUNING (/testpet's ADJUST mode): runtime nudges layered on top of PetTraits.PET_OFFSETS
+-- while the tester LOOKS at the real pet, then dumped as a paste-ready PET_OFFSETS entry. Session-local.
+local liveAdjust = {} -- [petId] = { [attach] = { x, y, z, scale } }
+local dropTryOn -- (why) -> clears tryOn + repaints; assigned after repaintAll exists
+local lastLivePetId = nil -- which pet the follower paints were for, to catch a pet switch
+local lastEquipSig = nil  -- last server-confirmed equip signature, to catch a real equip/unequip
+
 -- Every pet model this script has painted, so an equip change can repaint without searching Workspace.
 -- Weak keys: when PetFollow destroys a pet the entry disappears on its own.
 local painted = setmetatable({}, { __mode = "k" }) -- [model] = petId
+-- Published because this is the only complete register of live pet models anywhere on the client: PetFollow
+-- builds them but keeps them in a local it cannot export (that file sits on Luau's 200-locals ceiling), and
+-- every pet passes through here on build. PetRenderGuard watches it. Weak keys, so publishing it keeps
+-- nothing alive.
+_G.petPaintedModels = painted
 
 -- Original appearance per part, so a skin change restores instead of stacking. Weak keys again.
-local originals = setmetatable({}, { __mode = "k" }) -- [part] = { color, material, refl }
+local originals = setmetatable({}, { __mode = "k" }) -- [part] = { color, material, refl, trans }
 
--- Models with an animated skin (rainbow / cosmic hue cycling) and models with orbiting trait parts.
-local animated = setmetatable({}, { __mode = "k" }) -- [model] = { mode, parts = {...} }
-local orbiting = setmetatable({}, { __mode = "k" }) -- [model] = { parts = {...}, radius, speed, root }
-local flickering = setmetatable({}, { __mode = "k" }) -- [model] = light
+-- Models with an animated skin (rainbow / cosmic hue cycling), orbiting trait parts, and accessory sets that
+-- follow the pet. All weak-keyed so a destroyed pet cleans itself up.
+local animated  = setmetatable({}, { __mode = "k" }) -- [model] = { mode, parts = {...} }
+local orbiting  = setmetatable({}, { __mode = "k" }) -- [model] = { parts = {...}, radius, speed, root }
+local accessorised = setmetatable({}, { __mode = "k" }) -- [model] = { root, groups = { {cf, parts={{part,off}}} } }
 
 -- Parts a recolour must NEVER touch. Same list PetFollow's applyRareLook uses, so the two agree on what counts
 -- as "the body": eyes stay white, accessories keep their own colours, level FX keep theirs.
@@ -60,11 +90,44 @@ local SKIP_NAMES = {
 	Eye = true, Pupil = true, Highlight = true, EvoPart = true,
 	PetOrb = true, PetRing = true, PetPulse = true,
 	-- this script's own additions, so a repaint never recolours its own effects
-	PetSkinOrb = true, PetSkinHalo = true, PetSkinCrown = true,
+	PetSkinOrb = true, PetSkinAcc = true, PetSkinDeco = true,
+}
+
+-- ===== THIS REALM'S EYES ARE NOT CALLED "Eye" =====
+-- The names above are the FOOD realm's ("Eye"/"Pupil"/"Highlight"). Every dinosaur here builds its
+-- face through PetFace, which names the pieces whitepartofeye / blackpartofeye / Glint / EyeAmber.
+-- Nothing matched, and that one gap caused BOTH of this renderer's visible bugs:
+--   1. EYES GOT PAINTED. Unrecognised names are not skipped, so a skin recoloured the eyeballs --
+--      "the skins do nothing except make the eyes look weird".
+--   2. EVERY ACCESSORY LANDED 90 DEGREES OFF. The attach frame works out which way the pet FACES
+--      from the centroid of its eyes. With no eyes found it falls back to identity, i.e. it trusts
+--      -Z to be forward -- but every model in this realm is built +X forward (see any builder's
+--      header). So "front" gear went to the pet's RIGHT SIDE.
+-- Sourced from PetFace.ANIMATED rather than retyped, so adding a face piece there can never leave
+-- this list stale. Falls back to the literal names if the module is unavailable.
+do
+	local ok, PetFace = pcall(function()
+		return require(ReplicatedStorage:WaitForChild("DinosaurRealm", 10):WaitForChild("PetFace", 10))
+	end)
+	if ok and PetFace and type(PetFace.ANIMATED) == "table" then
+		for name in pairs(PetFace.ANIMATED) do SKIP_NAMES[name] = true end
+	else
+		SKIP_NAMES.whitepartofeye = true; SKIP_NAMES.blackpartofeye = true
+		SKIP_NAMES.Glint = true; SKIP_NAMES.EyeAmber = true
+	end
+end
+
+-- The eye-centroid probe uses this, so the face frame resolves correctly on both realms' rigs.
+-- whitepartofeye is the eyeball itself (blackpartofeye/Glint sit ON it, so including them would
+-- weight the centroid toward whichever pupil happens to be modelled deeper).
+local EYE_NAMES = {
+	Eye = true, Pupil = true,                    -- food realm
+	whitepartofeye = true, EyeAmber = true,      -- this realm (PetFace)
 }
 
 local FX_NAMES = {
-	"PetSkinFX", "PetSkinLight", "PetSkinSparkles", "PetSkinOrb", "PetSkinHalo", "PetSkinCrown", "PetSkinTraitFX",
+	"PetSkinFX", "PetSkinLight", "PetSkinSparkles", "PetSkinOrb", "PetSkinAcc", "PetSkinDeco", "PetSkinTraitFX",
+	"PetSkinTrail", "PetSkinTrailA0", "PetSkinTrailA1",
 }
 
 -- ============================================================================================================
@@ -80,13 +143,19 @@ local function clearLook(model)
 	end
 	animated[model] = nil
 	orbiting[model] = nil
-	flickering[model] = nil
+	accessorised[model] = nil
 	-- restore original body appearance
 	for _, d in ipairs(model:GetDescendants()) do
 		if d:IsA("BasePart") then
 			local o = originals[d]
 			if o then
 				d.Color = o.color; d.Material = o.material; d.Reflectance = o.refl
+				if o.trans ~= nil then d.Transparency = o.trans end
+				-- put the union back to source-part colours, or the body stays flat-painted
+				-- after the skin is cleared (see paintable()).
+				if o.usePartColor ~= nil and d:IsA("UnionOperation") then
+					d.UsePartColor = o.usePartColor
+				end
 			end
 		end
 	end
@@ -106,20 +175,914 @@ local function bodyParts(model)
 	return out
 end
 
-local function applySkin(model, skinId)
+local function snapshot(p)
+	if not originals[p] then
+		originals[p] = { color = p.Color, material = p.Material, refl = p.Reflectance, trans = p.Transparency }
+		-- UsePartColor rides along for unions -- see paintable() below. Recorded here so clearing a
+		-- skin restores the pet's ORIGINAL multi-coloured body, not a flat repaint of it.
+		if p:IsA("UnionOperation") then originals[p].usePartColor = p.UsePartColor end
+	end
+end
+
+-- ===== MAKING A UNION ACTUALLY TAKE A COLOUR =====
+-- Every dinosaur's body is ONE UnionOperation built by PetFace, and PetFace sets
+-- `UsePartColor = false` on it so the union renders with the colours of its SOURCE parts -- that is
+-- what keeps a Stegosaurus' belly, plates and body distinct after fusion.
+--
+-- The catch: while that flag is false Roblox IGNORES the union's own .Color completely. So the skin
+-- system wrote a colour to the body every repaint and absolutely nothing happened -- the body stayed
+-- its original colours while the (unskipped) eyes changed, which is exactly the reported
+-- "skins don't do anything except make the eyes look weird".
+--
+-- Flipping it to true is the correct behaviour and not a compromise: a skin IS a whole-body recolour,
+-- so the pet is MEANT to read as one Cosmic/Lava/Arctic colour while worn. snapshot() keeps the
+-- original flag, so clearing the skin restores the multi-coloured body exactly as built.
+local function paintable(p)
+	if p:IsA("UnionOperation") and p.UsePartColor == false then
+		p.UsePartColor = true
+	end
+end
+
+-- ONE particle builder for skins and traits alike -- both declare the same { texture, color, size, rate, ... }
+-- spec, so Lava's embers and Titan's sparks come out of the same code path.
+local function buildParticle(root, spec, name)
+	local e = Instance.new("ParticleEmitter")
+	e.Name = name
+	e.Texture = spec.texture or "rbxasset://textures/particles/sparkles_main.dds"
+	e.Color = ColorSequence.new(spec.color or Color3.new(1, 1, 1))
+	e.LightEmission = 0.7
+	e.Rate = spec.rate or 12
+	e.Speed = NumberRange.new(spec.speed or 1)
+	e.Lifetime = NumberRange.new((spec.lifetime or 1) * 0.7, spec.lifetime or 1)
+	e.Size = NumberSequence.new(spec.size or 1)
+	e.SpreadAngle = Vector2.new(spec.spread or 15, spec.spread or 15)
+	e.Rotation = NumberRange.new(0, 360)
+	e.Acceleration = spec.accel or Vector3.new()
+	e.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, spec.transparency or 0.3),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	e.Parent = root
+	return e
+end
+
+-- ============================================================================================================
+-- GLOBAL PET DIM -- every pet renders 25% darker than it is built.
+-- ============================================================================================================
+-- The pets were reading as too bright next to the islands. This is the single place to fix that, because it is
+-- the one function EVERY pet passes through. Multiplying the channels keeps every hue where it was and only
+-- takes the value down. It cannot compound: the TRUE colour is snapshotted before the first dim and clearLook
+-- restores from that snapshot at the top of every call.
+local PET_DIM = 0.75 -- 25% down
+
+local function dimBody(model)
+	for _, p in ipairs(bodyParts(model)) do
+		snapshot(p)
+		local c = p.Color
+		p.Color = Color3.new(c.R * PET_DIM, c.G * PET_DIM, c.B * PET_DIM)
+	end
+end
+
+-- ============================================================================================================
+-- ATTACH POINTS + THE ACCESSORY BUILDER
+-- ============================================================================================================
+-- Head / Face / Neck / Back / Body are derived from the pet's OWN geometry, in the root's local space, so one
+-- authored trait lands sensibly on a duck, a crab and a dragon without per-pet art. Accessory specs are
+-- authored for a ~2-stud pet; `scale` stretches them to the real one. PetTraits.PET_OFFSETS supplies the
+-- per-pet nudges (position / rotation / scale per attach point) for anatomy the maths can't describe.
+--
+-- THE PLACEMENT RULE: accessories seat on the pet's MAIN BODY MASS, never on a protrusion. Bean Buddy has a
+-- little vine sprouting from his head; a plain bounding box makes the vine tip the "top" and every hat
+-- hovers on it. So thin protruding parts are filtered out two ways before any attach point is computed:
+--   * by NAME -- vines, sprouts, stems, leaves, antennae, horns, ears, tails, beaks and the like;
+--   * by FOOTPRINT -- any part whose horizontal cross-section is a sliver of the largest part's can't be
+--     the thing a hat rests on, whatever it is called.
+-- The hat then sits on the TOP SURFACE of the biggest remaining mass, centred on THAT part (a duck's hat on
+-- its head, a bean's on its body, a crab's on its shell), sunk a hair so the brim hugs instead of floating.
+-- Glasses use that same crown part's front and eye-line; neck/back/body come from the filtered mass too.
+
+-- Substring matches on lower-cased part names that mark a part as a PROTRUSION -- paintable, but never the
+-- surface an accessory anchors to.
+local PROTRUSION_NAMES = {
+	"vine", "sprout", "stem", "leaf", "leaves", "stalk", "antenna", "horn", "ear", "tail",
+	"whisker", "feather", "hair", "beak", "wing", "fin", "spike", "tongue", "crest",
+}
+local function isProtrusionName(name)
+	local n = string.lower(name)
+	for _, key in ipairs(PROTRUSION_NAMES) do
+		if string.find(n, key, 1, true) then return true end
+	end
+	return false
+end
+
+-- Did the surface rays ever actually land? Reported once at startup and once on first failure -- see
+-- the warn() in the crown block for why this is worth a global.
+local RAYS_LANDED, RAYS_WARNED = false, false
+local RAY_OK, RAY_MISS = 0, 0     -- hard evidence for /scanpet: did the measurement actually happen?
+
+local function computeAttach(model, petId)
+	local root = model.PrimaryPart
+	if not root then return nil end
+	local rootCF = root.CFrame
+
+	-- WHICH WAY IS THE PET ACTUALLY FACING? Never assume the root's -Z is the face: some templates are
+	-- rooted sideways, which is exactly how a backpack ends up on a pet's flank. The EYES say where the
+	-- face is -- their centroid, flattened to the horizontal plane, points from the root toward the front.
+	-- Every measurement below happens in this face-aligned frame, so Back really is behind and Face really
+	-- is in front whatever the rig's axes do. No eyes readable -> identity, i.e. trust the root as before.
+	local eyeSum, eyeN = Vector3.new(), 0
+	local eyePts = {} -- individual eye positions (root-local): the separation sizes per-eye Face gear
+	for _, d in ipairs(model:GetDescendants()) do
+		if d:IsA("BasePart") and EYE_NAMES[d.Name] then
+			local rp = rootCF:PointToObjectSpace(d.Position)
+			eyeSum = eyeSum + rp
+			eyeN = eyeN + 1
+			if #eyePts < 8 then eyePts[#eyePts + 1] = rp end
+		end
+	end
+	local faceCF = CFrame.new()
+	if eyeN > 0 then
+		local dir = (eyeSum / eyeN) * Vector3.new(1, 0, 1)
+		if dir.Magnitude > 0.15 then
+			faceCF = CFrame.lookAt(Vector3.new(), dir.Unit)
+		end
+	end
+
+	-- Per-part boxes in the FACE-ALIGNED frame, from each part's 8 corners so a rotated wedge still counts
+	-- fully. bodyParts() already excludes eyes, level FX and this script's own effects; GetBoundingBox() is
+	-- avoided because it would also swallow the level-FX orbs PetFollow floats around the pet.
+	local infos = {}
+	for _, p in ipairs(bodyParts(model)) do
+		local rel = rootCF:ToObjectSpace(p.CFrame)
+		local sx, sy, sz = p.Size.X / 2, p.Size.Y / 2, p.Size.Z / 2
+		local iMinX, iMinY, iMinZ = math.huge, math.huge, math.huge
+		local iMaxX, iMaxY, iMaxZ = -math.huge, -math.huge, -math.huge
+		for ix = -1, 1, 2 do for iy = -1, 1, 2 do for iz = -1, 1, 2 do
+			local c = faceCF:PointToObjectSpace((rel * CFrame.new(ix * sx, iy * sy, iz * sz)).Position)
+			if c.X < iMinX then iMinX = c.X end; if c.X > iMaxX then iMaxX = c.X end
+			if c.Y < iMinY then iMinY = c.Y end; if c.Y > iMaxY then iMaxY = c.Y end
+			if c.Z < iMinZ then iMinZ = c.Z end; if c.Z > iMaxZ then iMaxZ = c.Z end
+		end end end
+		infos[#infos + 1] = {
+			part = p,
+			minX = iMinX, minY = iMinY, minZ = iMinZ, maxX = iMaxX, maxY = iMaxY, maxZ = iMaxZ,
+			cx = (iMinX + iMaxX) / 2, cy = (iMinY + iMaxY) / 2, cz = (iMinZ + iMaxZ) / 2,
+			foot = (iMaxX - iMinX) * (iMaxZ - iMinZ), -- horizontal cross-section: a vine's is a sliver
+			protrusion = isProtrusionName(p.Name),
+		}
+	end
+	if #infos == 0 then return nil end
+
+	-- THE MASS FILTER. Largest footprint among the non-protrusion parts sets the bar; anything under 22% of
+	-- it is a twig, whatever its name. Falls back to the full set if the filters somehow ate everything, so
+	-- an oddly-built pet still gets accessories rather than none.
+	local maxFoot = 0
+	for _, i in ipairs(infos) do
+		if not i.protrusion and i.foot > maxFoot then maxFoot = i.foot end
+	end
+	local major = {}
+	for _, i in ipairs(infos) do
+		if not i.protrusion and i.foot >= maxFoot * 0.22 then major[#major + 1] = i end
+	end
+	if #major == 0 then major = infos end
+
+	-- extents of the MAIN MASS only -- this is the body every attach point is measured against
+	local minX, minY, minZ = math.huge, math.huge, math.huge
+	local maxX, maxY, maxZ = -math.huge, -math.huge, -math.huge
+	for _, i in ipairs(major) do
+		if i.minX < minX then minX = i.minX end; if i.maxX > maxX then maxX = i.maxX end
+		if i.minY < minY then minY = i.minY end; if i.maxY > maxY then maxY = i.maxY end
+		if i.minZ < minZ then minZ = i.minZ end; if i.maxZ > maxZ then maxZ = i.maxZ end
+	end
+	local size = Vector3.new(maxX - minX, maxY - minY, maxZ - minZ)
+	local cx, cy, cz = (minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2
+	local hx, hy, hz = size.X / 2, size.Y / 2, size.Z / 2
+
+	-- THE CROWN: the major part whose top surface is highest -- the actual skull/shell/body a hat rests on.
+	-- The hat centres on THIS part (not the whole-body centre), and sinks a hair into it so the brim hugs.
+	local crown = major[1]
+	for _, i in ipairs(major) do
+		if i.maxY > crown.maxY then crown = i end
+	end
+	local crownHalf = math.max(crown.maxX - crown.minX, crown.maxZ - crown.minZ) / 2
+
+	-- ===== SINGLE-UNION PETS: ANCHOR THE HEAD ON THE EYES, NOT ON THE SILHOUETTE =====
+	-- The crown logic above assumes a pet is several blobs, so "the major part whose top is highest"
+	-- resolves to its actual skull. Every dinosaur in this realm is fused by PetFace into ONE
+	-- BodyUnion, so there is only ever one major part -- the whole animal -- and that assumption
+	-- collapses in two ways at once:
+	--   * HEIGHT: "top of the crown" becomes the top of the entire silhouette, so hats landed on a
+	--     Stegosaurus' back plates, a Spinosaurus' sail and a shark's dorsal fin.
+	--   * SIZE: crownHalf becomes half the BODY, so headU pinned to its 2.6 clamp and every hat came
+	--     out sized for the whole dinosaur.
+	--
+	-- The eyes fix both, and they are reliable here: PetFace builds them on every pet, they are kept
+	-- OUT of the body union precisely so they can blink, and they are physically ON the head. So for
+	-- a single-mass pet the head is derived from them instead:
+	--   * head WIDTH from the eye separation (eyes sit ~55% of the way out to the head's edge),
+	--   * head CENTRE from the eye centroid, so gear rides the skull rather than the body's middle,
+	--   * head TOP about one half-width above the eye line -- the crown of the skull.
+	-- Multi-part pets (the food realm's, which travel here) are untouched: they still resolve a real
+	-- crown part, which is more accurate for them than any eye estimate.
+	if #major == 1 and eyeN > 0 then
+		local ec = faceCF:PointToObjectSpace(eyeSum / eyeN)
+		local sep, n = 0, 0
+		for _, rp in ipairs(eyePts) do
+			sep = sep + math.abs(faceCF:PointToObjectSpace(rp).X - ec.X); n = n + 1
+		end
+		sep = (n > 0) and (sep / n) or 0
+		-- ===== THE HEAD IS THE WHOLE CUBE, NOT A PATCH AROUND THE EYES =====
+		-- These pets are a rounded cube with a face on its front, so the top of that cube IS the top
+		-- of the head. Sizing the head from the EYE SEPARATION alone (sep / 0.55) described a little
+		-- patch of face: hats came out too small and seated barely above the eye line, which /scanpet
+		-- measured as BURIED on nearly every hat of every pet -- and on the Spinosaurus as a
+		-- near-constant 1.04-1.59 studs, the signature of a systematic vertical offset rather than
+		-- noise.
+		--
+		-- The LATERAL half-extent is the honest measure of that cube -- the axis least polluted by
+		-- everything that made the plain bounding box unusable: a Stegosaurus' plates and a
+		-- Spinosaurus' sail are thin sheets across it, while the tail and snout stretch the length
+		-- and the crest stretches the height. The builders make these bodies near-cubic on purpose
+		-- (3.8 x 3.6 x 3.4), so half the lateral extent also estimates half the height.
+		--
+		-- ⚠ THAT AXIS IS hx, NOT hz. Every extent here is measured in the FACE-ALIGNED frame, where
+		-- -Z points at the eyes: so hz is the NOSE-TO-TAIL half-length (the most tail-inflated number
+		-- on the whole animal -- 2.00 on the Stegosaurus against a 1.44 cube) and hx is the lateral
+		-- half-width (1.63, close to the truth). Reading hz here is what drove the crown far too high
+		-- and turned every BURIED hat into a FLOATING one between the last two scans.
+		--
+		-- Eyes still set the head's CENTRE and FRONT -- what they are reliable for. Not its size.
+		local headHalf = math.max(hx, (sep > 0.05) and (sep / 0.55) or 0)
+		headHalf = math.clamp(headHalf, 0.30, crownHalf)   -- never larger than the body it sits on
+		-- ===== SEAT HEIGHT IS CALIBRATED, NOT ASSUMED =====
+		-- Two /scanpet runs bracket this number, and the crown factor is the answer between them:
+		--   crown at eyeY + sep/0.55  (~0.9)  -> 99 issues, almost all BURIED  (hats sunk INTO the head)
+		--   crown at eyeY + hz        (~1.6)  -> 76 issues, almost all FLOATING (hats hovering ABOVE it)
+		-- The failure mode flipping from buried to floating means the truth sits between the two, so
+		-- the seat drops to three-quarters of the lateral half-extent while the SIZE stays at the full
+		-- extent -- size was never the thing that was wrong once it came off the eye separation, and
+		-- pulling both down together would bring back the "hats are tiny" complaint.
+		--
+		-- Eyes are not at the cube's mid-height (they sit high on the face), which is exactly why a
+		-- full half-extent above them overshoots the real crown.
+		local SEAT = 0.75
+		local synthetic = {}
+		for k, v in pairs(crown) do synthetic[k] = v end
+		synthetic.cx   = ec.X
+		synthetic.cz   = ec.Z
+		synthetic.maxY = ec.Y + headHalf * SEAT   -- the skull's crown, calibrated against the scans
+		synthetic.minZ = ec.Z - headHalf * 0.25   -- just in front of the eyes, for Face gear
+		synthetic.minX, synthetic.maxX = ec.X - headHalf, ec.X + headHalf
+		crown = synthetic
+		crownHalf = headHalf
+	end
+
+	-- =====================================================================================
+	-- GROUND TRUTH: STOP INFERRING THE SURFACE, MEASURE IT
+	-- =====================================================================================
+	-- Everything above ESTIMATES where the body is from a bounding box, and on these pets the box is a
+	-- liar -- it contains the tail, the sail, the plates and the snout. Three /scanpet runs proved no
+	-- constant fixes that: the errors did not shrink, they swapped sides (99 BURIED -> 76 FLOATING ->
+	-- 74 BURIED). A number tuned to split that difference is fitted to six pets, not derived, and the
+	-- next pet re-opens it.
+	--
+	-- So the attach points below are RAYCAST onto the pet's real geometry instead. A ray fired at the
+	-- head returns the actual crown; a ray fired at the chest returns the actual chest. Unions are
+	-- solid to raycasts, so a fused body answers as truthfully as a multi-part one, and the answer is
+	-- the surface itself -- it cannot be buried and it cannot float, on any pet, including ones that
+	-- do not exist yet.
+	--
+	-- PIERCING: horns, frills, spikes and crests are exactly the parts a hat should IGNORE -- a hat
+	-- sits on the skull and the horns come through it, which is how it reads in every cartoon. Those
+	-- parts are already identified (the protrusion/twig filter), so the ray passes through them and
+	-- stops on the main mass beneath.
+	local worldFace = rootCF * faceCF
+	local pierce, bodyParts = {}, {}
+	for _, i in ipairs(infos) do
+		bodyParts[#bodyParts + 1] = i.part
+		if i.protrusion or (maxFoot > 0 and i.foot < maxFoot * 0.22) then pierce[i.part] = true end
+	end
+	local RAY = RaycastParams.new()
+	RAY.FilterType = Enum.RaycastFilterType.Include
+	-- the pet's own BODY parts, never the whole model: gear from a previously-equipped trait is still
+	-- parented to the pet while this recomputes, and a ray that stopped on last season's top hat would
+	-- stack the new one on top of it.
+	RAY.FilterDescendantsInstances = bodyParts
+	RAY.IgnoreWater = true
+
+	-- Fire a ray in FACE SPACE and return where it meets the pet, in face space. Parts in `pierce` are
+	-- passed through (re-cast from just beyond each one) rather than stopping the ray. nil = no hit.
+	-- Raycasting needs a WorldRoot, and a pet is not always in the world: /testpet renders inside a
+	-- ViewportFrame, whose parts Workspace cannot see. A ViewportFrame gets a WorldModel for exactly
+	-- this reason -- it IS a WorldRoot -- so the preview measures the same way the real follower does.
+	-- Without this the inspector would silently fall back to the old estimates and /scanpet would
+	-- report on code the live game is not running.
+	local rayRoot = model:FindFirstAncestorWhichIsA("WorldModel") or workspace
+	local function surfaceHit(fromFace, dirFace, maxDist)
+		-- ⚠ PET PARTS SHIP WITH CanQuery = false, AND A RAY CANNOT SEE THROUGH THAT.
+		-- Every builder sets it (Stegosaurus:25, Velociraptor:21, ...) and PetFace sets it on the fused
+		-- BodyUnion itself (PetFace:460), so the pet is invisible to raycasts by default. Without this
+		-- toggle every cast below returns nil, every attach point silently falls back to the old
+		-- bounding-box estimate, and a /scanpet reproduces the previous run byte for byte -- which is
+		-- exactly what happened the first time this was written.
+		-- PetFace does the same dance around its own seating pass (PetFace:274-291): flip it on,
+		-- measure, put it back. Restoring per-part matters -- some pets legitimately differ.
+		local wasQ = {}
+		for _, p in ipairs(bodyParts) do wasQ[p] = p.CanQuery; p.CanQuery = true end
+
+		local dirUnit = worldFace:VectorToWorldSpace(dirFace).Unit
+		local origin, left = worldFace * fromFace, maxDist
+		local hit = nil
+		for _ = 1, 8 do
+			if left <= 0 then break end
+			local r = rayRoot:Raycast(origin, dirUnit * left, RAY)
+			if not r then break end
+			if not pierce[r.Instance] then hit = worldFace:PointToObjectSpace(r.Position); break end
+			left = left - ((r.Position - origin).Magnitude + 0.05)
+			origin = r.Position + dirUnit * 0.05
+		end
+
+		for _, p in ipairs(bodyParts) do p.CanQuery = wasQ[p] end
+		if hit then RAY_OK = RAY_OK + 1 else RAY_MISS = RAY_MISS + 1 end
+		return hit
+	end
+
+	do
+		-- never mutate a shared `infos` entry -- multi-part pets reuse these tables
+		local c = {}; for k, v in pairs(crown) do c[k] = v end; crown = c
+
+		-- ---- HEAD TOP ----------------------------------------------------------------------------
+		-- Three rays down across the head, not one. A Stegosaurus' plates and a Spinosaurus' sail run
+		-- along the MIDLINE and are fused into the body, so no filter can pierce them -- but they are
+		-- thin, so the two rays either side of the spine miss them and land on the real skull. When the
+		-- centre ray comes back far higher than the side rays, that gap IS a plate, and the sides win.
+		-- Cast slightly behind the eyes: the crown of the skull, not the tip of the snout.
+		local castZ = crown.cz + crownHalf * 0.25
+		local span  = (maxY + 3) - minY + 1
+		local mid   = surfaceHit(Vector3.new(crown.cx, maxY + 3, castZ), Vector3.new(0, -1, 0), span)
+		local lo    = surfaceHit(Vector3.new(crown.cx - crownHalf * 0.35, maxY + 3, castZ), Vector3.new(0, -1, 0), span)
+		local hi    = surfaceHit(Vector3.new(crown.cx + crownHalf * 0.35, maxY + 3, castZ), Vector3.new(0, -1, 0), span)
+		local sides = (lo and hi) and math.min(lo.Y, hi.Y) or (lo and lo.Y) or (hi and hi.Y)
+		local top   = mid and mid.Y or sides
+		if top and sides and (top - sides) > 0.25 then top = sides end   -- centre ray was riding a plate
+		if top then
+			crown.maxY = top
+			RAYS_LANDED = true
+		elseif not RAYS_WARNED then
+			-- LOUD ON PURPOSE. A missed ray is not a visual bug, it is the measurement silently not
+			-- happening: the code falls back to the old bounding-box estimate and everything looks
+			-- merely "still wrong" instead of "never ran". That cost a full test cycle once already
+			-- (CanQuery = false made every cast miss and /scanpet returned byte-identical results), so
+			-- it says so out loud from now on.
+			RAYS_WARNED = true
+			warn(("[PetSkinLook] surface rays found nothing on %s -- falling back to bounding-box " ..
+				"estimates, so gear will sit approximately. Check the pet's parts are CanQuery-able " ..
+				"and that it is inside Workspace or a WorldModel."):format(tostring(petId)))
+		end
+
+		-- ---- FACE FRONT --------------------------------------------------------------------------
+		-- Glasses land on the face, whose real surface a ray finds exactly. This is what made every
+		-- Sunglasses combo read BURIED 12 at up to 1.17 studs: eye parts are EMBEDDED in the head, so
+		-- anchoring at their depth put the lenses inside it.
+		if eyeN > 0 then
+			local ec = faceCF:PointToObjectSpace(eyeSum / eyeN)
+			local f = surfaceHit(Vector3.new(ec.X, ec.Y, minZ - 3), Vector3.new(0, 0, 1), 6)
+			if f then crown.minZ = f.Z end
+		end
+	end
+
+	-- ===== PER-PET SIZING, THE FIX FOR "EVERY TRAIT SITS WRONG ON EVERY PET" =====
+	-- One uniform body-derived scale can't fit a wide crab, a tall dragon and a round bean at once. So:
+	--   * HEAD/FACE gear takes its SIZE from the CROWN -- a hat is sized to the head it rests on, so the
+	--     brim hugs a duck's small head instead of being cut for its whole body. (Authoring basis: a head
+	--     half-width of ~0.95, i.e. hats are drawn ~1.9 wide and shrink/grow from there.)
+	--   * BODY/BACK gear keeps a uniform SIZE but its POSITIONS scale PER-AXIS against the body's own
+	--     half-extents: a spec position is a FRACTION of the body (x = 1 is the flank, z = -1 the chest,
+	--     y = 1 the top), so pauldrons land on the shoulders and straps on the flanks of EVERY body shape.
+	local headU = math.clamp(crownHalf / 0.95, 0.45, 2.6)
+	local massU = math.clamp(math.max(hx, hz), 0.55, 2.5)
+
+	-- HEAD POKERS: only the twigs rising out of the CENTRE of the head top -- Bean Buddy's vine -- hide under
+	-- a hat, because that is where the hat physically sits. Features growing from the SIDES (the bunny's
+	-- ears, horns near the rim) are part of the pet's identity and are NEVER removed -- a hat just sits
+	-- between them, cartoon-style. (Hidden locally, Transparency snapshotted; back the instant the hat comes
+	-- off. A tail, wing or beak sits below the crown top and is never touched either way.)
+	local pokers = {}
+	do
+		local ccx = (crown.minX + crown.maxX) / 2
+		local ccz = (crown.minZ + crown.maxZ) / 2
+		local reach = math.max(crown.maxX - crown.minX, crown.maxZ - crown.minZ) * 0.5 * 0.45
+		for _, i in ipairs(infos) do
+			local twig = i.protrusion or (maxFoot > 0 and i.foot < maxFoot * 0.22)
+			if twig and i.maxY > crown.maxY - 0.05 then
+				local dx, dz = i.cx - ccx, i.cz - ccz
+				if (dx * dx + dz * dz) <= reach * reach then pokers[#pokers + 1] = i.part end
+			end
+		end
+	end
+
+	-- THE EYE LINE, in face space: where glasses/eyepatches/monocles must actually sit. Falls back to a
+	-- crown-based guess only when the pet's eyes couldn't be read. eyeSepX is HALF the eye separation, so
+	-- per-eye Face gear authored at x = 1 lands dead on an eye whatever the pet's eye spacing is.
+	local eyeFace, eyeSepX = nil, 0.30 * headU
+	if eyeN > 0 then
+		eyeFace = faceCF:PointToObjectSpace(eyeSum / eyeN)
+		local spread, n = 0, 0
+		for _, rp in ipairs(eyePts) do
+			local fp = faceCF:PointToObjectSpace(rp)
+			spread = spread + math.abs(fp.X - eyeFace.X)
+			n = n + 1
+		end
+		if n > 0 and spread / n > 0.08 then eyeSepX = math.max(spread / n, 0.18 * headU) end
+	end
+
+	-- THE CHEST LINE: the front surface just below the MOUTH. Head-based drops see-sawed (big-headed pets
+	-- dropped to the belly, small-headed ones stayed on the mouth), so the drop is in STUDS below the eye
+	-- line -- pets share a similar absolute scale, and a mouth sits ~0.5-0.8 studs under the eyes on all of
+	-- them -- with a proportional floor so the big pets scale up.
+	-- THE 0.9 FLOOR WAS TOO SHALLOW FOR THESE PETS. The mouth band the scanner tests against runs
+	-- from 0.12 to 0.80 studs under the eye line, so a chest line at exactly 0.9 puts the TOP EDGE of
+	-- anything with height -- a bowtie, a bandana knot, a mafia collar -- straight back into it.
+	-- /scanpet flagged precisely those three, on precisely the pets with small enough bodies that the
+	-- proportional term never took over: Raptor, Triceratops, T-Rex and the Shark. 1.25 clears the
+	-- band with room for the accessory's own thickness; the 0.55 * hy term still wins on big pets.
+	local chestY
+	if eyeFace then chestY = eyeFace.Y - math.max(1.25, 0.55 * hy) else chestY = cy - hy * 0.15 end
+	chestY = math.clamp(chestY, minY + 0.15 * hy, cy + 0.25 * hy)
+
+	-- The chest and the back, measured on the real body at the heights the gear actually rides (see the
+	-- Neck/Back entries below for why the bounding box cannot answer this).
+	local chestFrontZ = nil
+	do
+		local f = surfaceHit(Vector3.new(cx, chestY, minZ - 4), Vector3.new(0, 0, 1), 8)
+		if f then chestFrontZ = f.Z end
+	end
+	local backZ = nil
+	do
+		local b = surfaceHit(Vector3.new(cx, cy + hy * 0.20, maxZ + 4), Vector3.new(0, 0, -1), 8)
+		if b then backZ = b.Z end
+	end
+
+	-- Attach frames are the face frame times an offset measured IN it: in that frame -Z points at the eyes,
+	-- so Face sits on the eye side and Back sits on the exact opposite side -- the backpack and cape land
+	-- behind the pet no matter how its template happens to be rooted.
+	local points = {
+		Head = faceCF * CFrame.new(crown.cx, crown.maxY - 0.05 * headU, crown.cz),
+		-- ON THE EYES: the Face origin is the eye centroid itself, pushed to the crown's front surface --
+		-- glasses land across the eyes and a monocle lands on one, exactly, on every pet
+		-- pushed a solid 0.08 clear of the surface: eye parts are EMBEDDED in the face, so anchoring at
+		-- their depth recessed the glasses into the body (the x-ray showed 0.1-0.4 of sink)
+		Face = faceCF * (eyeFace
+			and CFrame.new(eyeFace.X, eyeFace.Y, math.min(eyeFace.Z, crown.minZ) - 0.08)
+			or CFrame.new(crown.cx, crown.cy + (crown.maxY - crown.cy) * 0.40, crown.minZ - 0.08)),
+		-- ---- THE CHEST, MEASURED -- THIS IS THE FLOATING BOWTIE ---------------------------------
+		-- `minZ` is the front of the BOUNDING BOX, and on every one of these pets that plane is the tip
+		-- of the SNOUT, which juts well ahead of the chest. Hanging a bowtie there left it floating in
+		-- mid-air in front of the animal, exactly as reported -- and no size or height constant could
+		-- ever have fixed it, because the error is in DEPTH.
+		-- The ray starts in clear air ahead of the pet and flies back until it meets the chest, so the
+		-- knot lands against real skin on any build, however far the face sticks out.
+		Neck = faceCF * CFrame.new(cx, chestY, (chestFrontZ or minZ) - 0.02),
+		-- Same measurement behind the pet, for packs and capes: the box's rear plane is the TAIL TIP.
+		Back = faceCF * CFrame.new(cx, cy + hy * 0.20, backZ or maxZ),
+		Body = faceCF * CFrame.new(cx, cy, cz),
+	}
+
+	-- ===== BODY GEAR RIDES THE TORSO, NOT THE SILHOUETTE =====
+	-- A Body/Back spec position is a FRACTION of these half-extents: z = 1 means "the rear surface",
+	-- y = 1 "the top". Fed the raw bounding box that is wrong on every dinosaur here, because the box
+	-- is stretched by things no strap should ever reach -- z = 1 lands on the TAIL TIP and y = 1
+	-- above the PLATES or the SAIL, which is the reported "body wear is floating off the pet".
+	-- The lateral half-width is the one clean axis (nothing sticks out sideways on these builds), and
+	-- the bodies are near-cubic by construction, so it caps the other two at a plausible torso.
+	-- min() keeps the honest number whenever the box was never inflated in the first place, so
+	-- multi-part pets from the food realm are unaffected.
+	local torsoExtents = Vector3.new(hx, math.min(hy, hx * 1.10), math.min(hz, hx * 1.10))
+
+	-- Per-attach sizing record: `size` scales the part dimensions uniformly (assemblies stay rigid);
+	-- `pos` scales each position axis, which is what conforms body gear to the body's actual shape.
+	-- Face's X position axis is the EYE SEPARATION, so lenses/patches/monocles land per-eye.
+	local scales = {
+		Head = { size = headU, pos = Vector3.new(headU, headU, headU) },
+		Face = { size = headU, pos = Vector3.new(eyeSepX, headU, headU) },
+		-- neck/chest gear runs at 75% -- full-size bowties and ties reached up into mouths and dangled
+		-- below small bodies; smaller fits the strip between the face and the belly on every pet
+		Neck = { size = (headU + massU) * 0.375, pos = Vector3.new((headU + massU) * 0.375, (headU + massU) * 0.375, (headU + massU) * 0.375) },
+		Back = { size = massU, pos = torsoExtents },
+		Body = { size = massU, pos = torsoExtents },
+	}
+
+	-- ANCHORS: which real body part each attach point rides. Head/Face gear follows the CROWN part and
+	-- chest/back/body gear follows the biggest mass part -- so when the pet waddles, squashes or wobbles a
+	-- part relative to its root, the gear on that part moves WITH it instead of hovering rigidly.
+	local biggest = major[1]
+	for _, i in ipairs(major) do
+		if i.foot > biggest.foot then biggest = i end
+	end
+	local anchors = {
+		Head = crown.part, Face = crown.part,
+		Neck = biggest.part, Back = biggest.part, Body = biggest.part,
+	}
+
+	-- fold in the per-pet tuning (position in fractions of that attach's own units, rotation in degrees,
+	-- scale multiplier)
+	local overrides = petId and PetTraits.PET_OFFSETS[petId]
+	if overrides then
+		for name, o in pairs(overrides) do
+			local cf, rec = points[name], scales[name]
+			if cf and rec then
+				local p = o.pos or { 0, 0, 0 }
+				local r = o.rot or { 0, 0, 0 }
+				points[name] = cf * CFrame.new(p[1] * rec.pos.X, p[2] * rec.pos.Y, p[3] * rec.pos.Z)
+					* CFrame.Angles(math.rad(r[1]), math.rad(r[2]), math.rad(r[3]))
+				local m = o.scale or 1
+				scales[name] = { size = rec.size * m, pos = rec.pos * m }
+			end
+		end
+	end
+
+	-- live ADJUST nudges go on last, so they tune what is actually on screen (offsets included)
+	local live = petId and liveAdjust[petId]
+	if live then
+		for name, o in pairs(live) do
+			local cf, rec = points[name], scales[name]
+			if cf and rec then
+				points[name] = cf * CFrame.new(o.x * rec.pos.X, o.y * rec.pos.Y, o.z * rec.pos.Z)
+				scales[name] = { size = rec.size * o.scale, pos = rec.pos * o.scale }
+			end
+		end
+	end
+	-- The MEASURED surfaces, handed to the seat pass in buildAccessoryParts. `faceCF` is what converts
+	-- between the attach frames and the space these numbers live in. Any field may be nil when a ray
+	-- missed -- the seat pass then leaves that attach exactly where the estimate put it.
+	local seat = {
+		faceCF   = faceCF,
+		Head     = crown.maxY,      -- crown surface: gear sits ON it   (+Y outward)
+		Face     = crown.minZ,      -- face surface:  gear sits IN FRONT (-Z outward)
+		Neck     = chestFrontZ,     -- chest surface: gear sits IN FRONT (-Z outward)
+		Back     = backZ,           -- back surface:  gear sits BEHIND  (+Z outward)
+	}
+	return points, scales, pokers, anchors, seat
+end
+
+local function buildSpecPart(spec, rec)
+	local p
+	if spec.shape == "Wedge" then
+		-- a real one-piece wedge (horns, blades): sharp top edge, solid taper -- no stacked segments
+		p = Instance.new("WedgePart")
+	else
+		p = Instance.new("Part")
+		if spec.shape == "Ball" then p.Shape = Enum.PartType.Ball
+		elseif spec.shape == "Cylinder" then p.Shape = Enum.PartType.Cylinder
+		else p.Shape = Enum.PartType.Block end
+	end
+	p.Name = "PetSkinAcc"
+	p.Size = Vector3.new(spec.size[1], spec.size[2], spec.size[3]) * rec.size
+	-- "Dome" = an ellipsoid mesh on a block, so a HALF-SPHERE profile is one part: size it wide and short
+	-- and only the rounded cap shows above whatever it sits on (beanies, helmets, caps).
+	if spec.shape == "Dome" then
+		local m = Instance.new("SpecialMesh")
+		m.MeshType = Enum.MeshType.Sphere
+		m.Parent = p
+	end
+	p.Color = spec.color or Color3.new(1, 1, 1)
+	p.Material = spec.material or Enum.Material.SmoothPlastic
+	p.Reflectance = spec.refl or 0
+	p.Transparency = spec.trans or 0
+	p.Anchored = true; p.CanCollide = false; p.CanQuery = false; p.CanTouch = false
+	p.CastShadow = false; p.Massless = true
+	return p
+end
+
+local function specOffset(spec, rec)
+	local pos = spec.pos or { 0, 0, 0 }
+	local rot = spec.rot or { 0, 0, 0 }
+	-- `uniform` locks a part's POSITION to the same scale as its SIZE. Face gear normally spreads its X by
+	-- the eye separation, but a multi-piece rigid frame (the sunglasses) shatters when its pieces position
+	-- on one scale and size on another -- uniform parts stay one solid assembly.
+	if spec.uniform then
+		return CFrame.new(pos[1] * rec.size, pos[2] * rec.size, pos[3] * rec.size)
+			* CFrame.Angles(math.rad(rot[1]), math.rad(rot[2]), math.rad(rot[3]))
+	end
+	return CFrame.new(pos[1] * rec.pos.X, pos[2] * rec.pos.Y, pos[3] * rec.pos.Z)
+		* CFrame.Angles(math.rad(rot[1]), math.rad(rot[2]), math.rad(rot[3]))
+end
+
+-- Build a list of part specs onto the model. `static` places them once at the current root CFrame (viewport
+-- icons, previews); otherwise they join the follow loop and track the pet every frame -- the same rigid-
+-- assembly approach the old floating crown used, which survives however PetFollow moves the model.
+local function buildAccessoryParts(model, petId, specs, defaultAttach, static, partName, traitId)
+	if not specs or #specs == 0 then return end
+	local root = model.PrimaryPart
+	if not root then return end
+	local points, scales, pokers, anchors, seat = computeAttach(model, petId)
+	if not points then return end
+
+	-- ===== PER-TRAIT, PER-PET OVERRIDE =====
+	-- The pet-wide entries in PetTraits.PET_OFFSETS move an ATTACH POINT, so they shift every trait
+	-- on that pet together -- which is what you want for anatomy (a sail, a frill, a long neck).
+	-- This is the finer grain underneath it: one specific trait on one specific pet, for the cases a
+	-- shared attach point cannot express -- a wide-brimmed hat that clears a Triceratops' horns while
+	-- the crown on the same attach point sits fine.
+	--
+	--   PetTraits.PET_OFFSETS.StegoPet = {
+	--       Back   = { pos = {0, 0.25, 0}, scale = 0.80 },   -- every trait on the Stego's back
+	--       traits = { Wizard = { Head = { pos = {0, 0.1, 0}, scale = 0.9 } } },  -- ONLY the wizard hat
+	--   }
+	--
+	-- Applied ON TOP of the pet-wide offset, same units (fractions of that attach's own scale), so the
+	-- two compose rather than fight. Use it sparingly -- a trait needing an entry on all eight pets is
+	-- a trait authored wrong, and should be fixed once in PetTraits instead.
+	if traitId and petId then
+		local pet = PetTraits.PET_OFFSETS[petId]
+		local perTrait = pet and pet.traits and pet.traits[traitId]
+		if perTrait then
+			for name, o in pairs(perTrait) do
+				local cf, rec = points[name], scales[name]
+				if cf and rec then
+					local p = o.pos or { 0, 0, 0 }
+					local r = o.rot or { 0, 0, 0 }
+					points[name] = cf * CFrame.new(p[1] * rec.pos.X, p[2] * rec.pos.Y, p[3] * rec.pos.Z)
+						* CFrame.Angles(math.rad(r[1]), math.rad(r[2]), math.rad(r[3]))
+					local m = o.scale or 1
+					scales[name] = { size = rec.size * m, pos = rec.pos * m }
+				end
+			end
+		end
+	end
+
+	local reg = accessorised[model]
+	if not reg and not static then
+		reg = { root = root, groups = {} }
+		accessorised[model] = reg
+	end
+
+	-- group the specs by attach point so the follow loop does one attach-CFrame multiply per group
+	local groups = {}
+	for _, spec in ipairs(specs) do
+		local attach = spec.attach or defaultAttach or "Head"
+		if not points[attach] then attach = "Head" end
+		local g = groups[attach]
+		if not g then g = {}; groups[attach] = g end
+		g[#g + 1] = spec
+	end
+
+	-- SOMETHING IS GOING ON THE HEAD -> hide the head pokers (Bean Buddy's vine, bunny ears, horns) so
+	-- nothing sticks through the hat. Local + snapshotted: clearLook restores the original transparency at
+	-- the top of every repaint, so the vine is back the moment the hat is taken off. Face/neck/back/body
+	-- accessories leave the pet's features exactly as they are.
+	if groups.Head and pokers then
+		for _, p in ipairs(pokers) do
+			snapshot(p)
+			p.Transparency = 1
+		end
+	end
+
+	for attach, list in pairs(groups) do
+		local rec = scales[attach] or { size = 1, pos = Vector3.new(1, 1, 1) }
+		local attachCF = points[attach]
+		local built = {}
+		for _, spec in ipairs(list) do
+			local p = buildSpecPart(spec, rec)
+			if partName then p.Name = partName end
+			p:SetAttribute("PetSkinAttach", attach) -- read by /scanpet's geometry X-ray
+			local off = specOffset(spec, rec)
+			p.CFrame = root.CFrame * attachCF * off
+			p.Parent = model
+			-- `sway` marks cloth (capes, tails, the bandana): the follow loop flutters it about a HINGE at
+			-- the part's top edge, so it flaps like fabric pinned at the shoulders, not a slab spinning on
+			-- its centre. phase staggers siblings so a three-segment cape ripples instead of flapping as one.
+			-- swayPhase pins multi-part cloth to ONE rhythm (a cape + its hem move as one sheet); without it
+			-- each part gets its own stagger, which is right for independent strips/tails
+			built[#built + 1] = { part = p, off = off, sway = spec.sway, hinge = p.Size.Y / 2,
+				phase = (spec.sway and spec.sway.phase) or (#built * 1.7) }
+		end
+
+		-- =================================================================================
+		-- THE SEAT PASS: MOVE THE GEAR ONTO THE SURFACE, WHATEVER SHAPE IT TURNED OUT TO BE
+		-- =================================================================================
+		-- Up to here the attach POINT is measured, but where a trait's own geometry lands relative to
+		-- that point is up to whoever authored it -- 21 traits, each drawn around its own origin, some
+		-- hanging below it, some sitting above. That is the whole remaining source of "most fit, a few
+		-- do not": the surface was right and the gear was drawn off-centre from it.
+		--
+		-- So instead of trusting the authoring, this measures the ASSEMBLY that actually got built and
+		-- slides it bodily onto the surface. A hat's real underside is put on the real crown; a bowtie's
+		-- real back face is put on the real chest. It is a translation of the whole group, so nothing
+		-- inside an assembly shifts relative to anything else -- a cone hat keeps its brim, a pair of
+		-- glasses keeps its bridge.
+		--
+		-- This is what makes it hold for every trait AND every trait added later: nothing here knows or
+		-- cares what the accessory is. Only Body is exempt -- body gear wraps the pet rather than
+		-- resting on one face of it, so there is no single surface to seat it against.
+		-- SOME GEAR IS SUPPOSED TO FLOAT. A halo that hovers over the head is not a seating error, and
+		-- dragging it down onto the skull destroys the effect -- the last scan caught this doing exactly
+		-- that, hauling Celestial's halo 1.85-2.25 studs down on every pet. The scanner already exempts
+		-- Celestial from its FLOATING check for the same reason; this keeps the two in agreement.
+		local NO_SEAT = { Celestial = true }
+		local surf = (not NO_SEAT[traitId]) and seat and seat[attach]
+		if surf and #built > 0 then
+			-- assembly bounds in FACE space (the space the measured surfaces are in)
+			local toFace = (root.CFrame * seat.faceCF):Inverse()
+			local mn, mx = Vector3.new(math.huge, math.huge, math.huge), Vector3.new(-math.huge, -math.huge, -math.huge)
+			for _, b in ipairs(built) do
+				local h = b.part.Size / 2
+				for sx = -1, 1, 2 do for sy = -1, 1, 2 do for sz = -1, 1, 2 do
+					local c = (toFace * b.part.CFrame * CFrame.new(h.X * sx, h.Y * sy, h.Z * sz)).Position
+					mn = Vector3.new(math.min(mn.X, c.X), math.min(mn.Y, c.Y), math.min(mn.Z, c.Z))
+					mx = Vector3.new(math.max(mx.X, c.X), math.max(mx.Y, c.Y), math.max(mx.Z, c.Z))
+				end end end
+			end
+			-- BITE: seat a hair INTO the body. Gear that merely touches reads as hovering under any
+			-- wobble, and the follow loop wobbles everything.
+			local BITE = 0.06
+			local d
+			if attach == "Head" then
+				d = Vector3.new(0, (surf - BITE) - mn.Y, 0)          -- underside down onto the crown
+			elseif attach == "Face" or attach == "Neck" then
+				d = Vector3.new(0, 0, (surf + BITE) - mx.Z)          -- back face onto the front surface
+			elseif attach == "Back" then
+				d = Vector3.new(0, 0, (surf - BITE) - mn.Z)          -- front face onto the rear surface
+			end
+			if d and d.Magnitude > 0.001 then
+				-- face-space delta -> the attach frame's own axes, so it survives any rotation an
+				-- override put on the attach point
+				local dLocal = attachCF:VectorToObjectSpace(seat.faceCF:VectorToWorldSpace(d))
+				for _, b in ipairs(built) do
+					b.off = CFrame.new(dLocal) * b.off        -- keeps the follow loop in agreement
+					b.part.CFrame = root.CFrame * attachCF * b.off
+				end
+				-- what the seat actually had to correct, in studs -- read back by /scanpet
+				built[1].part:SetAttribute("PetSeatShift", d.Magnitude)
+			else
+				built[1].part:SetAttribute("PetSeatShift", 0)
+			end
+		end
+		if reg then
+			-- follow the ANCHOR body part where one exists: rel re-derives the attach frame from that part's
+			-- live CFrame each frame, so the gear inherits the pet's waddle/wobble, not just its position
+			local anchor = anchors and anchors[attach]
+			local rel = nil
+			if anchor and anchor.Parent then
+				rel = anchor.CFrame:ToObjectSpace(root.CFrame * attachCF)
+			else
+				anchor = nil
+			end
+			reg.groups[#reg.groups + 1] = { cf = attachCF, parts = built, anchor = anchor, rel = rel }
+		end
+	end
+end
+
+-- ---- SKIN DECO ----------------------------------------------------------------------------------------------
+-- Small extra geometry a skin can declare (PetSkins `deco` field) so its identity is structural, not just a
+-- recolour: Crystal grows shards, Robot gets an antenna and rivets. Authored here as ordinary accessory specs
+-- and built through the exact same pipeline as trait accessories.
+-- Body deco positions are FRACTIONS of the body's half-extents (same convention as trait Body specs), so
+-- every point below has magnitude ~1: ON the surface of whatever shape the pet is, never buried inside it.
+local SKIN_DECO = {
+	-- shards grow off the BACK and FLANKS, kept low -- never crowning the head (that read as a weird
+	-- hat on the pets whose body IS their head)
+	crystals = { attach = "Body", parts = {
+		{ shape="Block", size={0.22,0.75,0.22}, pos={0,0.40,0.62}, rot={-15,10,  5},
+			color=Color3.fromRGB(205,165,250), material=Enum.Material.Glass, trans=0.2, refl=0.3 },        -- big back spike
+		{ shape="Block", size={0.18,0.60,0.18}, pos={-0.62,0.30,0.25}, rot={ 10,20,-25},
+			color=Color3.fromRGB(190,150,240), material=Enum.Material.Glass, trans=0.2, refl=0.3 },        -- flank shards
+		{ shape="Block", size={0.16,0.48,0.16}, pos={ 0.62,0.25,0.30}, rot={ -8,-30,22},
+			color=Color3.fromRGB(220,185,255), material=Enum.Material.Glass, trans=0.2, refl=0.3 },
+		{ shape="Block", size={0.14,0.40,0.14}, pos={ 0.30,0.42,0.58}, rot={-22,45, 12},
+			color=Color3.fromRGB(175,135,235), material=Enum.Material.Glass, trans=0.2, refl=0.3 },        -- small back shard
+	} },
+	bolts = { attach = "Head", parts = {
+		{ shape="Cylinder", size={0.34,0.07,0.07}, pos={0,0.42,0}, rot={0,0,90},
+			color=Color3.fromRGB(120,126,138), material=Enum.Material.Metal, refl=0.3 },        -- antenna mast
+		{ shape="Ball", size={0.16,0.16,0.16}, pos={0,0.62,0},
+			color=Color3.fromRGB(90,220,255), material=Enum.Material.Neon },                    -- antenna bulb
+		{ shape="Ball", size={0.14,0.14,0.14}, pos={-1.00,-0.12,0}, attach="Body",
+			color=Color3.fromRGB(110,116,128), material=Enum.Material.Metal, refl=0.4 },        -- side rivets
+		{ shape="Ball", size={0.14,0.14,0.14}, pos={ 1.00,-0.12,0}, attach="Body",
+			color=Color3.fromRGB(110,116,128), material=Enum.Material.Metal, refl=0.4 },
+		-- the personality half: a control panel with blinky buttons on the CHEST LINE (Neck attach --
+		-- guaranteed below the face on every pet) and a little back vent
+		{ shape="Block", size={0.60,0.45,0.18}, pos={0,-0.05,0.03}, attach="Neck",
+			color=Color3.fromRGB(88,94,106), material=Enum.Material.Metal, refl=0.2 },          -- chest panel, tucked into the chest plane
+		{ shape="Ball", size={0.12,0.12,0.12}, pos={-0.18,-0.02,-0.04}, attach="Neck",
+			color=Color3.fromRGB(255,80,80),  material=Enum.Material.Neon },                    -- panel lights
+		{ shape="Ball", size={0.12,0.12,0.12}, pos={0,-0.02,-0.04}, attach="Neck",
+			color=Color3.fromRGB(255,220,90), material=Enum.Material.Neon },
+		{ shape="Ball", size={0.12,0.12,0.12}, pos={ 0.18,-0.02,-0.04}, attach="Neck",
+			color=Color3.fromRGB(90,220,255), material=Enum.Material.Neon },
+		{ shape="Block", size={0.40,0.26,0.10}, pos={0,0.05,1.00}, attach="Body",
+			color=Color3.fromRGB(70,76,88), material=Enum.Material.Metal, refl=0.15 },          -- back vent
+	} },
+	-- CANDY: bright gumdrops stuck ON the body surface -- the skin should read as candy from across the island
+	candy = { attach = "Body", parts = {
+		{ shape="Ball", size={0.24,0.24,0.24}, pos={-0.66,0.66,-0.36}, color=Color3.fromRGB(255, 80, 90),  material=Enum.Material.SmoothPlastic, refl=0.15 },
+		{ shape="Ball", size={0.20,0.20,0.20}, pos={ 0.66,0.59, 0.46}, color=Color3.fromRGB(255,220, 70),  material=Enum.Material.SmoothPlastic, refl=0.15 },
+		{ shape="Ball", size={0.22,0.22,0.22}, pos={ 0.18,0.85,-0.49}, color=Color3.fromRGB( 90,220,255),  material=Enum.Material.SmoothPlastic, refl=0.15 },
+		{ shape="Ball", size={0.18,0.18,0.18}, pos={-0.61,0.41, 0.68}, color=Color3.fromRGB(120,235,110),  material=Enum.Material.SmoothPlastic, refl=0.15 },
+		{ shape="Ball", size={0.20,0.20,0.20}, pos={ 0.77,0.26,-0.58}, color=Color3.fromRGB(200,110,255),  material=Enum.Material.SmoothPlastic, refl=0.15 },
+		{ shape="Ball", size={0.18,0.18,0.18}, pos={-0.31,0.23,-0.92}, color=Color3.fromRGB(255,150, 60),  material=Enum.Material.SmoothPlastic, refl=0.15 },
+	} },
+	-- TOXIC: bubbling neon boils ON the surface -- the sludge is visibly ALIVE
+	boils = { attach = "Body", parts = {
+		{ shape="Ball", size={0.30,0.30,0.30}, pos={-0.65,0.65,-0.39}, color=Color3.fromRGB(150,255, 60), material=Enum.Material.Neon },
+		{ shape="Ball", size={0.20,0.20,0.20}, pos={ 0.75,0.48, 0.41}, color=Color3.fromRGB(120,235, 40), material=Enum.Material.Neon },
+		{ shape="Ball", size={0.24,0.24,0.24}, pos={ 0.13,0.87,-0.45}, color=Color3.fromRGB(170,255, 90), material=Enum.Material.Neon },
+		{ shape="Ball", size={0.16,0.16,0.16}, pos={-0.59,0.29, 0.74}, color=Color3.fromRGB(140,245, 50), material=Enum.Material.Neon },
+		{ shape="Ball", size={0.18,0.18,0.18}, pos={ 0.64,0.14,-0.71}, color=Color3.fromRGB(120,235, 40), material=Enum.Material.Neon },
+	} },
+	-- COSMIC: the galaxy on the body -- glowing NEBULA cloud patches in purple/pink/teal and tiny white
+	-- star studs. (The circling planets + stars are the skin's ORBIT, not deco -- orbiters leave gaps as
+	-- they move, so the pet's own features stay visible; the old solid rings covered them.)
+	cosmos = { attach = "Body", parts = {
+		{ shape="Ball", size={0.42,0.42,0.42}, pos={-0.60,0.60,-0.35}, trans=0.55,
+			color=Color3.fromRGB(190,110,255), material=Enum.Material.Neon },                   -- nebula clouds
+		{ shape="Ball", size={0.34,0.34,0.34}, pos={ 0.68,0.42, 0.42}, trans=0.55,
+			color=Color3.fromRGB(255,120,200), material=Enum.Material.Neon },
+		{ shape="Ball", size={0.38,0.38,0.38}, pos={ 0.15,0.80,-0.45}, trans=0.60,
+			color=Color3.fromRGB( 90,200,255), material=Enum.Material.Neon },
+		{ shape="Ball", size={0.28,0.28,0.28}, pos={-0.55,0.25, 0.60}, trans=0.55,
+			color=Color3.fromRGB(150, 90,240), material=Enum.Material.Neon },
+		{ shape="Ball", size={0.10,0.10,0.10}, pos={ 0.72,0.15,-0.55}, color=Color3.fromRGB(255,255,255), material=Enum.Material.Neon }, -- star studs
+		{ shape="Ball", size={0.09,0.09,0.09}, pos={-0.30,0.75, 0.40}, color=Color3.fromRGB(255,255,255), material=Enum.Material.Neon },
+		{ shape="Ball", size={0.08,0.08,0.08}, pos={ 0.35,0.30, 0.72}, color=Color3.fromRGB(255,255,255), material=Enum.Material.Neon },
+		{ shape="Ball", size={0.09,0.09,0.09}, pos={-0.70,0.45,-0.20}, color=Color3.fromRGB(255,255,255), material=Enum.Material.Neon },
+	} },
+	-- ANCIENT: glowing gold rune marks carved into the stone surface
+	runes = { attach = "Body", parts = {
+		{ shape="Block", size={0.10,0.42,0.06}, pos={-0.78,0.52,-0.45}, rot={  0, 20, 15}, color=Color3.fromRGB(255,206, 92), material=Enum.Material.Neon },
+		{ shape="Block", size={0.34,0.10,0.06}, pos={-0.76,0.24,-0.50}, rot={  0, 20,  0}, color=Color3.fromRGB(255,206, 92), material=Enum.Material.Neon },
+		{ shape="Block", size={0.10,0.38,0.06}, pos={ 0.80,0.47, 0.40}, rot={  0,-25,-12}, color=Color3.fromRGB(255,190, 70), material=Enum.Material.Neon },
+		{ shape="Block", size={0.28,0.10,0.06}, pos={ 0.19,0.68,-0.70}, rot={  0, 60,  0}, color=Color3.fromRGB(255,206, 92), material=Enum.Material.Neon },
+	} },
+}
+
+-- SURFACE PUSH: the studs-on-the-body decos (gumdrops, boils, shards, runes) were authored for an
+-- ellipsoid surface, but the union pet bodies are rounded CUBES -- their diagonal surface sits ~30%
+-- further out, and the /scanpet x-ray showed every one of these partly sunk on every pet. Pushing the
+-- authored points out here (once, at load) keeps the tables readable. Only default-Body parts move;
+-- anything with an explicit attach override (Robot's rivets/vent, Jungle's old flower) is positioned
+-- deliberately and stays put.
+for name, deco in pairs(SKIN_DECO) do
+	if deco.attach == "Body" then
+		local push = (name == "candy") and 1.4 or 1.3 -- the small gumdrops need a touch more to break the surface
+		for _, spec in ipairs(deco.parts) do
+			if not spec.attach and spec.pos then
+				spec.pos = { spec.pos[1] * push, spec.pos[2] * push, spec.pos[3] * push }
+			end
+		end
+	end
+end
+
+-- ORBITERS, shared by traits (Celestial's stars, Titan's rocks) and skins (Cosmic's planets). `items`
+-- lets each orbiter carry its own size/colour/material -- a ring of planets AND stars from one spec --
+-- while the plain count/size/color form still works for uniform rings.
+local function buildOrbit(model, root, o)
+	local parts = {}
+	local items = o.items
+	local count = if items then #items else (o.count or 3)
+	for i = 1, count do
+		local it = items and items[i]
+		local sz = (it and it.size) or o.size or 0.25
+		local p = Instance.new("Part")
+		p.Name = "PetSkinOrb"
+		p.Shape = Enum.PartType.Ball
+		p.Size = Vector3.new(sz, sz, sz)
+		p.Color = (it and it.color) or o.color or Color3.new(1, 1, 1)
+		local neon = if it ~= nil then it.neon else o.neon
+		p.Material = neon and Enum.Material.Neon or Enum.Material.SmoothPlastic
+		p.Anchored = true; p.CanCollide = false; p.CanQuery = false; p.CanTouch = false
+		p.CastShadow = false; p.Massless = true
+		p.CFrame = root.CFrame
+		p.Parent = model
+		parts[i] = p
+	end
+	orbiting[model] = { parts = parts, radius = o.radius or 2, speed = o.speed or 3, root = root }
+	print("[PetSkinLook] orbit built: " .. count .. " orbiter(s), radius " .. tostring(o.radius or 2))
+end
+
+-- `static` = colour/material only paint for reels + icons; effects (emitters/lights/animation registration)
+-- are skipped there but the deco GEOMETRY still builds -- it is part of the skin's identity, and a Crystal
+-- pet without its shards is just purple.
+local function applySkin(model, petId, skinId, static)
 	local skin = PetSkins.get(skinId)
 	if not skin then return end
 	local parts = bodyParts(model)
 	for _, p in ipairs(parts) do
-		if not originals[p] then
-			originals[p] = { color = p.Color, material = p.Material, refl = p.Reflectance }
-		end
-		if skin.color then p.Color = skin.color end
+		snapshot(p)
+		if skin.color then paintable(p); p.Color = skin.color end
 		if skin.material then p.Material = skin.material end
 		p.Reflectance = skin.refl or 0
+		if skin.trans then p.Transparency = skin.trans end
 	end
-	-- an ambient tint particle for the flashier skins (the same `fx` field PetFollow's RARE_LOOK uses)
+	if skin.deco and SKIN_DECO[skin.deco] then
+		local d = SKIN_DECO[skin.deco]
+		buildAccessoryParts(model, petId, d.parts, d.attach, static, "PetSkinDeco")
+	end
+	if static then return end
+
 	local root = model.PrimaryPart
+	-- an ambient tint particle for the flashier skins (the same `fx` field PetFollow's RARE_LOOK uses)
 	if skin.fx and root then
 		local e = Instance.new("ParticleEmitter")
 		e.Name = "PetSkinFX"
@@ -133,13 +1096,79 @@ local function applySkin(model, skinId)
 		e.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.25), NumberSequenceKeypoint.new(1, 1) })
 		e.Parent = root
 	end
+	-- the skin's OWN flavour emitter (Lava embers, Ocean bubbles, Toxic drips...)
+	if skin.particle and root then
+		buildParticle(root, skin.particle, "PetSkinFX")
+	end
 	if skin.light and root then
 		local pl = Instance.new("PointLight")
 		pl.Name = "PetSkinLight"
 		pl.Color = skin.fx or skin.color or Color3.new(1, 1, 1)
-		pl.Brightness = 1.5
+		pl.Brightness = 1.5 * 0.75 -- pet glow runs 25% down across the board (see PetFollow's note by RARE_DIM)
 		pl.Range = 12
 		pl.Parent = root
+	end
+	-- RIBBON TRAIL (Rainbow's signature): a fixed multi-stop rainbow gradient, so no per-frame cost -- the
+	-- ribbon itself carries every colour at once while the body cycles.
+	if skin.trail and root then
+		local a0 = Instance.new("Attachment"); a0.Name = "PetSkinTrailA0"; a0.Position = Vector3.new(0, 0.8, 0); a0.Parent = root
+		local a1 = Instance.new("Attachment"); a1.Name = "PetSkinTrailA1"; a1.Position = Vector3.new(0, -0.8, 0); a1.Parent = root
+		local tr = Instance.new("Trail")
+		tr.Name = "PetSkinTrail"; tr.Attachment0 = a0; tr.Attachment1 = a1
+		tr.Lifetime = 0.9; tr.LightEmission = 0.7; tr.FaceCamera = true
+		tr.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0.00, Color3.fromRGB(255,  70,  70)),
+			ColorSequenceKeypoint.new(0.20, Color3.fromRGB(255, 170,  60)),
+			ColorSequenceKeypoint.new(0.40, Color3.fromRGB(255, 240,  80)),
+			ColorSequenceKeypoint.new(0.60, Color3.fromRGB( 90, 230, 110)),
+			ColorSequenceKeypoint.new(0.80, Color3.fromRGB( 80, 160, 255)),
+			ColorSequenceKeypoint.new(1.00, Color3.fromRGB(190, 110, 255)),
+		})
+		tr.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.35), NumberSequenceKeypoint.new(1, 1),
+		})
+		tr.Parent = root
+	end
+	-- ORBITERS on skins (Cosmic's planets + stars). If the equipped TRAIT also orbits (Celestial, Titan),
+	-- the trait applies after the skin and takes the ring -- one orbit per pet keeps it readable.
+	if skin.orbit and root then
+		buildOrbit(model, root, skin.orbit)
+	end
+	-- TIER TRAILS: flying with a Rare or better skin should be VISIBLE from across the island.
+	--   Rare      -> a glitter trail (world-space sparkles that linger where the pet flew) + a thin line
+	--   Legendary -> a bold line trail in the skin's colour
+	-- Rainbow keeps its authored multi-colour ribbon instead of the generic line.
+	local tint = skin.fx or skin.color or Color3.new(1, 1, 1)
+	if root and skin.tier == "Rare" then
+		local em = Instance.new("ParticleEmitter")
+		em.Name = "PetSkinFX"
+		em.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+		em.Color = ColorSequence.new(tint)
+		em.Size = NumberSequence.new(0.28)
+		em.Rate = 12
+		em.Speed = NumberRange.new(0.2, 0.6)
+		em.Lifetime = NumberRange.new(0.6, 1.0)
+		em.SpreadAngle = Vector2.new(180, 180)
+		em.LightEmission = 0.6
+		em.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.25), NumberSequenceKeypoint.new(1, 1),
+		})
+		em.Parent = root
+	end
+	if root and not skin.trail and (skin.tier == "Rare" or skin.tier == "Legendary") then
+		local bold = skin.tier == "Legendary"
+		local off = bold and 0.8 or 0.5
+		local a0 = Instance.new("Attachment"); a0.Name = "PetSkinTrailA0"; a0.Position = Vector3.new(0, off, 0); a0.Parent = root
+		local a1 = Instance.new("Attachment"); a1.Name = "PetSkinTrailA1"; a1.Position = Vector3.new(0, -off, 0); a1.Parent = root
+		local tr = Instance.new("Trail")
+		tr.Name = "PetSkinTrail"; tr.Attachment0 = a0; tr.Attachment1 = a1
+		tr.Lifetime = bold and 0.8 or 0.45
+		tr.LightEmission = 0.7; tr.FaceCamera = true
+		tr.Color = ColorSequence.new(tint)
+		tr.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, bold and 0.4 or 0.6), NumberSequenceKeypoint.new(1, 1),
+		})
+		tr.Parent = root
 	end
 	if skin.animated then
 		animated[model] = { mode = skin.animated, parts = parts }
@@ -149,33 +1178,43 @@ end
 -- ============================================================================================================
 -- TRAIT
 -- ============================================================================================================
-local function applyTrait(model, traitId)
+-- Builds the trait's accessory set (always -- it IS the trait) plus its flavour effects (live pets only).
+local function applyTrait(model, petId, traitId, static)
 	if PetTraits.isNone(traitId) then return end
 	local t = PetTraits.get(traitId)
 	if not t then return end
 	local root = model.PrimaryPart
 	if not root then return end
 
-	if t.particle then
-		local p = t.particle
-		local e = Instance.new("ParticleEmitter")
-		e.Name = "PetSkinTraitFX"
-		e.Texture = p.texture or "rbxasset://textures/particles/sparkles_main.dds"
-		e.Color = ColorSequence.new(p.color or Color3.new(1, 1, 1))
-		e.LightEmission = 0.7
-		e.Rate = p.rate or 12
-		e.Speed = NumberRange.new(p.speed or 1)
-		e.Lifetime = NumberRange.new((p.lifetime or 1) * 0.7, p.lifetime or 1)
-		e.Size = NumberSequence.new(p.size or 1)
-		e.SpreadAngle = Vector2.new(p.spread or 15, p.spread or 15)
-		e.Rotation = NumberRange.new(0, 360)
-		e.Acceleration = p.accel or Vector3.new()
-		e.Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, p.transparency or 0.3),
-			NumberSequenceKeypoint.new(1, 1),
-		})
-		e.Parent = root
+	-- ===== HIDE WHAT THE OUTFIT COVERS =====
+	-- Some body details read as clutter once a trait is worn -- a belly patch behind a bowtie, a
+	-- frill behind a cape collar. PET_OFFSETS[petId].hide lists parts to make invisible for as long
+	-- as a trait is equipped; snapshot() records the original transparency, and clearLook() puts them
+	-- back the instant the trait comes off, so nothing is destroyed.
+	--
+	-- ⚠ THIS ONLY REACHES SEPARATE PARTS. A Stegosaurus' plates, a Spinosaurus' sail and every tail
+	-- in this realm are FUSED INTO BodyUnion by PetFace -- they are not parts any more, they are
+	-- geometry inside one solid, and nothing can hide them without un-fusing the pet and
+	-- re-introducing the seams that fusion exists to remove. What IS separate (PetFace leaves it
+	-- welded because CSG refuses it) and therefore hideable: Belly on the Triceratops and
+	-- Therizinosaurus, Frill and Smile on the Triceratops, plus feet, fins and eyes.
+	do
+		local cfg = petId and PetTraits.PET_OFFSETS[petId]
+		local hide = cfg and cfg.hide
+		if hide then
+			for _, d in ipairs(model:GetDescendants()) do
+				if d:IsA("BasePart") and hide[d.Name] then
+					snapshot(d)
+					d.Transparency = 1
+				end
+			end
+		end
 	end
+
+	buildAccessoryParts(model, petId, t.parts, t.attach, static, "PetSkinAcc", traitId)
+	if static then return end
+
+	if t.particle then buildParticle(root, t.particle, "PetSkinTraitFX") end
 
 	if t.sparkles then
 		local s = Instance.new("Sparkles")
@@ -188,77 +1227,13 @@ local function applyTrait(model, traitId)
 		local pl = Instance.new("PointLight")
 		pl.Name = "PetSkinLight" -- shares the skin light's name on purpose: clearLook removes both in one pass
 		pl.Color = t.light.color or Color3.new(1, 1, 1)
-		pl.Brightness = t.light.brightness or 1.5
+		pl.Brightness = (t.light.brightness or 1.5) * 0.75
 		pl.Range = t.light.range or 10
 		pl.Parent = root
-		if t.flicker then flickering[model] = pl end
 	end
 
 	if t.orbit then
-		local o = t.orbit
-		local parts = {}
-		for i = 1, (o.count or 3) do
-			local p = Instance.new("Part")
-			p.Name = "PetSkinOrb"
-			p.Shape = Enum.PartType.Ball
-			p.Size = Vector3.new(o.size or 0.25, o.size or 0.25, o.size or 0.25)
-			p.Color = o.color or Color3.new(1, 1, 1)
-			p.Material = o.neon and Enum.Material.Neon or Enum.Material.SmoothPlastic
-			p.Anchored = true; p.CanCollide = false; p.CanQuery = false; p.CanTouch = false
-			p.CastShadow = false; p.Massless = true
-			p.CFrame = root.CFrame
-			p.Parent = model
-			parts[i] = p
-		end
-		orbiting[model] = { parts = parts, radius = o.radius or 2, speed = o.speed or 3, root = root }
-	end
-
-	if t.halo then
-		local h = t.halo
-		if t.crown then
-			-- A floating CROWN: a thin band plus five little spikes, hovering above the pet. Deliberately an
-			-- accessory in the air rather than something welded to the head -- that's what keeps it working on a
-			-- crab, a bean and a dragon alike, with no per-pet placement.
-			local band = Instance.new("Part")
-			band.Name = "PetSkinCrown"; band.Shape = Enum.PartType.Cylinder
-			band.Size = Vector3.new(0.16, (h.size or 1.5) * 0.62, (h.size or 1.5) * 0.62)
-			band.Color = h.color or Color3.fromRGB(255, 206, 92)
-			band.Material = Enum.Material.Metal; band.Reflectance = 0.3
-			band.Anchored = true; band.CanCollide = false; band.CanQuery = false; band.CanTouch = false
-			band.CastShadow = false; band.Massless = true
-			band.CFrame = root.CFrame * CFrame.new(0, (h.size or 1.5) * 1.5, 0) * CFrame.Angles(0, 0, math.rad(90))
-			band.Parent = model
-			for k = 0, 4 do
-				local ang = math.rad(k * 72)
-				local spike = Instance.new("Part")
-				spike.Name = "PetSkinCrown"; spike.Shape = Enum.PartType.Block
-				spike.Size = Vector3.new(0.12, 0.34, 0.12)
-				spike.Color = band.Color; spike.Material = Enum.Material.Metal; spike.Reflectance = 0.3
-				spike.Anchored = true; spike.CanCollide = false; spike.CanQuery = false; spike.CanTouch = false
-				spike.CastShadow = false; spike.Massless = true
-				spike.CFrame = band.CFrame * CFrame.Angles(math.rad(90), 0, 0)
-					* CFrame.new(math.cos(ang) * (h.size or 1.5) * 0.31, 0.22, math.sin(ang) * (h.size or 1.5) * 0.31)
-				spike.Parent = model
-			end
-			-- one shared orbit entry keeps the crown pinned above the pet as it moves (radius 0 = stay centred)
-			local all = {}
-			for _, d in ipairs(model:GetChildren()) do if d.Name == "PetSkinCrown" then all[#all + 1] = d end end
-			orbiting[model] = orbiting[model] or { parts = {}, radius = 0, speed = 0, root = root }
-			orbiting[model].crown = { parts = all, height = (h.size or 1.5) * 1.5, root = root }
-		else
-			local ring = Instance.new("Part")
-			ring.Name = "PetSkinHalo"; ring.Shape = Enum.PartType.Cylinder
-			ring.Size = Vector3.new(0.1, h.size or 2, h.size or 2)
-			ring.Color = h.color or Color3.new(1, 1, 1)
-			ring.Material = h.neon and Enum.Material.Neon or Enum.Material.SmoothPlastic
-			ring.Transparency = 0.25
-			ring.Anchored = true; ring.CanCollide = false; ring.CanQuery = false; ring.CanTouch = false
-			ring.CastShadow = false; ring.Massless = true
-			ring.CFrame = root.CFrame * CFrame.new(0, (h.size or 2) * 0.9, 0) * CFrame.Angles(0, 0, math.rad(90))
-			ring.Parent = model
-			orbiting[model] = orbiting[model] or { parts = {}, radius = 0, speed = 0, root = root }
-			orbiting[model].halo = { part = ring, height = (h.size or 2) * 0.9, root = root }
-		end
+		buildOrbit(model, root, t.orbit)
 	end
 end
 
@@ -266,49 +1241,75 @@ end
 -- THE ENTRY POINT PetFollow CALLS
 -- ============================================================================================================
 -- Idempotent: it clears its own previous work first, so PetFollow can call it on every rebuild and every level
--- change without effects piling up. `lite` (icon clones) gets the skin recolour but no particles/light/orbits --
--- they don't render usefully in a static ViewportFrame and would just cost frame time.
+-- change without effects piling up. `lite` (icon clones) gets the skin recolour + the accessory GEOMETRY --
+-- the trait has to be readable on an inventory icon -- but no particles/lights/orbits, which don't render
+-- usefully in a static ViewportFrame and would just cost frame time.
 _G.applyPetSkinLook = function(model, petId, lite)
 	if typeof(model) ~= "Instance" or not model:IsA("Model") then return end
 	clearLook(model)
 	painted[model] = petId
 
-	local e = equipped[petId]
-	if not e or not e.skin then return end -- no skin equipped: the pet keeps its natural look
+	-- non-lite paints are LIVE FOLLOWERS (icons pass lite=true; remote pets go through the preview path):
+	-- a different species arriving here means the player switched pets -- a real action the try-on yields to
+	if not lite then
+		if lastLivePetId ~= nil and petId ~= lastLivePetId and dropTryOn then dropTryOn("pet switched") end
+		lastLivePetId = petId
+	end
 
-	applySkin(model, e.skin)
-	if not lite then applyTrait(model, e.trait) end
+	local e = tryOn or equipped[petId] -- the dev try-on outranks the real equip (local preview only)
+	if e and e.skin then
+		applySkin(model, petId, e.skin, lite)
+		applyTrait(model, petId, e.trait, lite)
+	end
+
+	-- LAST, and unconditionally. A pet with no skin needs the dim just as much as one with a skin, and doing
+	-- it after applySkin means a skin's own colour comes down by the same 25% -- otherwise equipping a skin
+	-- would make a pet suddenly brighter than every unskinned one.
+	dimBody(model)
 end
 
 -- Paint a model with an ARBITRARY skin + trait, independent of what the player has EQUIPPED. This is what the
--- crate reel, the reveal card and the inventory rows need: they describe an item, so they must show that item,
--- not whatever the pet happens to be wearing.
+-- crate reel, the reveal card, the inventory rows, remote players' pets and /testpet need: they describe an
+-- item, so they must show that item, not whatever the pet happens to be wearing.
 --
--- `static` (the reel + inventory case) paints COLOUR/MATERIAL ONLY -- no particle emitter, no point light, no
--- hue-cycling registration, no trait. A reel is 56 cells: giving each one an emitter and a per-frame colour
--- animation would cost more than the whole reveal is worth, and none of it reads at thumbnail size anyway.
--- The reveal card passes static=false, so the ONE payoff model gets the full treatment.
+-- `static` (the reel + inventory + /testpet case) paints colour/material and builds the accessory GEOMETRY,
+-- placed once -- no emitters, no lights, no hue-cycling registration, no follow loop. The reveal card and
+-- remote pets pass static=false, so live models get the full treatment.
+--
+-- The pet species for PET_OFFSETS is read off the model itself: buildPetModel names its clones after the
+-- species, and anything that renames one (RemotePets) stamps a "PetSpecies" attribute instead.
+-- Lets the scanner state plainly whether it graded the MEASURED path or the estimate fallback.
+_G.petSkinRaysLanded = function() return RAYS_LANDED end
+-- hit/miss counts, so a scan can prove the measurement ran instead of asserting it
+_G.petSkinRayStats = function() return RAY_OK, RAY_MISS end
+
 _G.applyPetSkinPreview = function(model, skinId, traitId, static)
 	if typeof(model) ~= "Instance" or not model:IsA("Model") then return end
 	clearLook(model)
 	-- Deliberately NOT recorded in `painted`. repaintAll() walks that table on every server push and would
-	-- repaint these to the EQUIPPED skin -- turning a Honey Maple Fox in the reel into whatever the player
+	-- repaint these to the EQUIPPED skin -- turning a Candy Maple Fox in the reel into whatever the player
 	-- is wearing, which is precisely the bug this function exists to avoid.
-	local skin = skinId and PetSkins.get(skinId)
-	if not skin then return end
-	if not static then
-		applySkin(model, skinId)
-		applyTrait(model, traitId)
-		return
+	local petId = model:GetAttribute("PetSpecies") or model.Name
+	if skinId and PetSkins.exists(skinId) then
+		applySkin(model, petId, skinId, static and true or false)
 	end
-	for _, part in ipairs(bodyParts(model)) do
-		if not originals[part] then
-			originals[part] = { color = part.Color, material = part.Material, refl = part.Reflectance }
-		end
-		if skin.color then part.Color = skin.color end
-		if skin.material then part.Material = skin.material end
-		part.Reflectance = skin.refl or 0
-	end
+	applyTrait(model, petId, traitId, static and true or false)
+end
+
+-- BADGE HELPER: the ONE Overall Tier for a pet's equipped skin + trait, for the overhead nameplate
+-- ("Baby \xC2\xB7 Legendary"). Computed from the hidden skin/trait values through PetTier -- never two labels
+-- stacked above a pet. nil when nothing is equipped, and the badge shows age alone. On _G so PetFollow can
+-- read it without requiring the modules itself -- that file sits at the edge of Luau's 200-locals ceiling.
+_G.petSkinRarityOf = function(petId)
+	local e = tryOn or equipped[petId] -- the try-on shows its real Overall Tier on the badge too
+	if not e then return nil, nil end
+	return PetTier.overall(e.skin, e.trait)
+end
+
+-- The same computation for an ARBITRARY pair -- RemotePets uses this for other players' nameplates, and the
+-- crate/inventory UI for its tier chips. Also published as data so UIs can print "Overall Tier: X" rows.
+_G.petSkinOverallTier = function(skinId, traitId)
+	return PetTier.overall(skinId, traitId)
 end
 
 -- Repaint every model we've already painted. Called when the server pushes a new equip state -- there's no level
@@ -321,39 +1322,134 @@ local function repaintAll()
 	end
 end
 
+-- DEV TRY-ON entry point ( /testpet's TRY buttons ). petSkinTryOn(skinId, traitId) paints the combo onto
+-- every live pet this client renders; petSkinTryOn(nil) restores the real equip. The evo refresh + repaint
+-- run immediately, exactly as they do when the server pushes a real equip change.
+-- Sits BELOW repaintAll on purpose: declared above it, `repaintAll()` here would compile as a GLOBAL read,
+-- come back nil, and error on the first TRY press -- the classic local-ordering trap this file's siblings
+-- keep warning about.
+_G.petSkinTryOn = function(skinId, traitId)
+	if skinId == nil or skinId == false then
+		tryOn = nil
+	else
+		local skin = PetSkins.normalise(skinId)
+		if not skin then return false end
+		local trait = PetTraits.normalise(traitId)
+		tryOn = { skin = skin, trait = trait ~= "" and trait or nil }
+	end
+	if _G.petEvoRefresh then pcall(_G.petEvoRefresh) end
+	repaintAll()
+	return true
+end
+
+-- THE YIELD (see the try-on header): clears the preview because the player took a REAL action -- equipped
+-- or unequipped a skin, or switched which pet follows them. Clearing is synchronous so the paint that
+-- detected it already renders the truth; the deferred refresh sweeps every other painted model, deferred
+-- because this can fire from INSIDE applyPetSkinLook and a re-entrant repaintAll would repaint mid-paint.
+dropTryOn = function(why)
+	if not tryOn then return end
+	tryOn = nil
+	task.defer(function()
+		if _G.petEvoRefresh then pcall(_G.petEvoRefresh) end
+		repaintAll()
+	end)
+	if _G.showHudBanner then
+		pcall(_G.showHudBanner, "Try-on cleared -- showing your real equip", Color3.fromRGB(205, 224, 255), 3)
+	end
+	print("[PetSkinLook] try-on cleared (" .. tostring(why) .. ")")
+end
+
+-- ===== LIVE ADJUST (the /testpet ADJUST mode) =====
+-- Nudge one attach point of one pet while looking at it: dx/dy/dz in that attach's own units, dscale
+-- multiplies size AND reach. Accumulates for the session and repaints instantly.
+_G.petSkinAdjust = function(petId, attach, dx, dy, dz, dscale)
+	if type(petId) ~= "string" or type(attach) ~= "string" then return nil end
+	local perPet = liveAdjust[petId]
+	if not perPet then perPet = {}; liveAdjust[petId] = perPet end
+	local o = perPet[attach]
+	if not o then o = { x = 0, y = 0, z = 0, scale = 1 }; perPet[attach] = o end
+	o.x = o.x + (tonumber(dx) or 0)
+	o.y = o.y + (tonumber(dy) or 0)
+	o.z = o.z + (tonumber(dz) or 0)
+	o.scale = math.clamp(o.scale + (tonumber(dscale) or 0), 0.3, 3)
+	if _G.petEvoRefresh then pcall(_G.petEvoRefresh) end
+	repaintAll()
+	return o
+end
+
+-- Prints the pet's accumulated nudges as a paste-ready PetTraits.PET_OFFSETS entry, so a tuning session
+-- ends in config, not in memory.
+_G.petSkinAdjustDump = function(petId)
+	local perPet = petId and liveAdjust[petId]
+	if not perPet then print("[PetSkinLook] no live adjustments for " .. tostring(petId)); return end
+	local lines = { "\t" .. petId .. " = {" }
+	for attach, o in pairs(perPet) do
+		lines[#lines + 1] = string.format("\t\t%s = { pos = {%.2f, %.2f, %.2f}, scale = %.2f },",
+			attach, o.x, o.y, o.z, o.scale)
+	end
+	lines[#lines + 1] = "\t},"
+	print("[PetSkinLook] PASTE INTO PetTraits.PET_OFFSETS:\n" .. table.concat(lines, "\n"))
+end
+
 -- ============================================================================================================
 -- ANIMATION LOOP (one connection for every pet)
 -- ============================================================================================================
--- Rainbow / cosmic hue cycling, orbiting trait parts, the floating halo/crown, and the Charged flicker all ride
--- one RenderStepped. It exits immediately when nothing is animated, so a player with no animated skin and no
--- orbit trait pays essentially nothing.
+-- Rainbow / cosmic hue cycling, orbiting trait parts, and the accessory follow all ride one RenderStepped.
+-- It exits immediately when nothing is registered, so a player with no animated skin and no accessories pays
+-- essentially nothing.
 do
 	local t = 0
 	RunService.RenderStepped:Connect(function(dt)
 		t = t + dt
 
-		-- animated skins
+		-- animated skins. Each mode decides a BODY colour (nil = leave the body alone) and an FX colour for
+		-- the light/emitters. Cosmic is the special one: the deep-space body NEVER cycles -- only its stars
+		-- and aura swirl through the vivid rainbow, the exact treatment the old Cosmic Duck rare wore.
+		-- Cycling the body too is what made Cosmic read as "basically Rainbow".
 		for model, info in pairs(animated) do
 			if model.Parent then
-				local hue, sat, val
-				if info.mode == "cosmic" then
-					hue = (t * 0.10) % 1; sat = 0.55; val = 0.55 -- slow, deep, space-ish
-				else
-					hue = (t * 0.35) % 1; sat = 0.85; val = 1.0  -- rainbow: fast and bright
+				local mode = info.mode
+				local bodyC, fxC
+				if mode == "cosmic" then
+					fxC = Color3.fromHSV((t * 0.40) % 1, 0.70, 1)                                   -- the aura swirl
+				elseif mode == "pastel" then
+					bodyC = Color3.fromHSV((t * 0.06) % 1, 0.30, 1); fxC = bodyC                    -- dreamy soft drift
+				elseif mode == "ocean" then
+					bodyC = Color3.fromHSV(0.56 + math.sin(t * 1.3) * 0.035, 0.75, 0.85); fxC = bodyC -- rolling swell
+				elseif mode == "jungle" then
+					-- canopy light: the green slowly BREATHES between deep jungle shade and sunlit leaf,
+					-- and the firefly glow FLICKERS warm yellow like the real thing
+					bodyC = Color3.fromHSV(0.31 + math.sin(t * 0.8) * 0.025, 0.72, 0.55 + math.sin(t * 0.8) * 0.10)
+					fxC = Color3.fromHSV(0.135, 0.50, 0.72 + math.sin(t * 2.6) * 0.26)
+				elseif mode == "lava" then
+					bodyC = Color3.fromHSV(0.035 + math.sin(t * 2.2) * 0.015, 1, 0.66 + math.sin(t * 2.2) * 0.16) -- molten pulse
+					fxC = bodyC
+				else -- rainbow: fast and bright
+					bodyC = Color3.fromHSV((t * 0.35) % 1, 0.85, 1); fxC = bodyC
 				end
-				local c = Color3.fromHSV(hue, sat, val)
-				for _, p in ipairs(info.parts) do
-					if p.Parent then p.Color = c end
+				if bodyC then
+					for _, p in ipairs(info.parts) do
+						if p.Parent then p.Color = bodyC end
+					end
 				end
 				local root = model.PrimaryPart
-				local pl = root and root:FindFirstChild("PetSkinLight")
-				if pl and pl:IsA("PointLight") then pl.Color = c end
+				if root and fxC then
+					local pl = root:FindFirstChild("PetSkinLight")
+					if pl and pl:IsA("PointLight") then pl.Color = fxC end
+					if mode == "cosmic" then -- the stars ride the cycle too; other modes keep authored FX colours
+						for _, ch in ipairs(root:GetChildren()) do
+							if ch.Name == "PetSkinFX" and ch:IsA("ParticleEmitter") then
+								ch.Color = ColorSequence.new(fxC)
+							end
+						end
+					end
+				end
 			else
 				animated[model] = nil
 			end
 		end
 
-		-- orbiting parts + halo / crown
+		-- orbiting trait parts (Celestial's stars)
 		for model, o in pairs(orbiting) do
 			local root = o.root
 			if model.Parent and root and root.Parent then
@@ -362,35 +1458,8 @@ do
 				for i, p in ipairs(o.parts) do
 					if p.Parent then
 						local a = t * o.speed + (i - 1) * (2 * math.pi / math.max(1, n))
-						p.CFrame = rootCF * CFrame.new(math.cos(a) * o.radius, 0.6, math.sin(a) * o.radius)
-					end
-				end
-				if o.halo and o.halo.part.Parent then
-					-- bob gently and spin, so it reads as floating rather than glued on
-					o.halo.part.CFrame = rootCF
-						* CFrame.new(0, o.halo.height + math.sin(t * 2) * 0.12, 0)
-						* CFrame.Angles(0, t * 1.2, math.rad(90))
-				end
-				if o.crown then
-					-- Move the crown as ONE rigid assembly: derive a centre CFrame from the pet's root each frame
-					-- (bobbing + slowly spinning), then re-place the band and the five spikes at their fixed
-					-- offsets from it. Rebuilding the offsets every frame keeps the pieces locked together no
-					-- matter how the pet moves, and costs six CFrame writes.
-					local centre = rootCF
-						* CFrame.new(0, o.crown.height + math.sin(t * 2) * 0.1, 0)
-						* CFrame.Angles(0, t * 0.8, 0)
-					local idx = 0
-					for _, p in ipairs(o.crown.parts) do
-						if p.Parent then
-							if idx == 0 then
-								p.CFrame = centre * CFrame.Angles(0, 0, math.rad(90)) -- the band (cylinder on its side)
-							else
-								local ang = math.rad((idx - 1) * 72)                  -- five spikes, evenly spaced
-								local r = 0.31 * 1.5
-								p.CFrame = centre * CFrame.new(math.cos(ang) * r, 0.22, math.sin(ang) * r)
-							end
-							idx = idx + 1
-						end
+						-- gentle wave in the orbit so the ring visibly LOOPS instead of sliding flat
+						p.CFrame = rootCF * CFrame.new(math.cos(a) * o.radius, 0.6 + math.sin(a * 2) * 0.3, math.sin(a) * o.radius)
 					end
 				end
 			else
@@ -398,12 +1467,35 @@ do
 			end
 		end
 
-		-- Charged flicker
-		for model, pl in pairs(flickering) do
-			if model.Parent and pl.Parent then
-				pl.Brightness = 1.4 + math.abs(math.sin(t * 17)) * 1.4
+		-- accessory sets (trait gear + skin deco) ride the pet as rigid assemblies: one attach-frame multiply
+		-- per group, one CFrame write per part. All offsets were precomputed at build time. Parts marked
+		-- `sway` get the wind treatment: a gentle hinged flutter about their top edge.
+		for model, reg in pairs(accessorised) do
+			local root = reg.root
+			if model.Parent and root and root.Parent then
+				local rootCF = root.CFrame
+				for _, g in ipairs(reg.groups) do
+					-- anchored groups ride their real body part (waddle and all); the root is the fallback
+					local base
+					if g.anchor and g.anchor.Parent then base = g.anchor.CFrame * g.rel
+					else base = rootCF * g.cf end
+					for _, e in ipairs(g.parts) do
+						if e.part.Parent then
+							if e.sway then
+								local sp = e.sway.speed or 2.2
+								local amp = e.sway.amp or 6
+								local a = math.rad(math.sin(t * sp + e.phase) * amp)
+								local b = math.rad(math.sin(t * sp * 0.6 + e.phase) * amp * 0.35)
+								e.part.CFrame = base * e.off
+									* CFrame.new(0, e.hinge, 0) * CFrame.Angles(a, 0, b) * CFrame.new(0, -e.hinge, 0)
+							else
+								e.part.CFrame = base * e.off
+							end
+						end
+					end
+				end
 			else
-				flickering[model] = nil
+				accessorised[model] = nil
 			end
 		end
 	end)
@@ -417,15 +1509,38 @@ local function applyState(state)
 	equipped = {}
 	for petId, e in pairs(state.equipped or {}) do
 		if type(e) == "table" and type(e.skin) == "string" then
-			equipped[petId] = { skin = e.skin, trait = e.trait }
+			-- Normalised on arrival: an old save's "Galaxy"/"Crowned" paints as its modern identity even if a
+			-- stale server payload slips one through (the server migrates on join too -- defence in depth).
+			local skin = PetSkins.normalise(e.skin)
+			local trait = PetTraits.normalise(e.trait or (type(e.traits) == "table" and e.traits[1]) or "")
+			if skin then
+				equipped[petId] = { skin = skin, trait = trait ~= "" and trait or nil }
+			end
 		end
 	end
+	-- A REAL equip change while a try-on is active means the player is acting on their actual pet, so the
+	-- preview yields. Signature-compared because this event also fires for token/collection/level pushes
+	-- that change no equip -- those must NOT eat the try-on mid-walk.
+	local sigParts = {}
+	for petId, e in pairs(equipped) do
+		sigParts[#sigParts + 1] = petId .. "=" .. e.skin .. "|" .. (e.trait or "")
+	end
+	table.sort(sigParts)
+	local sig = table.concat(sigParts, ",")
+	if lastEquipSig ~= nil and sig ~= lastEquipSig and dropTryOn then dropTryOn("equip changed") end
+	lastEquipSig = sig
+
 	_G.petSkinEquipped = equipped
 	_G.petSkinState = state
 	-- Tell the Pet Hub its open detail card is stale. Fired here rather than from the equip button because
 	-- THIS is the moment the server has confirmed the change -- the button only asks, and a request the
 	-- server refuses (pet still locked, skin not owned) must not flip the list to "ON".
 	if _G.petHubSkinsChanged then pcall(_G.petHubSkinsChanged) end -- the crate/inventory UI reads tokens + owned entries from here
+	-- FULL evo re-run BEFORE the repaint: trait accessories sit ON TOP of the level particle stack, so an
+	-- equip/unequip must rebuild the level effects now, not on the next level-up. petEvoRefresh ends by
+	-- re-applying the skin itself, and repaintAll still covers painted models that aren't live followers
+	-- (viewport icons and the like).
+	if _G.petEvoRefresh then pcall(_G.petEvoRefresh) end
 	repaintAll()
 end
 
