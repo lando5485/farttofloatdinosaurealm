@@ -1,0 +1,648 @@
+{
+  "name": "FartToFloat",
+  "tree": {
+    "$className": "DataModel",
+    "ServerScriptService": {
+      "$className": "ServerScriptService",
+      "SecurityWatchdog": {
+        "$path": "src/server/SecurityWatchdog.server.luau"
+      },
+      "BootCheck": {
+        "$path": "src/server/BootCheck.server.luau"
+      },
+      "HeldItemSync": {
+        "$path": "src/server/HeldItemSync.server.lua"
+      },
+      "SecretTrader": {
+        "$path": "src/server/SecretTrader.server.lua"
+      },
+      "IslandStreaming": {
+        "$path": "src/server/IslandStreaming.server.lua"
+      },
+      "BellySystem": {
+        "$path": "src/server/BellySystem.server.lua"
+      },
+      "PlayerStats": {
+        "$path": "src/server/PlayerStats.server.lua"
+      },
+      "BlimpService": {
+        "$path": "src/server/BlimpService.server.lua"
+      },
+      "DailyTasks": {
+        "$path": "src/server/DailyTasks.server.lua"
+      },
+      "PetSystem": {
+        "$path": "src/server/PetSystem.server.lua"
+      },
+      "PetBarn": {
+        "$path": "src/server/PetBarn.server.lua"
+      },
+      "AFKTokenFarm": {
+        "$path": "src/server/AFKTokenFarm.server.lua"
+      },
+      "IslandNPCs": {
+        "$path": "src/server/IslandNPCs.server.lua"
+      },
+      "FarmerSpawner": {
+        "$path": "src/server/FarmerNPC.server.lua"
+      },
+      "RocketEventManager": {
+        "$path": "src/server/RocketEventManager.server.lua"
+      },
+      "RocketNPCs": {
+        "$path": "src/server/RocketNPCs.lua"
+      },
+      "RocketLogic": {
+        "$path": "src/server/RocketLogic.lua"
+      },
+      "RocketRide": {
+        "$path": "src/server/RocketRide.lua"
+      },
+      "TradeRequests": {
+        "$path": "src/server/TradeRequests.server.luau"
+      },
+      "RocketEffects": {
+        "$path": "src/server/RocketEffects.lua"
+      },
+      "MeteorManager": {
+        "$path": "src/server/MeteorManager.server.lua"
+      },
+      "MeteorSpawn": {
+        "$path": "src/server/MeteorSpawn.lua"
+      },
+      "MeteorImpact": {
+        "$path": "src/server/MeteorImpact.lua"
+      },
+      "MeteorReward": {
+        "$path": "src/server/MeteorReward.lua"
+      },
+      "RainbowBeamManager": {
+        "$path": "src/server/RainbowBeamManager.server.lua"
+      },
+      "BeamGeneration": {
+        "$path": "src/server/BeamGeneration.lua"
+      },
+      "BeamPattern": {
+        "$path": "src/server/BeamPattern.lua"
+      },
+      "BeamCollision": {
+        "$path": "src/server/BeamCollision.lua"
+      },
+      "BeamKnockback": {
+        "$path": "src/server/BeamKnockback.lua"
+      },
+      "BeamEffects": {
+        "$path": "src/server/BeamEffects.lua"
+      },
+      "BigEventScheduler": {
+        "$path": "src/server/BigEventScheduler.server.lua"
+      },
+      "MusicManager": {
+        "$path": "src/server/MusicManager.server.lua"
+      },
+      "LateJoinEventSync": {
+        "$path": "src/server/LateJoinEventSync.server.lua"
+      },
+      "BlackHoleTeleport": {
+        "$path": "src/server/BlackHoleTeleport.server.lua"
+      },
+      "PlanetSelectService": {
+        "$path": "src/server/PlanetSelectService.server.lua"
+      },
+      "EasterEggManager": {
+        "$path": "src/server/EasterEggManager.server.lua"
+      },
+      "ToasterEasterEgg": {
+        "$path": "src/server/ToasterEasterEgg.server.lua"
+      },
+      "SquirrelEasterEgg": {
+        "$path": "src/server/SquirrelEasterEgg.server.lua"
+      },
+      "CommunityGarden": {
+        "$path": "src/server/CommunityGarden.server.lua"
+      },
+      "GardenBird": {
+        "$path": "src/server/GardenBird.server.lua"
+      },
+      "GardenerWave": {
+        "$path": "src/server/GardenerWave.server.lua"
+      },
+      "GardenGnomes": {
+        "$path": "src/server/GardenGnomes.server.lua"
+      },
+      "PlayerState": {
+        "$path": "src/server/PlayerState.luau"
+      },
+      "CrateService": {
+        "$path": "src/server/CrateService.server.luau"
+      },
+      "DevCommands": {
+        "$path": "src/server/DevCommands.server.luau"
+      },
+      "RewardsService": {
+        "$path": "src/server/RewardsService.server.lua"
+      },
+      "GutSkinService": {
+        "$path": "src/server/GutSkinService.server.lua"
+      },
+      "LeaderboardService": {
+        "$path": "src/server/LeaderboardService.server.lua"
+      },
+      "ComebackNudge": {
+        "$path": "src/server/ComebackNudge.server.lua"
+      },
+      "GardenFeeding": {
+        "$path": "src/server/GardenFeeding.server.lua"
+      },
+      "SecretTreeDoor": {
+        "$path": "src/server/SecretTreeDoor.server.lua"
+      },
+      "PopcornTrees": {
+        "$path": "src/server/PopcornTrees.server.lua"
+      },
+      "MeatballShooter": {
+        "$path": "src/server/MeatballShooter.server.lua"
+      },
+      "MilkCap": {
+        "$path": "src/server/MilkCap.server.lua"
+      },
+      "SecurityGuard": {
+        "$path": "src/server/SecurityGuard.server.lua"
+      },
+      "RealmPortalsHub": {
+        "$path": "src/server/RealmPortals.server.lua"
+      },
+      "Campfire": {
+        "$path": "src/server/Campfire.server.lua"
+      },
+      "SocialRewards": {
+        "$path": "src/server/SocialRewards.server.lua"
+      },
+      "SeasonPass": {
+        "$path": "src/server/SeasonPass.server.lua"
+      },
+      "RebirthSystem": {
+        "$path": "src/server/RebirthSystem.server.lua"
+      },
+      "WormholeService": {
+        "$path": "src/server/WormholeService.server.luau"
+      },
+      "SkinCrateService": {
+        "$path": "src/server/SkinCrateService.server.lua"
+      },
+      "SocialStats": {
+        "$path": "src/server/SocialStats.server.luau"
+      },
+      "BadgeAwards": {
+        "$path": "src/server/BadgeAwards.server.luau"
+      },
+      "Gifting": {
+        "$path": "src/server/Gifting.server.luau"
+      },
+      "RealmReturnReceiver": {
+        "$path": "src/server/RealmReturnReceiver.server.lua"
+      },
+      "DevArrival": {
+        "$path": "src/server/DevArrival.server.luau"
+      },
+      "VipService": {
+        "$path": "src/server/VipService.server.lua"
+      }
+    },
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "Shared": {
+        "$className": "Folder",
+        "BubbleWords": {
+          "$path": "src/shared/BubbleWords.luau"
+        },
+        "FlightTuning": {
+          "$path": "src/shared/FlightTuning.luau"
+        },
+        "IslandOrder": {
+          "$path": "src/shared/IslandOrder.luau"
+        },
+        "Constants": {
+          "$path": "src/shared/Constants.luau"
+        },
+        "CosmeticConfig": {
+          "$path": "src/shared/CosmeticConfig.luau"
+        },
+        "CosmeticIcon": {
+          "$path": "src/shared/CosmeticIcon.luau"
+        },
+        "Remotes": {
+          "$path": "src/shared/Remotes.luau"
+        },
+        "GutSkins": {
+          "$path": "src/shared/GutSkins.luau"
+        },
+        "PetSkins": {
+          "$path": "src/shared/PetSkins.luau"
+        },
+        "PetTraits": {
+          "$path": "src/shared/PetTraits.luau"
+        },
+        "PetTier": {
+          "$path": "src/shared/PetTier.luau"
+        },
+        "PetRarity": {
+          "$path": "src/shared/PetRarity.luau"
+        },
+        "SkinCrates": {
+          "$path": "src/shared/SkinCrates.luau"
+        },
+        "CrateTokens": {
+          "$path": "src/shared/CrateTokens.luau"
+        },
+        "Sfx": {
+          "$path": "src/shared/Sfx.luau"
+        },
+        "PetCollection": {
+          "$path": "src/shared/PetCollection.luau"
+        },
+        "RealmTransfer": {
+          "$path": "src/shared/RealmTransfer.luau"
+        },
+        "Gamepasses": {
+          "$path": "src/shared/Gamepasses.luau"
+        }
+      },
+      "PhoneHUD": {
+        "$path": "src/shared/PhoneHUD.luau"
+      },
+      "BuyFoodEvent": {
+        "$className": "RemoteEvent"
+      },
+      "RegenEvent": {
+        "$className": "RemoteEvent"
+      },
+      "CoinEvent": {
+        "$className": "RemoteEvent"
+      },
+      "SkipIslandEvent": {
+        "$className": "RemoteEvent"
+      },
+      "IslandUnlockEvent": {
+        "$className": "RemoteEvent"
+      },
+      "AnnouncementEvent": {
+        "$className": "RemoteEvent"
+      },
+      "ServerEventNotify": {
+        "$className": "RemoteEvent"
+      },
+      "StandsReadyEvent": {
+        "$className": "RemoteEvent"
+      },
+      "GamepassEvent": {
+        "$className": "RemoteEvent"
+      },
+      "BirdNukeEvent": {
+        "$className": "RemoteEvent"
+      },
+      "PurchaseAnnouncementEvent": {
+        "$className": "RemoteEvent"
+      },
+      "StomachFullEvent": {
+        "$className": "RemoteEvent"
+      },
+      "BuyStomachEvent": {
+        "$className": "RemoteEvent"
+      },
+      "StomachUpdateEvent": {
+        "$className": "RemoteEvent"
+      },
+      "RequestPlayerState": {
+        "$className": "RemoteEvent"
+      },
+      "LandingEvent": {
+        "$className": "RemoteEvent"
+      },
+      "SelectIslandEvent": {
+        "$className": "RemoteEvent"
+      },
+      "DinoSelectEvent": {
+        "$className": "RemoteEvent"
+      },
+      "PlanetSelect_GetUnlocks": {
+        "$className": "RemoteFunction"
+      },
+      "PlanetSelect_Teleport": {
+        "$className": "RemoteEvent"
+      },
+      "RocketEventSync": {
+        "$className": "RemoteEvent"
+      },
+      "MeteorSync": {
+        "$className": "RemoteEvent"
+      },
+      "MeteorImpactSound": {
+        "$className": "RemoteEvent"
+      },
+      "GoToIsland1Event": {
+        "$className": "RemoteEvent"
+      },
+      "RainbowBeamSync": {
+        "$className": "RemoteEvent"
+      },
+      "GardenerChatFunction": {
+        "$className": "RemoteFunction"
+      },
+      "RealmPortalEvent": {
+        "$className": "RemoteEvent"
+      },
+      "CampfireStick": {
+        "$className": "RemoteEvent"
+      },
+      "RebirthEvent": {
+        "$className": "RemoteEvent"
+      }
+    },
+    "ReplicatedFirst": {
+      "$className": "ReplicatedFirst",
+      "LoadingScreen": {
+        "$path": "src/client/LoadingScreen.client.lua"
+      }
+    },
+    "StarterPlayer": {
+      "$className": "StarterPlayer",
+      "StarterPlayerScripts": {
+        "$className": "StarterPlayerScripts",
+        "BootCheck": {
+          "$path": "src/client/BootCheck.client.luau"
+        },
+        "ButtonTextStyle": {
+          "$path": "src/client/ButtonTextStyle.client.lua"
+        },
+        "NpcWaypointArrow": {
+          "$path": "src/client/NpcWaypointArrow.client.lua"
+        },
+        "HeldItemSync": {
+          "$path": "src/client/HeldItemSync.client.lua"
+        },
+        "SecretCave": {
+          "$path": "src/client/SecretCave.client.lua"
+        },
+        "CoreClient": {
+          "$path": "src/client/CoreClient.client.lua"
+        },
+        "MenuBackdropGuard": {
+          "$path": "src/client/MenuBackdropGuard.client.lua"
+        },
+        "RailGuard": {
+          "$path": "src/client/RailGuard.client.luau"
+        },
+        "RewardsHub": {
+          "$path": "src/client/RewardsHub.client.luau"
+        },
+        "SeasonalPetsChest": {
+          "$path": "src/client/SeasonalPetsChest.client.luau"
+        },
+        "MenuBackButton": {
+          "$path": "src/client/MenuBackButton.client.luau"
+        },
+        "TokenHud": {
+          "$path": "src/client/TokenHud.client.luau"
+        },
+        "AFKFarmClient": {
+          "$path": "src/client/AFKFarmClient.client.luau"
+        },
+        "AntiIdle": {
+          "$path": "src/client/AntiIdle.client.luau"
+        },
+        "BlackBarKiller": {
+          "$path": "src/client/BlackBarKiller.client.luau"
+        },
+        "RebirthTag": {
+          "$path": "src/client/RebirthTag.client.luau"
+        },
+        "ShopClient": {
+          "$path": "src/client/ShopClient.client.lua"
+        },
+        "WorldClient": {
+          "$path": "src/client/WorldClient.client.lua"
+        },
+        "EventClient": {
+          "$path": "src/client/EventClient.client.lua"
+        },
+        "FarmerTutorial": {
+          "$path": "src/client/FarmerTutorial.client.lua"
+        },
+        "DailyTasks": {
+          "$path": "src/client/DailyTasks.client.luau"
+        },
+        "SkyByAltitude": {
+          "$path": "src/client/SkyByAltitude.client.luau"
+        },
+        "ObjectiveHUD": {
+          "$path": "src/client/ObjectiveHUD.client.luau"
+        },
+        "NotifyCenter": {
+          "$path": "src/client/NotifyCenter.client.luau"
+        },
+        "RocketUI": {
+          "$path": "src/client/RocketUI.client.lua"
+        },
+        "MeteorUI": {
+          "$path": "src/client/MeteorUI.client.lua"
+        },
+        "RainbowBeamUI": {
+          "$path": "src/client/RainbowBeamUI.client.lua"
+        },
+        "MusicDucking": {
+          "$path": "src/client/MusicDucking.client.lua"
+        },
+        "MusicClient": {
+          "$path": "src/client/MusicClient.client.lua"
+        },
+        "MeteorImpactSound": {
+          "$path": "src/client/MeteorImpactSound.client.lua"
+        },
+        "RocketBuildPreload": {
+          "$path": "src/client/RocketBuildPreload.client.lua"
+        },
+        "EventSoundPreload": {
+          "$path": "src/client/EventSoundPreload.client.lua"
+        },
+        "RocketSounds": {
+          "$path": "src/client/RocketSounds.client.lua"
+        },
+        "NpcLife": {
+          "$path": "src/client/NpcLife.client.lua"
+        },
+        "NpcGuideArrow": {
+          "$path": "src/client/NpcGuideArrow.client.lua"
+        },
+        "PetFollow": {
+          "$path": "src/client/PetFollow.client.lua"
+        },
+        "CommunityGarden": {
+          "$path": "src/client/CommunityGarden.client.lua"
+        },
+        "RemotePets": {
+          "$path": "src/client/RemotePets.client.lua"
+        },
+        "PetBarn": {
+          "$path": "src/client/PetBarn.client.lua"
+        },
+        "FirstBuy": {
+          "$path": "src/client/FirstBuy.client.lua"
+        },
+        "CoinPulse": {
+          "$path": "src/client/CoinPulse.client.lua"
+        },
+        "IslandTaskReward": {
+          "$path": "src/client/IslandTaskReward.client.lua"
+        },
+        "RareAnnounce": {
+          "$path": "src/client/RareAnnounce.client.lua"
+        },
+        "Gifting": {
+          "$path": "src/client/Gifting.client.lua"
+        },
+        "RivalCallout": {
+          "$path": "src/client/RivalCallout.client.lua"
+        },
+        "SfxWiring": {
+          "$path": "src/client/SfxWiring.client.lua"
+        },
+        "Achievements": {
+          "$path": "src/client/Achievements.client.lua"
+        },
+        "IslandNameTag": {
+          "$path": "src/client/IslandNameTag.client.lua"
+        },
+        "GardenerChat": {
+          "$path": "src/client/GardenerChat.client.lua"
+        },
+        "GardenerLife": {
+          "$path": "src/client/GardenerLife.client.lua"
+        },
+        "GardenChestClient": {
+          "$path": "src/client/GardenChestClient.client.lua"
+        },
+        "GardenDonationClient": {
+          "$path": "src/client/GardenDonationClient.client.lua"
+        },
+        "CrateClient": {
+          "$path": "src/client/CrateClient.client.luau"
+        },
+        "GardenIntro": {
+          "$path": "src/client/GardenIntro.client.lua"
+        },
+        "GardenGuideTrail": {
+          "$path": "src/client/GardenGuideTrail.client.luau"
+        },
+        "BellyPuff": {
+          "$path": "src/client/BellyPuff.client.lua"
+        },
+        "RewardsClient": {
+          "$path": "src/client/RewardsClient.client.lua"
+        },
+        "GutSkinClient": {
+          "$path": "src/client/GutSkinClient.client.lua"
+        },
+        "TitleTags": {
+          "$path": "src/client/TitleTags.client.luau"
+        },
+        "OfflineEarnings": {
+          "$path": "src/client/OfflineEarnings.client.luau"
+        },
+        "NotifyOptIn": {
+          "$path": "src/client/NotifyOptIn.client.luau"
+        },
+        "FlightFeedback": {
+          "$path": "src/client/FlightFeedback.client.luau"
+        },
+        "TopCenterStack": {
+          "$path": "src/client/TopCenterStack.client.luau"
+        },
+        "AmbientWildlife": {
+          "$path": "src/client/AmbientWildlife.client.luau"
+        },
+        "BlimpRide": {
+          "$path": "src/client/BlimpRide.client.luau"
+        },
+        "AmbientSmoke": {
+          "$path": "src/client/AmbientSmoke.client.luau"
+        },
+        "LandingImpact": {
+          "$path": "src/client/LandingImpact.client.luau"
+        },
+        "RealmPortalsHub": {
+          "$path": "src/client/RealmPortals.client.luau"
+        },
+        "Campfire": {
+          "$path": "src/client/Campfire.client.luau"
+        },
+        "SocialRewards": {
+          "$path": "src/client/SocialRewards.client.luau"
+        },
+        "GroupBannerClient": {
+          "$path": "src/client/GroupBannerClient.client.luau"
+        },
+        "DevArrivalBanner": {
+          "$path": "src/client/DevArrivalBanner.client.luau"
+        },
+        "DevAuraFX": {
+          "$path": "src/client/DevAuraFX.client.luau"
+        },
+        "SeasonPass": {
+          "$path": "src/client/SeasonPass.client.luau"
+        },
+        "RebirthClient": {
+          "$path": "src/client/RebirthClient.client.luau"
+        },
+        "WormholeClient": {
+          "$path": "src/client/WormholeClient.client.luau"
+        },
+        "WarpEffect": {
+          "$path": "src/client/WarpEffect.luau"
+        },
+        "PetSkinLook": {
+          "$path": "src/client/PetSkinLook.client.lua"
+        },
+        "PetRenderGuard": {
+          "$path": "src/client/PetRenderGuard.client.luau"
+        },
+        "RocketRideClient": {
+          "$path": "src/client/RocketRideClient.client.luau"
+        },
+        "TradeRequests": {
+          "$path": "src/client/TradeRequests.client.luau"
+        },
+        "TestPetPreview": {
+          "$path": "src/client/TestPetPreview.client.lua"
+        },
+        "SkinCrateClient": {
+          "$path": "src/client/SkinCrateClient.client.lua"
+        },
+        "SettingsMenu": {
+          "$path": "src/client/SettingsMenu.client.lua"
+        },
+        "FoodRealmHud": {
+          "$path": "src/client/FoodRealmHud.client.luau"
+        },
+        "FirstPersonMenuMouse": {
+          "$path": "src/client/FirstPersonMenuMouse.client.luau"
+        },
+        "MobileTextFit": {
+          "$path": "src/client/MobileTextFit.client.luau"
+        },
+        "VipClient": {
+          "$path": "src/client/VipClient.client.luau"
+        },
+        "CoinMagnet": {
+          "$path": "src/client/CoinMagnet.client.luau"
+        },
+        "Haptics": {
+          "$path": "src/client/Haptics.client.luau"
+        },
+        "UiHaptics": {
+          "$path": "src/client/UiHaptics.client.luau"
+        }
+      }
+    }
+  }
+}

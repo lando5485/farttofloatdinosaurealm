@@ -1,23 +1,14 @@
-# Claude Code local settings
-.claude/
-
-# Local tooling binaries
-rojo.exe
-
-# OS junk
+# NOTHING IS EXCLUDED EXCEPT OS JUNK.
+# This repo is a MIRROR of the working folder: a fresh clone must reproduce exactly what
+# is on the dev machine, so build output (build.rbxl), the backup_before_* folders, the
+# pet system export + zip, __pycache__ and .claude/ are all COMMITTED on purpose.
+#
+# If you are tempted to re-add ignores here: the build artefact and the export folders are
+# ~4MB of binaries and duplicated source. That is a deliberate trade for "clone it and you
+# have exactly what I have", not an oversight.
+#
+# The three below are per-machine files Windows/macOS create in any folder they touch.
+# They are not part of anyone's work and would only ever cause pointless conflicts.
 Thumbs.db
 .DS_Store
 desktop.ini
-
-# Build output -- rojo regenerates these; a 1.2MB binary per build bloats history fast
-*.rbxl
-*.rbxlx
-
-# Local backups and one-off exports (~4MB, and they duplicate files already tracked in src/)
-backup_before_*/
-export_pet_system/
-pet_system_export.zip
-
-# Python bytecode from tools/
-__pycache__/
-*.pyc
