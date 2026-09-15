@@ -133,6 +133,7 @@ local MANIFEST = {
 	["ServerScriptService.DinosaurRealmServer.SocialRewards"] = true,
 	["ServerScriptService.DinosaurRealmServer.DailyCrateService"] = true,
 	["ServerScriptService.DinosaurRealmServer.DailyStreak"] = true,
+	["ServerScriptService.DinosaurRealmServer.UniverseBoosts"] = true,
 	["ServerScriptService.DinosaurRealmServer.SessionRewards"] = true,
 	["ServerScriptService.DinosaurRealmServer.RewardsHubCap"] = true,
 	["ServerScriptService.DinosaurRealmServer.Gifting"] = true,
