@@ -534,8 +534,7 @@ dim.BackgroundTransparency = 1; dim.Visible = false; dim.Active = true; dim.Pare
 local STONE_A, STONE_B, STONE_D = Color3.fromRGB(224,204,150), Color3.fromRGB(202,178,118), Color3.fromRGB(148,116,66)
 local shell = Instance.new("Frame"); shell.Name = "StoneShell"; shell.AnchorPoint = Vector2.new(0.5,0.5)
 shell.Position = UDim2.new(0.5,0,0.5,-16); shell.Size = UDim2.fromOffset(740,560); shell.BackgroundColor3 = STONE_B  -- hub-parity screen spot (-45 equivalent; no phone clipping)
-shell.Visible = false; shell.Parent = invGui; uicorner(shell, 26); uistroke(shell, STONE_D, 2)
-do local sg = Instance.new("UIGradient"); sg.Rotation = 90; sg.Color = ColorSequence.new(STONE_A, Color3.fromRGB(184,158,100)); sg.Parent = shell end
+shell.Visible = false; shell.Parent = invGui; shell.BackgroundTransparency = 1 -- BAMBOO FRAME REMOVED by request
 local function rock(cx, cy, w, h) -- a BAMBOO/wood pole segment with a top sheen + darker binding bands
 	local horiz = w > h
 	local r = Instance.new("Frame"); r.AnchorPoint = Vector2.new(0.5,0.5); r.Position = UDim2.fromOffset(cx, cy); r.Size = UDim2.fromOffset(w, h)
@@ -551,8 +550,7 @@ local function rock(cx, cy, w, h) -- a BAMBOO/wood pole segment with a top sheen
 		uicorner(bind, 2)
 	end
 end
-for x = 20, 720, 43 do rock(x, 16, 52, 38); rock(x, 544, 52, 38) end          -- top + bottom poles
-for y = 54, 506, 41 do rock(16, y, 38, 52); rock(724, y, 38, 52) end          -- left + right poles
+-- bamboo pole rows removed (no wood border around the hub)
 
 -- ===== PANEL (green, on top of the stone shell) =====
 local panel = Instance.new("Frame"); panel.Name = "Panel"

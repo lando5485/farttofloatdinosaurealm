@@ -1107,7 +1107,7 @@ do
 	rightPanel.ZIndex = 3; rightPanel.Parent = rightGui
 end
 rightPanel:SetAttribute("ResponsiveExtraShrink", 0.78)  -- first-realm RightPanelGui cluster extra (mobile-only, applied by ResponsiveUI)
-mkCorner(rightPanel,18); mkStroke(rightPanel,WOOD_DARK,3)
+mkCorner(rightPanel,18) -- wood outline removed by request
 addShadow(rightPanel,18)
 glossGradient(rightPanel, PARCHMENT)
 addInnerHighlight(rightPanel, 18)

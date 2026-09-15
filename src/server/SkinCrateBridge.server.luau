@@ -37,6 +37,24 @@ _G.playerEquippedSkins = _G.playerEquippedSkins or {}
 local store
 pcall(function() store = DataStoreService:GetDataStore("DinoSkinState_v1") end)
 
+-- ONE TOKEN BALANCE FOR THE WHOLE UNIVERSE. Crate tokens are the currency that travels between realms, so
+-- they must not live in a per-realm save: a player with 300 tokens in the Food realm and 40 here is one
+-- player with one wallet. This store is keyed on the userId alone and named for the universe, not the
+-- realm; every realm that reads and writes this exact name shares the wallet, and a gift credited in any
+-- of them shows up in all of them. Skins / equipped looks stay in DinoSkinState_v1 (they are per-realm
+-- cosmetics and travel by payload instead).
+--
+-- MIGRATION: the first time a player is seen with no universe record, their old DinoSkinState tokens seed
+-- it (or STARTING_TOKENS for a brand-new player). After that the old `tokens` field is ignored on load
+-- and only written as a mirror.
+local UNIVERSE_TOKEN_STORE = "UniverseCrateTokens_v1"
+local tokenStore
+pcall(function() tokenStore = DataStoreService:GetDataStore(UNIVERSE_TOKEN_STORE) end)
+local function tokenKey(player) return "u_" .. player.UserId end
+local tokensLoaded = {} -- [player] = true once the universe store answered; a save before that could wipe a real wallet
+local stateLoaded  = {} -- [player] = true once load() has finished; NO save of any kind before that
+local lastPayload  = {} -- [player] = the last payload captured, so a coalesced re-save after leave never reads a wiped table
+
 --======================================================================
 -- SPECIES  -- ids must match PetUpgrades' PETS keys, because the skin service
 -- decides whether a skin is equippable from _G.playerOwnedPets[player][petId].
@@ -65,31 +83,88 @@ local function load(player)
 		if ok and type(saved) == "table" then data = saved end
 	end
 	data = data or {}
-	_G.playerCrateTokens[player]   = tonumber(data.tokens) or STARTING_TOKENS
+	-- the wallet: universe store first; the old per-realm field only seeds a missing record
+	local tokens = nil
+	if tokenStore then
+		local okT, rec = pcall(function() return tokenStore:GetAsync(tokenKey(player)) end)
+		if okT then
+			tokensLoaded[player] = true
+			if type(rec) == "table" and tonumber(rec.tokens) then
+				tokens = math.floor(tonumber(rec.tokens))
+			end
+		else
+			warn(("[SkinBridge] universe token store read failed for %s -- balance NOT saved this session: %s"):format(player.Name, tostring(rec)))
+		end
+	end
+	if tokens == nil then
+		tokens = math.floor(tonumber(data.tokens) or STARTING_TOKENS) -- migrate the old realm-local wallet (or start fresh)
+		if tokensLoaded[player] then print(("[SkinBridge] %s: seeded the universe wallet with %d token(s) from the old realm save"):format(player.Name, tokens)) end
+	end
+	_G.playerCrateTokens[player]   = tokens
 	_G.playerPetSkins[player]      = type(data.skins) == "table" and data.skins or {}
 	_G.playerEquippedSkins[player] = type(data.equipped) == "table" and data.equipped or {}
 
 	-- Hand off to the service now that real data is in place. This is the handshake it
 	-- documents: without it the first state push carries an empty default and the panel
 	-- opens showing zero tokens even for a returning player.
+	stateLoaded[player] = true -- from here on saves are allowed (and skinCrateApplyOnJoin's mirror is safe)
 	if _G.skinCrateApplyOnJoin then
 		pcall(_G.skinCrateApplyOnJoin, player)
 	end
 end
 
-local saving = {}
-local function save(player, why)
-	if not store or saving[player] then return end
+local saving, dirty = {}, {}
+local save
+-- COALESCE, never drop: a save requested while one is in flight marks the player dirty and runs again the
+-- moment the first finishes, with the newest balance. The old guard silently dropped the second request,
+-- which with per-change saves would have lost whichever token change landed during a write.
+local function finish(player)
+	saving[player] = false
+	if dirty[player] then dirty[player] = nil; save(player, "coalesced") end
+end
+save = function(player, why)
+	if not (store or tokenStore) then return end
+	-- NEVER before the load: a save triggered by an early token mirror or an arrival merge would write a
+	-- default wallet / half-built inventory over the real record.
+	if not stateLoaded[player] then return end
+	if saving[player] then dirty[player] = true; return end
 	saving[player] = true
-	local payload = {
-		tokens   = _G.playerCrateTokens[player] or 0,
-		skins    = _G.playerPetSkins[player] or {},
-		equipped = _G.playerEquippedSkins[player] or {},
-	}
+	-- Capture NOW. A coalesced re-save can run after PlayerRemoving has wiped the _G entries; it must
+	-- re-use the last real snapshot rather than read nil and save an empty record.
+	local live = _G.playerCrateTokens[player]
+	local payload
+	if live ~= nil then
+		payload = {
+			tokens   = live,
+			skins    = _G.playerPetSkins[player] or {},
+			equipped = _G.playerEquippedSkins[player] or {},
+		}
+		lastPayload[player] = payload
+	else
+		payload = lastPayload[player]
+		if not payload then saving[player] = false; return end
+	end
+	local tokens = math.floor(tonumber(payload.tokens) or 0)
 	task.spawn(function()
-		local ok, err = pcall(function() store:SetAsync(key(player), payload) end)
-		if not ok then warn(("[SkinBridge] save failed for %s (%s): %s"):format(player.Name, tostring(why), tostring(err))) end
-		saving[player] = false
+		if store then
+			local ok, err = pcall(function() store:SetAsync(key(player), payload) end)
+			if not ok then warn(("[SkinBridge] save failed for %s (%s): %s"):format(player.Name, tostring(why), tostring(err))) end
+		end
+		-- the universe wallet. Only once the read succeeded (see tokensLoaded): a blind write on a failed
+		-- read would overwrite a real balance with this session's fallback.
+		if tokenStore and tokensLoaded[player] then
+			local okT, errT = pcall(function()
+				tokenStore:UpdateAsync(tokenKey(player), function(old)
+					local rec = (type(old) == "table") and old or {}
+					rec.tokens = tokens
+					rec.updatedAt = os.time()
+					rec.lastRealm = "dino"
+					return rec
+				end)
+			end)
+			if not okT then warn(("[SkinBridge] universe token save failed for %s (%s): %s"):format(player.Name, tostring(why), tostring(errT))) end
+		end
+		finish(player)
 	end)
 end
 
@@ -106,6 +181,12 @@ Players.PlayerRemoving:Connect(function(p)
 		_G.playerPetSkins[p]      = nil
 		_G.playerEquippedSkins[p] = nil
 	end)
+	-- the bookkeeping waits for the in-flight save (and any coalesced follow-up) to finish
+	task.spawn(function()
+		local t0 = os.clock()
+		while (saving[p] or dirty[p]) and os.clock() - t0 < 30 do task.wait(0.5) end
+		tokensLoaded[p] = nil; stateLoaded[p] = nil; lastPayload[p] = nil; saving[p] = nil; dirty[p] = nil
+	end)
 end)
 
 game:BindToClose(function()
@@ -113,5 +194,5 @@ game:BindToClose(function()
 	task.wait(1)
 end)
 
-print(("[SkinBridge] ready -- %d species, persistence + savePlayerData + join handshake wired.")
-	:format(#SPECIES))
+print(("[SkinBridge] ready -- %d species, persistence + savePlayerData + join handshake wired. Tokens live in the UNIVERSE wallet '%s' (shared by every realm that uses that name).")
+	:format(#SPECIES, UNIVERSE_TOKEN_STORE))

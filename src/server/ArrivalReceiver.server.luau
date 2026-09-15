@@ -153,17 +153,19 @@ end
 -- Legacy skin/trait ids ride through untouched: PetSkins.LEGACY / PetTraits.LEGACY resolve them wherever
 -- they are read, and SkinCrateService upgrades them for good the next time the player equips.
 --
--- CRATE TOKENS ARE DELIBERATELY NOT MERGED. They are an absolute balance owned by each place's own save;
--- assigning an incoming number here would either wipe what was earned in this realm or duplicate currency
--- on every hop. Their receiver takes a DELTA on the return trip and this realm should do the same.
+-- CRATE TOKENS are handled separately in carryUniversals (below): shared-wallet senders are not merged at
+-- all; private-wallet senders are merged once, through the service's own credit hook.
 local function restoreCosmetics(player, data)
 	if type(data.petSkins) ~= "table" and type(data.equippedSkins) ~= "table"
 		and type(data.collection) ~= "table" then return end
 	task.spawn(function()
+		-- Wait for THIS PLAYER's save to have loaded (SkinCrateBridge sets the wallet entry last), not just
+		-- for the tables to exist. Merging before the load meant the load then overwrote the merge wholesale,
+		-- and the repaint below saved a half-built record on top of the real one.
 		local t0 = os.clock()
-		while not _G.playerPetSkins and os.clock() - t0 < 15 do task.wait(0.1) end
-		if not _G.playerPetSkins then
-			warn("[DinoRealm] SkinCrateService never came up -> arriving skins/traits not restored")
+		while not (_G.playerPetSkins and _G.playerCrateTokens and _G.playerCrateTokens[player]) and os.clock() - t0 < 20 do task.wait(0.1) end
+		if not (_G.playerPetSkins and _G.playerCrateTokens and _G.playerCrateTokens[player]) then
+			warn("[DinoRealm] SkinCrateService/Bridge never loaded " .. player.Name .. " -> arriving skins/traits not restored")
 			return
 		end
 		if not player.Parent then return end
@@ -228,6 +230,85 @@ local function restoreCosmetics(player, data)
 	end)
 end
 
+--======================================================================
+-- WHAT CROSSES A REALM BOUNDARY: TOKENS AND THE TITLE. NEVER COINS.
+--======================================================================
+-- COINS ARE REALM-LOCAL AND MUST STAY THAT WAY. Every realm's coin economy is tuned against its own
+-- island spacing and its own food prices, so a Food Realm balance dropped into this place would either
+-- be pocket change or would buy the whole tower. The sending side already knows this -- the Food
+-- Realm's RealmTransfer module says so in as many words and ships no coin field at all.
+--
+-- CRATE TOKENS ARE THE UNIVERSAL CURRENCY. They only ever buy cosmetics (skin crates), which is exactly
+-- why they can travel: a token is worth one crate roll in any realm, and no progression gate anywhere
+-- is priced in them. They were being DROPPED ON THE FLOOR here -- the payload carried them and nothing
+-- read the field, so a player who crossed the rift arrived broke and their balance in the place they
+-- came from was the only copy left.
+--
+-- TOKENS NOW LIVE IN ONE UNIVERSE WALLET (SkinCrateBridge: UniverseCrateTokens_v1). A sender on that
+-- wallet is flagged `sharedTokens` and is NOT merged -- the balance is already ours. A sender still on a
+-- private wallet (a realm not yet migrated) is merged ONCE: its earned delta is credited, then its
+-- absolute is max-merged, both through the service's own credit hook so the clamp, the client push and
+-- the immediate save all happen. Our own tokens coming back from such a realm are never re-merged.
+--
+-- THE TITLE rides along for the same reason: it is a pure brag cosmetic, it is earned once, and a
+-- player who worked for "Beastmaster" should wear it in every realm. TitleTags reads the attribute.
+local function carryUniversals(player, data)
+	task.spawn(function()
+		-- SkinCrateBridge loads the local balance asynchronously on join; merging before that lands
+		-- would be merging against a nil and would then be overwritten by the load.
+		local t0 = os.clock()
+		while _G.playerCrateTokens == nil or _G.playerCrateTokens[player] == nil do
+			if os.clock() - t0 > 15 or not player.Parent then break end
+			task.wait(0.25)
+		end
+		if not player.Parent then return end
+
+		-- A SENDER ON THE UNIVERSE WALLET already shares this balance: merging its absolute or crediting its
+		-- delta on top would pay the same tokens twice. Only a realm still on its own private wallet gets
+		-- merged (that is the migration path until every realm reads the shared store).
+		local skipTokens = (data.sharedTokens == true)
+		if skipTokens then
+			print(("[DinoRealm] %s arrived on the universe wallet -> tokens already shared, no merge"):format(player.Name))
+		end
+		-- OUR OWN TOKENS COMING HOME: a private-wallet realm max-merges what we sent it and sends the same
+		-- number back; merging it again would ratchet the shared wallet up by the earned delta every round
+		-- trip. Anything that left THIS place is already in the wallet.
+		if tonumber(data.fromPlaceId) == game.PlaceId then skipTokens = true end
+		local incoming = skipTokens and 0 or math.floor(tonumber(data.crateTokens) or 0)
+		-- A sender that only speaks the DELTA channel (an older sender may send only `earned`; Space sends
+		-- both, Food sends flat): credit the delta ON TOP of the local balance, capped like Food's receiver
+		-- caps it, then let the flat max-merge below settle whichever is larger. Applied once per arrival.
+		local delta = skipTokens and 0 or ((type(data.earned) == "table") and math.floor(tonumber(data.earned.crateTokens) or 0) or 0)
+		if delta > 0 and _G.addCrateTokensRaw and not data.__deltaApplied then
+			data.__deltaApplied = true
+			delta = math.min(delta, 500)
+			pcall(_G.addCrateTokensRaw, player, delta, "earned abroad (arrival delta)") -- clamp + push + save
+			print(("[DinoRealm] %s earned %d crate token(s) abroad -> credited"):format(player.Name, delta))
+		end
+		if incoming > 0 and _G.addCrateTokensRaw then
+			local here = math.floor(tonumber(_G.playerCrateTokens[player]) or 0)
+			if incoming > here then
+				pcall(_G.addCrateTokensRaw, player, incoming - here, "carried in (private-wallet sender)") -- max-merge, via the hook
+				print(("[DinoRealm] %s carried in %d crate token(s) (had %d here) -> %d")
+					:format(player.Name, incoming, here, incoming))
+			else
+				print(("[DinoRealm] %s arrived with %d token(s); the %d already saved here wins")
+					:format(player.Name, incoming, here))
+			end
+		end
+
+		-- the title fills an EMPTY slot only; one earned in this realm is never overwritten
+		if type(data.title) == "string" and data.title ~= "" then
+			local cur = player:GetAttribute("Title")
+			if cur == nil or cur == "" then
+				player:SetAttribute("Title", data.title) -- TitleTags renders it above their head
+				print(("[DinoRealm] %s wears the title %q, earned in another realm"):format(player.Name, data.title))
+			end
+		end
+		_G.dinoArrivalSettled[player] = true -- WormholeService may now take its earned baseline
+	end)
+end
+
 local function intake(player)
 	local data
 	pcall(function()
@@ -238,7 +319,24 @@ local function intake(player)
 	-- Not a portal arrival (joined the place directly, or the payload was lost) -> normal start.
 	if type(data) ~= "table" or data.fromFartToFloat ~= true then
 		print("[DinoRealm] " .. player.Name .. " joined WITHOUT teleport data -> fresh start")
+		_G.dinoArrivalSettled[player] = true -- nothing to merge: the earned baseline can be taken at once
 		return
+	end
+
+	-- ANTI-CROSSWIRE. Every other receiver in the universe refuses a payload stamped for somebody else;
+	-- this one did not. A stale or forwarded payload with the wrong userId is treated as a direct join.
+	local stampedFor = tonumber(data.userId)
+	if stampedFor and stampedFor ~= player.UserId then
+		warn(("[DinoRealm] %s arrived with TeleportData stamped for user %d -- ignored, fresh start"):format(player.Name, stampedFor))
+		_G.dinoArrivalSettled[player] = true
+		return
+	end
+	-- The trip's origin becomes "home" for the hop back, unless the payload already names one (a
+	-- Food -> Space -> Dino traveller still goes home to Food). WormholeService reads this stash to fill
+	-- homePlaceId / returningHome and to forward the pass-through fields (gut skins, milestones, passes).
+	if not tonumber(data.homePlaceId) then
+		local from = tonumber(data.fromPlaceId)
+		if from and from > 0 and from ~= game.PlaceId then data.homePlaceId = from end
 	end
 
 	_G.incomingFtFData[player]  = data
@@ -253,12 +351,14 @@ local function intake(player)
 	-- Intro.server holds it, and the arrival cinematic hands off when its card is done.
 	player:SetAttribute("ArrivedViaRift", data.arrivedViaRift == true)
 
-	print(("[DinoRealm] %s arrived from place %s (via %s) carrying %d pet stack(s); equipped=%s")
-		:format(player.Name, tostring(data.fromPlaceId), tostring(data.fromPlanet),
-		        countKeys(data.ownedPets), tostring(data.equippedPet)))
+	print(("[DinoRealm] %s arrived from place %s (via %s, v%s, home %s) carrying %d pet stack(s); equipped=%s; pass-through: gutSkins=%s milestones=%s passes=%s")
+		:format(player.Name, tostring(data.fromPlaceId), tostring(data.fromPlanet or data.fromRealm), tostring(data.payloadVersion),
+		        tostring(data.homePlaceId), countKeys(data.ownedPets), tostring(data.equippedPet),
+		        tostring(type(data.ownedGutSkins) == "table"), tostring(type(data.petMilestones) == "table"), tostring(type(data.gamepasses) == "table")))
 
 	restorePets(player, data)
 	restoreCosmetics(player, data)   -- their skins + traits come with them, not just the pets
+	carryUniversals(player, data)
 
 	-- They came through the TIME RIFT -> their client is holding a black screen and fading up out of
 	-- it. Keep them still until that lands, so the reveal is a reveal and not a stumble.
@@ -267,12 +367,14 @@ local function intake(player)
 	end
 end
 
+_G.dinoArrivalSettled = _G.dinoArrivalSettled or {} -- [player] = true once tokens carried in have been merged (or there were none)
 Players.PlayerAdded:Connect(intake)
 for _, p in ipairs(Players:GetPlayers()) do task.spawn(intake, p) end -- players already in (Studio / hot reload)
 
 Players.PlayerRemoving:Connect(function(p)
 	_G.incomingFtFData[p]  = nil
 	_G.arrivedSpacePets[p] = nil
+	_G.dinoArrivalSettled[p] = nil
 end)
 
 print("[DinoRealm] arrival receiver ready — reading TeleportData from rift arrivals")

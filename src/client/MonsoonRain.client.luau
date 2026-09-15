@@ -21,117 +21,23 @@ local SoundService = game:GetService("SoundService")
 
 local sync = ReplicatedStorage:WaitForChild("MonsoonSync")
 local player = Players.LocalPlayer
-local gui = Instance.new("ScreenGui")
-gui.Name = "MonsoonUI"
-gui.ResetOnSpawn = false
-gui.IgnoreGuiInset = true
 local PlayerGui = player:WaitForChild("PlayerGui")
-gui.Parent = PlayerGui
 
---======================================================================
--- Banner (shares the cross-event slot table so it stacks under any Ice Age
--- banner instead of covering it).
---======================================================================
--- THE STORM BANNER IS THE OBJECTIVE CARD -- same builder, same 470x78, same slot. While
--- it is up the objective card is HIDDEN and this stands in its place, so the two must be
--- identical in shape or the swap reads as a glitch.
---
--- IT KEEPS ITS OWN COLOURS, and that is deliberate. The rain banner was originally a cold
--- blue-grey and that colour was doing real work: it read as weather at a glance. Matching
--- it to the island's bark-and-amber threw that away. DinoCard.STORM is that original blue,
--- wearing the shared silhouette.
-local DinoCard = require(ReplicatedStorage:WaitForChild("DinosaurRealm"):WaitForChild("DinoCard"))
-local card = DinoCard.build(gui, DinoCard.STORM, "Banner")
-card:setIcon("\240\159\140\167")   -- rain cloud
-local banner = card.frame
-banner.Visible = false
+-- ONE BANNER SYSTEM. Every announcement in this realm goes through NotifyCenter's hero card (the
+-- module beside this script) -- no private ScreenGui, no private slot table, no private Y.
+local Notify = require(script.Parent:WaitForChild("NotifyCenter"))
 
--- Hide/show the objective card underneath. Its Holder is toggled (not the ScreenGui)
--- because TopCenterStack reads Holder.Visible to decide whether that lane takes up space
--- -- disabling the ScreenGui instead would leave the stack reserving a gap for a card
--- nobody can see, and the storm banner would sit below its own replacement.
-local objHidden = false
-local function setObjectiveCard(visible)
-	local sg = PlayerGui:FindFirstChild("IslandBanner")
-	local holder = sg and sg:FindFirstChild("Holder")
-	if not holder then
-		-- StackBox: TopCenterStack has already reparented it
-		local box = sg and sg:FindFirstChild("StackBox")
-		holder = box and box:FindFirstChild("Holder")
-	end
-	-- The flag is what actually holds the card down: Bootstrap's refresh loop re-evaluates
-	-- Holder.Visible every 0.5s and would otherwise put the card straight back. Setting
-	-- Holder here too just makes the swap instant instead of up to half a second late.
-	_G.__objectiveCardHidden = not visible
-	if holder then holder.Visible = visible end
-end
-
-_G.__eventBannerSlots = _G.__eventBannerSlots or {}
-local BANNER_BASE_Y, BANNER_SLOT_H = 0.05, 0.10
-local bannerSlot = nil
-local function claimBannerSlot()
-	if bannerSlot then return bannerSlot end
-	local slots = _G.__eventBannerSlots
-	local i = 1
-	while slots[i] do i = i + 1 end
-	slots[i] = true; bannerSlot = i
-	return i
-end
-local function freeBannerSlot()
-	if bannerSlot then _G.__eventBannerSlots[bannerSlot] = nil; bannerSlot = nil end
-end
-local function hideBanner()
-	banner.Visible = false; card:setText("", "")
-	if objHidden then setObjectiveCard(true); objHidden = false end
-	freeBannerSlot()
-end
--- STORM BANNERS PREEMPT EVERY OTHER EVENT BANNER, for as long as they are up.
---
--- There are three scripts that can put a banner top-centre now (this one, Windstorm and
--- ServerEvents) and they all share _G.__eventBannerSlots, which stacks them down the
--- screen. Stacking is right when two minor things coincide and wrong when the weather
--- turns: the storm is the loudest thing happening and should not be the third row.
---
--- The contract is one shared timestamp. Whoever preempts writes a deadline to
--- _G.__bannerOverrideUntil; the other two check it before drawing and hide if it is
--- live. It is a plain number rather than a lock so it CANNOT deadlock -- if this script
--- errors or the player leaves mid-storm, the deadline simply passes and everyone draws
--- again. Nothing has to be released.
+-- THE STORM BANNER KEEPS ITS COLD BLUE, and that is deliberate: the colour reads as weather at a
+-- glance. It is the hero card's ACCENT now rather than a card of its own.
+local STORM_COLOR = Color3.fromRGB(70, 120, 190)
 local BANNER_SECONDS = 5   -- the storm banner is an announcement, not a HUD element
-local bannerToken = 0      -- bumped per showBanner; the auto-hide only fires for the latest
 
 local function showBanner(text, duration)
 	if not text then return end
-	duration = duration or BANNER_SECONDS
-	-- claim the lane: other event banners stand down until this one expires
-	_G.__bannerOverrideUntil = os.clock() + duration
-	_G.__bannerOverrideOwner = "monsoon"
-	-- Y IS NOT SET HERE ANY MORE. TopCenterStack reparents this label into a container
-	-- and moves that, so writing a stacked Y here would fight it. Rest at the top of our
-	-- own container and let the stack decide where the container sits.
-	claimBannerSlot()
-	banner.Position = UDim2.new(0.5, 0, 0, 0)
-	card:setText(text, "")
-	banner.Visible = true
-	setObjectiveCard(false); objHidden = true   -- we are standing in its place
-	-- "IS THIS STILL MY BANNER?" ASKED WITH A TOKEN, NOT BY COMPARING THE TEXT.
-	-- This used to re-read card.title.Text and compare it to `text`, which assumed the
-	-- card displays exactly what it was handed. DinoCard now caps titles at five words,
-	-- so a longer message would never match itself, the timer would decline to hide it,
-	-- and the storm banner would sit on screen forever. A counter cannot be rewritten
-	-- by the card.
-	bannerToken += 1
-	local myToken = bannerToken
-	task.delay(duration, function()
-		if bannerToken == myToken then
-			hideBanner()
-			if _G.__bannerOverrideOwner == "monsoon" then
-				_G.__bannerOverrideUntil = nil
-				_G.__bannerOverrideOwner = nil
-			end
-		end
-	end)
+	Notify.push({ top = "\xF0\x9F\x8C\xA7 MONSOON", text = text, color = STORM_COLOR,
+		priority = Notify.PRIORITY.EVENT, duration = duration or BANNER_SECONDS })
 end
+local function hideBanner() end -- pushes time out on their own; nothing standing to take down
 
 --======================================================================
 -- Lighting snapshot / fog + mist.

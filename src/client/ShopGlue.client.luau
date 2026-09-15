@@ -70,23 +70,9 @@ task.spawn(function()
 		food_locked      = "Locked - reach that island first",
 		gut_locked       = "Locked - reach that island first",
 	}
-	local gui = Instance.new("ScreenGui")
-	gui.Name = "BuyToast"; gui.ResetOnSpawn = false; gui.IgnoreGuiInset = true
-	gui.DisplayOrder = 200; gui.Enabled = false; gui.Parent = player:WaitForChild("PlayerGui")
-	local box = Instance.new("Frame")
-	box.Size = UDim2.fromOffset(330, 46); box.Position = UDim2.new(0.5, 0, 0.22, 0)
-	box.AnchorPoint = Vector2.new(0.5, 0.5); box.BackgroundColor3 = Color3.fromRGB(48, 30, 16)
-	box.BackgroundTransparency = 0.08; box.Parent = gui
-	local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, 12); c.Parent = box
-	local st = Instance.new("UIStroke"); st.Color = Color3.fromRGB(224, 168, 74); st.Thickness = 2; st.Parent = box
-	local lbl = Instance.new("TextLabel")
-	lbl.Size = UDim2.new(1, -20, 1, -10); lbl.Position = UDim2.fromScale(0.5, 0.5)
-	lbl.AnchorPoint = Vector2.new(0.5, 0.5); lbl.BackgroundTransparency = 1
-	lbl.Font = Enum.Font.GothamBold; lbl.TextScaled = true
-	lbl.TextColor3 = Color3.fromRGB(255, 240, 214); lbl.Parent = box
-	do local sc = Instance.new("UITextSizeConstraint"); sc.MaxTextSize = 20; sc.Parent = lbl end
-
-	local token = 0
+	-- Through the ONE banner system: a short REWARD-priority card, not a centre-screen toast of its own.
+	local Notify = require(script.Parent:WaitForChild("NotifyCenter"))
+	local TOAST_COLOR = Color3.fromRGB(224, 168, 74)
 	ev.OnClientEvent:Connect(function(reason)
 		-- BEING BROKE IS NOT AN ERROR, it is the normal state between flights, and the
 		-- shop already says so: the BUY button greys out and reads "Not Enough Coins"
@@ -94,11 +80,8 @@ task.spawn(function()
 		-- every click of an unaffordable item and just covers the game up.
 		-- The other three reasons are genuine surprises, so they still toast.
 		if reason == "not_enough_coins" then return end
-		lbl.Text = REASONS[reason] or "Cannot buy that right now"
-		gui.Enabled = true
-		token += 1
-		local mine = token
-		task.delay(2, function() if token == mine then gui.Enabled = false end end)
+		Notify.push({ text = REASONS[reason] or "Cannot buy that right now", color = TOAST_COLOR,
+			priority = Notify.PRIORITY.REWARD, duration = 2 })
 	end)
 end)
 
@@ -160,7 +143,7 @@ task.spawn(function()
 			-- match "Shop"/"Stand" case-insensitively, with an optional number suffix
 			-- ("Stand", "stand", "Stand8", "Shop9", ...) so every island's stand registers.
 			local nm = d.Name:lower()
-			if nm:match("^shop%d*$") or nm:match("^stand%d*$") then
+			if nm:match("^shop%d*$") or nm:match("^stand%d*$") or nm:match("^realstand%d*$") then -- "realstand" = a hand-placed stand (island3)
 				local part = d:IsA("BasePart") and d or d:FindFirstChildWhichIsA("BasePart", true)
 				if part then
 					local island, why = islandFromName(d.Name)

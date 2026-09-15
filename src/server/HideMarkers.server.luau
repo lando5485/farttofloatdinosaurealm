@@ -55,6 +55,7 @@ local MARKERS = {
 	"^dinoplacement%d*$",  -- Mama Dino
 	"^sniperspot%d*$",     -- the island-12 gun locker
 	"^volcanospot%d*$",    -- the crater the fireballs erupt from
+	"^islandmarker%d*$",   -- each island's surface-height marker (IslandSurfaceReport reads its top; it needs no looks)
 }
 
 -- Names that are NOT markers but sit one letter away from one. Listed only so the "near

@@ -16,10 +16,10 @@
 -- The rest of the rules exist only to stop a bot turning this into spam: a cooldown, a per-session send cap,
 -- a floor and ceiling on the amount, and a cap on how many gifts one mailbox may hold.
 --
--- ===== REALM-LOCAL, BY NECESSITY =====
--- Every realm keeps its OWN Crate Token balance (Dino saves its tokens in DinoSkinState_v1), so a gift has to
--- land in the realm it was sent from. The mailbox store name carries a Dino prefix so this realm's mailboxes
--- can never be claimed by another realm that shares the universe's DataStores.
+-- ===== ONE UNIVERSE =====
+-- Tokens live in the universe wallet (SkinCrateBridge: UniverseCrateTokens_v1) and the mailbox is the
+-- universe-wide GiftMailbox_v1, so a gift sent from here is the friend's wherever they next stand -- and,
+-- with the live wake-up below, within seconds if they are online in any realm that listens.
 --======================================================================
 
 local Players           = game:GetService("Players")
@@ -42,8 +42,21 @@ local COOLDOWN        = 8      -- seconds between gifts from one player
 local MAX_PER_SESSION = 20     -- generous for a real kid, useless to a bot
 local MAX_MAILBOX     = 25     -- pending gifts one player may be holding; beyond this, senders are refused
 
-local MAILBOX_STORE = "DinoGiftMailbox_v1"   -- bump the suffix if the record shape ever changes
+-- ONE MAILBOX FOR THE WHOLE UNIVERSE. DataStores are scoped to the experience, not the place, so every realm
+-- that uses this exact name reads the same box: a gift posted in the Dino realm is waiting for the friend
+-- wherever they next stand. It was "DinoGiftMailbox_v1" -- a private box nobody in the Food or Space realm
+-- could ever open. The Food realm already uses this name; Space must be changed to match.
+local MAILBOX_STORE = "GiftMailbox_v1"   -- bump the suffix if the record shape ever changes (ALL realms together)
 local mailbox = DataStoreService:GetDataStore(MAILBOX_STORE)
+
+-- LIVE DELIVERY. A friend who is online in ANOTHER realm (or another server of this one) is invisible to
+-- Players:GetPlayerByUserId, so their gift used to sit in the mailbox until their next join. Now every
+-- server in the universe listens on one MessagingService topic; the sender publishes "there is mail for
+-- user N" after the store write, and whichever server has that player drains their mailbox on the spot.
+-- The MESSAGE IS ONLY A WAKE-UP: the credit still comes from the atomic read-and-clear of the store, so a
+-- duplicated, replayed or forged message can never pay twice -- or pay anything the store does not hold.
+local MessagingService = game:GetService("MessagingService")
+local GIFT_TOPIC = "GiftDelivery_v1"
 
 --======================================================================
 -- REMOTES
@@ -121,8 +134,8 @@ local function claimMailbox(player)
 	for _, rec in ipairs(claimed) do
 		local amt = math.floor(tonumber(rec and rec.amount) or 0)
 		if amt > 0 and _G.addCrateTokensRaw then
-			local granted = pcall(_G.addCrateTokensRaw, player, amt, "offline gift from " .. tostring(rec.from or "?"))
-			if granted then
+			local okCall, credited = pcall(_G.addCrateTokensRaw, player, amt, "offline gift from " .. tostring(rec.from or "?"))
+			if okCall and credited then
 				total = total + amt
 				pcall(function() GiftReceived:FireClient(player, tostring(rec.from or "A friend"), amt, true) end)
 			else
@@ -143,9 +156,14 @@ GiftSend.OnServerEvent:Connect(function(sender, targetUserId, amount)
 	-- EVERY value below arrives from the client and is a lie until proven otherwise. The amount especially is
 	-- never trusted as a number: a crafted call can send a table, a string, inf or nan.
 	targetUserId = tonumber(targetUserId)
-	amount = math.floor(tonumber(amount) or 0)
+	amount = tonumber(amount) or 0
 
 	local function fail(msg) pcall(function() GiftResult:FireClient(sender, false, msg) end) end
+
+	-- NaN slips past every < / > check (both compare false) and would poison the wallet, which then can no
+	-- longer be saved at all (NaN is not JSON-encodable). Reject it before the range checks.
+	if amount ~= amount or (targetUserId and targetUserId ~= targetUserId) then return fail("Pick an amount.") end
+	amount = math.floor(amount)
 
 	if not targetUserId or targetUserId <= 0 then return fail("Pick someone to gift to.") end
 	if amount < MIN_GIFT then return fail(("Gifts start at %d tokens."):format(MIN_GIFT)) end
@@ -227,15 +245,39 @@ GiftSend.OnServerEvent:Connect(function(sender, targetUserId, amount)
 	lastGift[sender] = now
 	sentCount[sender] = (sentCount[sender] or 0) + 1
 	if _G.badgeGiftSent then pcall(_G.badgeGiftSent, sender) end
+	-- wake whichever server (any realm) has them online, so it lands now rather than next join
+	local woke = pcall(function()
+		MessagingService:PublishAsync(GIFT_TOPIC, { to = targetUserId, from = sender.DisplayName or sender.Name, amount = amount, at = os.time() })
+	end)
 	pcall(function()
 		GiftResult:FireClient(sender, true,
-			("Sent %d tokens to %s -- they'll get it next time they play!"):format(amount, targetName))
+			("Sent %d tokens to %s -- %s"):format(amount, targetName,
+				woke and "if they're online anywhere, it's already there!" or "they'll get it next time they play!"))
 	end)
-	print(("[Gifting] %s gifted %d tokens to %s (OFFLINE, queued)"):format(sender.Name, amount, targetName))
+	print(("[Gifting] %s gifted %d tokens to %s (mailbox%s)"):format(sender.Name, amount, targetName, woke and " + live wake-up" or ", queued"))
 end)
 
 --======================================================================
--- CLAIM ON JOIN
+-- LIVE DELIVERY: drain the mailbox the moment another server says there is mail
+--======================================================================
+do
+	local ok, err = pcall(function()
+		MessagingService:SubscribeAsync(GIFT_TOPIC, function(msg)
+			local d = msg and msg.Data
+			local to = type(d) == "table" and tonumber(d.to) or nil
+			if not to then return end
+			local player = Players:GetPlayerByUserId(to)
+			if not player then return end -- not on this server; whoever has them will answer
+			task.spawn(claimMailbox, player) -- the store is the truth; the message just told us to look
+		end)
+	end)
+	if not ok then
+		warn("[Gifting] MessagingService subscribe failed (gifts still arrive on next join): " .. tostring(err))
+	end
+end
+
+--======================================================================
+-- CLAIM ON JOIN (the offline fallback; live delivery above covers the online case)
 --======================================================================
 local function onJoin(player)
 	-- Wait for the skin service to have loaded this player's token balance before crediting into it --
@@ -252,6 +294,6 @@ if RunService:IsStudio() then
 	print("[Gifting] NOTE: offline gifts use a DataStore. In Studio that needs Game Settings > Security > "
 		.. "Enable Studio Access to API Services, or every offline send will refuse and refund.")
 end
-print(("[Gifting] ready -- %d..%d per gift, %ds cooldown, %d/session, mailbox holds %d. Online gifts are "
-	.. "instant; offline gifts debit first, then queue. Realm-local (see the header)."):format(
+print(("[Gifting] ready -- UNIVERSE mailbox '" .. MAILBOX_STORE .. "' + live delivery on '" .. GIFT_TOPIC .. "';  %d..%d per gift, %ds cooldown, %d/session, mailbox holds %d. Online gifts are "
+	.. "instant; offline gifts debit first, then queue. Universe-wide mailbox + live wake-up."):format(
 	MIN_GIFT, MAX_GIFT, COOLDOWN, MAX_PER_SESSION, MAX_MAILBOX))

@@ -63,7 +63,9 @@ local AWNING     = Color3.fromRGB(206, 92, 66)
 -- same matcher ShopGlue uses, so we only count stands it will actually wire up
 local function isStandName(name)
 	local n = string.lower(name)
-	return n:match("^shop%d*$") ~= nil or n:match("^stand%d*$") ~= nil
+	-- "realstand" is a hand-placed stand (island3 / Fossil Frontier): it counts as the island's stand, so
+	-- no copy of island1's stand is dropped next to it and ShopGlue opens the shop AT it.
+	return n:match("^shop%d*$") ~= nil or n:match("^stand%d*$") ~= nil or n:match("^realstand%d*$") ~= nil
 end
 
 local function findStand(island)
@@ -96,6 +98,9 @@ local function isMarkerPart(inst)
 	if not inst:IsA("BasePart") then return false end
 	-- explicit override, for anything this heuristic still guesses wrong about
 	if inst:GetAttribute("HandBuilt") then return false end
+	-- "realstand" SAYS what it is. It is the finished stand by name, whatever its class or transparency,
+	-- so it is never ghosted, never renamed "_Marker", and never gets a copy of island1's stand built over it.
+	if string.lower(inst.Name):match("^realstand%d*$") then return false end
 
 	-- INVISIBLE IS A MARKER, WHATEVER ITS CLASS -- and this is why stands were "missing".
 	--

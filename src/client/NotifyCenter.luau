@@ -621,6 +621,11 @@ local function presentHero(spec)
 				pcall(spec.onDone) -- let the caller's own queue advance
 			end
 			drain()
+			if not showing and pinned then
+				-- nothing else outranks the pin: put the standing readout back where it was
+				paintHero(pinned)
+				slideHeroIn()
+			end
 		end)
 	end)
 end
@@ -654,7 +659,14 @@ end
 function drain()
 	-- A pin holds the slot: queued banners wait for it, they do not play underneath or beside it.
 	-- A hold shuts the lane entirely (see above) — the queue simply waits.
-	if heroBlocked() or pinned or showing or #queue == 0 then
+	if heroBlocked() or showing or #queue == 0 then
+		return
+	end
+	-- A pin holds the slot against everything at or below its own priority. Something that OUTRANKS it (a
+	-- real purchase over a 20s windstorm countdown, an arrival over anything) plays over the top for its own
+	-- duration and the pin comes back the moment it is done. This is what makes a standing event readout
+	-- (windstorm / monsoon / server event countdowns) safe to pin at all -- see the STANDING EVENTS note.
+	if pinned and queue[1].priority <= (pinned.priority or 0) then
 		return
 	end
 	presentHero(table.remove(queue, 1))
@@ -707,7 +719,10 @@ function NotifyCenter.pin(id, spec)
 
 	if pinned and pinnedId == id then
 		pinned = spec
-		paintHero(spec) -- live update only: re-sliding on every text change would make it flap
+		if not showing then
+			paintHero(spec) -- live update only: re-sliding on every text change would make it flap
+		end
+		-- (if a higher-priority banner is interrupting, it repaints from `pinned` when it finishes)
 		return
 	end
 
@@ -737,6 +752,9 @@ function NotifyCenter.unpin(id)
 		return
 	end
 	pinned, pinnedId = nil, nil
+	if showing then
+		return -- a higher-priority banner is on the card right now; its own timer drains the queue
+	end
 	token += 1
 	hideHero(function()
 		showing = nil
@@ -775,7 +793,11 @@ function NotifyCenter.push(spec)
 
 	-- A pin owns the slot. Everything else waits its turn behind it, in priority order — nothing is dropped, it
 	-- just does not get to talk over a standing instruction. A hold shuts the lane the same way.
-	if pinned or heroBlocked() then
+	if heroBlocked() then
+		enqueue(spec)
+		return
+	end
+	if pinned and spec.priority <= (pinned.priority or 0) then
 		enqueue(spec)
 		return
 	end
@@ -820,6 +842,12 @@ end
 -- — it is clear of every variant by construction.
 local PILL_GAP = 10
 
+-- STANDING EVENTS (windstorm / monsoon / ice age / server events / the volcano finale) are PINS at
+-- PRIORITY.EVENT: `pin(id, spec)` on start, repainted with the countdown, `unpin(id)` on stop. A pin only
+-- blocks banners at or below its own priority, so a purchase (90) or an arrival (100) still plays over a
+-- countdown and the countdown comes straight back. Everything announcing itself in this realm goes through
+-- this ONE card -- there are no separate top-centre banners any more.
+--
 -- CURRENTLY UNUSED. The two readouts that used this row -- the server-event countdown and the cosmic-race
 -- climb/timer -- were moved onto the shared banner SPOT itself (they show only while this lane is empty, so
 -- one card owns that pixel at a time). Kept because it is the right answer for any future readout that must

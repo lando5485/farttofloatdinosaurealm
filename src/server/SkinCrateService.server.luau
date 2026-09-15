@@ -168,10 +168,16 @@ end
 
 -- Writes the balance in ONE place so the in-memory value, the leaderstat, and the client push can never diverge.
 local function setTokens(player, n)
-	n = math.clamp(math.floor(tonumber(n) or 0), 0, CrateTokens.MAX_BALANCE)
+	n = tonumber(n) or 0
+	if n ~= n or n == math.huge or n == -math.huge then n = 0 end -- NaN / inf can never become a balance (NaN also breaks every save)
+	n = math.clamp(math.floor(n), 0, CrateTokens.MAX_BALANCE)
 	_G.playerCrateTokens[player] = n
 	local st = tokenStat(player)
 	if st then st.Value = n end
+	-- SAVE ON EVERY CHANGE. The wallet is shared by every realm, so it cannot wait for the leave-save: a
+	-- gift credited here must already be in the store when the friend's next realm reads it, and a server
+	-- crash must not eat a purchase. The bridge coalesces bursts into one write.
+	if _G.savePlayerData then pcall(_G.savePlayerData, player, "tokens") end
 	return n
 end
 
@@ -748,7 +754,11 @@ end)
 BuyTokens.OnServerEvent:Connect(function(player, packId)
 	local pack = SkinCrates.packById(packId)
 	if not pack then return end
-	if SkinCrates.TEST_MODE then
+	-- THE FREE-TOKEN FAUCET ONLY EXISTS IN STUDIO. TEST_MODE credits packs without Robux so the flow can be
+	-- tested before the products exist -- but the wallet is universe-wide now, so a shipped build with this
+	-- open would let any client mint unlimited tokens and gift them into every realm. Outside Studio the
+	-- flag is ignored and the real purchase prompt runs.
+	if SkinCrates.TEST_MODE and game:GetService("RunService"):IsStudio() then
 		addTokens(player, pack.tokens, "TEST_MODE pack " .. pack.id)
 		pushState(player)
 		if _G.savePlayerData then pcall(function() _G.savePlayerData(player, "tokens_test") end) end
@@ -849,7 +859,9 @@ end
 -- ===== GIFTING HOOKS (for Gifting.server -- the MORE+ "Send a Gift" card, same contract as Space / Food) =====
 -- ONLINE gift: debit and credit in one call with no yield between them, so a gift can never mint tokens.
 _G.giftCrateTokens = function(sender, recipient, amount)
-	amount = math.floor(tonumber(amount) or 0)
+	amount = tonumber(amount) or 0
+	if amount ~= amount or amount == math.huge then return false, "bad amount" end
+	amount = math.floor(amount)
 	if amount <= 0 then return false, "bad amount" end
 	if not (typeof(sender) == "Instance" and sender:IsA("Player")
 		and typeof(recipient) == "Instance" and recipient:IsA("Player")) then
@@ -966,6 +978,9 @@ end
 -- PlayerStats calls this once the save has loaded (the same handshake _G.petsApplyOnJoin uses), so the first
 -- push carries the real balance and inventory rather than an empty default.
 _G.skinCrateApplyOnJoin = function(player)
+	-- Before the bridge has loaded this player there is NO balance to mirror: getTokens would read nil as
+	-- 0, write it back, and that 0 would then be the "loaded" wallet everything else keys off.
+	if _G.playerCrateTokens[player] == nil then return end
 	setTokens(player, getTokens(player)) -- mirror the loaded balance onto the leaderstat
 	pushState(player)
 	print(string.format("[SkinCrate] join state for %s: %d tokens, %d skin entries",

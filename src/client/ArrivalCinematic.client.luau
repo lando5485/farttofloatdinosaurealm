@@ -111,13 +111,42 @@ gui.ZIndexBehavior = Enum.ZIndexBehavior.Global
 gui.DisplayOrder = 10000
 gui.Parent = PlayerGui
 
+--======================================================================
+-- FULL-BLEED GROUND -- and it MATCHES the outro it is catching
+--======================================================================
+-- This was flat pure black, edge to edge. That was right when the OUTRO on the other side of the teleport
+-- was also flat black -- the point of this card is that it looks like the same frame surviving a place
+-- boundary. The outro is now a realm-tinted vertical gradient filling the whole viewport (see
+-- RealmPortals.client.luau in the Food Realm and DinoRiftClient in the Space Realm), so pure black here
+-- would land as a colour pop on arrival: the exact seam this pass exists to remove, just moved to the
+-- other end of the transition.
+--
+-- So it carries the same ground: the realm accent laid over black at the same three stops, vertical, whole
+-- screen, no shape and no offset height anywhere. The ScreenGui above is IgnoreGuiInset = true and this
+-- frame is parented straight to it, so it covers the true viewport on phone, desktop and ultrawide alike.
+local DINO_ACCENT = Color3.fromRGB(105, 235, 130) -- RealmPortals' Dino `lightA` -- keep the two in step
+
 local black = Instance.new("Frame")
-black.Size = UDim2.new(1, 0, 1, 0)
-black.BackgroundColor3 = Color3.new(0, 0, 0)
+black.Size = UDim2.fromScale(1, 1)
+black.Position = UDim2.fromScale(0, 0)
+black.AnchorPoint = Vector2.new(0, 0)
+black.BackgroundColor3 = DINO_ACCENT:Lerp(Color3.new(0, 0, 0), 0.94)
 black.BackgroundTransparency = 0 -- OPAQUE from frame one — this is the handoff
 black.BorderSizePixel = 0
 black.ZIndex = 1
 black.Parent = gui
+do
+	local bg = Instance.new("UIGradient")
+	local deep = DINO_ACCENT:Lerp(Color3.new(0, 0, 0), 0.975)
+	local mid  = DINO_ACCENT:Lerp(Color3.new(0, 0, 0), 0.90)
+	bg.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, deep),
+		ColorSequenceKeypoint.new(0.5, mid),
+		ColorSequenceKeypoint.new(1, deep),
+	})
+	bg.Rotation = 90 -- top to bottom, across the FULL height: a gradient, not a band with ends
+	bg.Parent = black
+end
 
 -- The SAME title card, at the same size/font, still up. To the player, it never went away — it simply
 -- persisted across a place boundary, which is exactly the feeling we want.
@@ -325,3 +354,6 @@ task.spawn(function()
 end)
 
 print("[DinoArrival] arrived through the rift — continuing the transition")
+print("[Transition] DinoArrivalCinematic UPDATED to the full-bleed ground: fromScale(1,1) at fromScale(0,0), " ..
+	"IgnoreGuiInset=true, vertical dino-green gradient across the whole viewport. No plain-black fill, no band, " ..
+	"no seam against the DinoRift / RealmPortals outro it catches.")

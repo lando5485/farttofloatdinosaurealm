@@ -173,7 +173,8 @@ local PANEL_DEEP = Color3.fromRGB(100, 122, 68)  -- the same olive shaded, botto
 -- bright trough with nothing between them. Holding these down is what lets the fill pop.
 local RECESS     = Color3.fromRGB(38, 62, 36)    -- track + icon well interiors
 local RECESS_DIM = Color3.fromRGB(26, 44, 26)    -- top of the track, so the fill sits down in it
-local BAMBOO     = Color3.fromRGB(240, 214, 138) -- bright bamboo, every outline on the panel
+local BAMBOO     = Color3.fromRGB(240, 214, 138) -- bright bamboo: the soft halo behind the card only
+local EDGE       = Color3.fromRGB(40, 52, 38)    -- JungleChrome's panel rim: the one outline colour on the HUD
 -- The meter reads as the gas it measures: this is a fart-powered game and the flight
 -- trail is already green (FartTrail), so the bar and the active button match it.
 local FILL_LIT   = Color3.fromRGB(198, 252, 128) -- top of the progress fill
@@ -250,7 +251,9 @@ mkCorner(gutGlow, PANEL_R + GLOW_OUT)
 -- Named GasMeter (not "Card") so the reference's own measuring script finds it here too.
 local gutContent = mkFrame(gutWrap, { Name = "GasMeter", Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = PANEL_LIT, BorderSizePixel = 0, ZIndex = 3 })
 mkCorner(gutContent, PANEL_R)
-mkStroke(gutContent, BAMBOO, EDGE_W) -- thin, warm bamboo outline
+-- EDGE: the same thin dark-green rim every jungle panel carries (JungleChrome.stylePanel), not
+-- a wood frame. It is what keeps the olive card from bleeding into a green island behind it.
+mkStroke(gutContent, EDGE, EDGE_W)
 do -- VERY SUBTLE vertical gradient: two navies a few steps apart, lighter at the top
 	local g = Instance.new("UIGradient"); g.Rotation = 90
 	g.Color = ColorSequence.new(PANEL_LIT, PANEL_DEEP); g.Parent = gutContent
@@ -296,7 +299,7 @@ gui.gasBg = mkFrame(gutContent, { Name = "Track", Size = UDim2.fromOffset(BAR_W,
 	Position = UDim2.fromOffset(BAR_X, BAR_TOP), BackgroundColor3 = RECESS,
 	ZIndex = 5, BorderSizePixel = 0 })
 mkCorner(gui.gasBg, math.floor(BAR_H / 2)) -- fully rounded ends
-mkStroke(gui.gasBg, BAMBOO, EDGE_W)          -- thin bamboo outline, same weight as the card
+mkStroke(gui.gasBg, EDGE, EDGE_W) -- dark rim: the trough reads as cut INTO the card
 do -- recessed track: darkest at the top, so the fill sits down inside it
 	local g = Instance.new("UIGradient"); g.Rotation = 90
 	g.Color = ColorSequence.new(RECESS_DIM, RECESS); g.Parent = gui.gasBg
@@ -313,6 +316,13 @@ mkCorner(gui.gasFill, math.floor(BAR_H / 2))
 gui.gasGradient = Instance.new("UIGradient"); gui.gasGradient.Rotation = 90
 gui.gasGradient.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, FILL_LIT), ColorSequenceKeypoint.new(1, FILL_DEEP) })
 gui.gasGradient.Parent = gui.gasFill
+do -- SOFT GLOW under the fill: the gas is lit from inside, so the meter has some life even
+	-- when the card is idle. A child of the fill, so it grows and shrinks with it.
+	local glow = mkFrame(gui.gasFill, { Name = "FillGlow", AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(1, 6, 1, 6),
+		BackgroundColor3 = FILL_DEEP, BackgroundTransparency = 0.7, BorderSizePixel = 0, ZIndex = 5 })
+	mkCorner(glow, math.floor(BAR_H / 2) + 3)
+end
 do -- SOFT HIGHLIGHT ACROSS THE TOP OF THE FILL. A child of the fill, so it grows with it
 	-- and never floats over empty track.
 	local sheen = mkFrame(gui.gasFill, { Name = "Sheen", AnchorPoint = Vector2.new(0.5, 0),
@@ -342,7 +352,7 @@ local iconWell = mkFrame(gutContent, { Name = "IconWell", AnchorPoint = Vector2.
 	Size = UDim2.fromOffset(ICON_D, ICON_D), BackgroundColor3 = RECESS,
 	BorderSizePixel = 0, ZIndex = 8 })
 mkCorner(iconWell, 999)
-mkStroke(iconWell, BAMBOO, EDGE_W) -- thin bamboo ring, same weight as every other outline
+mkStroke(iconWell, EDGE, EDGE_W) -- dark ring, same weight as the track
 do -- recessed: darker at the TOP, the opposite of the card, which is what makes the circle
 	-- read as sunk into it
 	local g = Instance.new("UIGradient"); g.Rotation = 90
@@ -428,12 +438,12 @@ do -- outline, gloss and inset ring, the same weights the block carried
 	local shell = mkFrame(btnGroup, { Name = "Shell", Size = UDim2.fromScale(1, 1),
 		BackgroundTransparency = 1, ZIndex = 9 })
 	mkCorner(shell, GROUP_R)
-	mkStroke(shell, BAMBOO, EDGE_W)
+	mkStroke(shell, EDGE, EDGE_W) -- dark rim so the button reads as a raised slab, not a paint stripe
 	local ins = mkFrame(btnGroup, { Name = "InsetShade", AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(1, -3, 1, -3),
 		BackgroundTransparency = 1, ZIndex = 9 })
 	mkCorner(ins, math.max(2, GROUP_R - 2))
-	local s = mkStroke(ins, Color3.fromRGB(96, 60, 30), 1); s.Transparency = 0.6
+	do local s2 = mkStroke(ins, WHITE, 1); s2.Transparency = 0.82 end -- faint top-light bevel
 	local sheen = mkFrame(btnGroup, { Name = "Sheen", AnchorPoint = Vector2.new(0.5, 0),
 		Position = UDim2.new(0.5, 0, 0, 4), Size = UDim2.new(1, -34, 0, 5),
 		BackgroundColor3 = WHITE, BackgroundTransparency = 0.86, BorderSizePixel = 0, ZIndex = 6 })
@@ -453,6 +463,16 @@ gui.fartBtn = mkButton(btnGroup, {
 	BackgroundTransparency = 1, Text = "", AutoButtonColor = false, ZIndex = 10,
 })
 gui.fartBtnFrame = fartHalf                  -- setFartLook recolours this
+do -- PRESS SQUASH: the whole CTA slot dips to 96% on press and springs back on release, so a
+	-- tap is felt as a tap and not just a colour change.
+	local sc = Instance.new("UIScale"); sc.Parent = btnGroup
+	local TS = game:GetService("TweenService")
+	gui.fartBtn.MouseButton1Down:Connect(function()
+		TS:Create(sc, TweenInfo.new(0.06, Enum.EasingStyle.Quad), { Scale = 0.96 }):Play()
+	end)
+	local function up() TS:Create(sc, TweenInfo.new(0.16, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play() end
+	gui.fartBtn.MouseButton1Up:Connect(up); gui.fartBtn.MouseLeave:Connect(up)
+end
 gui.fartLabel = boldWhite(btnGroup, {
 	Name = "FartText", Text = "TAP TO FART!", Font = Enum.Font.FredokaOne, TextScaled = true,
 	TextColor3 = CREAM, Size = UDim2.new(1, -32, 0, 28), Position = UDim2.fromScale(0.5, 0.5),
@@ -1862,6 +1882,38 @@ updateGasMeter()
 
 setFartLook(false) -- idle look on the (unrendered) fart button
 updateGasMeter()
+-- ============================================================================
+-- LEVEL OUT ON A NEW ISLAND -- the first realm's rule, by request.
+-- ============================================================================
+-- The first time you set foot on a HIGHER island (HighestSlot goes up, which the server only
+-- does while you are grounded on it), whatever gas you had left is spent: the meter drops to 0
+-- and the server's CurrentPower follows, so the next crossing starts from an honest empty tank
+-- and the food stand on that island is the way forward. Leftover fuel from a crossing can no
+-- longer be pocketed and stacked onto the next one. Revisits (wormhole, falling back down) do
+-- not touch HighestSlot, so they zero nothing.
+do
+	local lastSlot = math.floor(tonumber(player:GetAttribute("HighestSlot")) or 1)
+	player:GetAttributeChangedSignal("HighestSlot"):Connect(function()
+		local now = math.floor(tonumber(player:GetAttribute("HighestSlot")) or 1)
+		if now <= lastSlot then lastSlot = now; return end -- rebirth / reset going DOWN: not an arrival
+		lastSlot = now
+		task.spawn(function()
+			-- wait for the touchdown itself (thrust may still be ending on this client), 5s cap
+			local t0 = os.clock()
+			repeat
+				local ch = player.Character
+				local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+				if hum and hum.FloorMaterial ~= Enum.Material.Air and not isFlying then break end
+				task.wait(0.1)
+			until os.clock() - t0 > 5
+			if isFlying then stopFlying() end
+			currentPower = 0; gasMeter = 0; updateGasMeter()
+			reportFuel() -- server CurrentPower -> 0 too, so the stand reads EMPTY and nothing re-seeds it
+			print(("[BottomHUD] landed on a new island (slot %d) -> gas levelled out to 0"):format(now))
+		end)
+	end)
+end
+
 print(("[BottomHUD] gut panel ready -- icon + name + power bar + TAP TO FART (buy-food "
 	.. "button removed; stands open on approach). card=%dx%d glow=%dx%d track=%dx%d "
 	.. "slot=%dx%d | bottomGap card=%d glow=%d slot=%d -- first-realm sizes + height. "

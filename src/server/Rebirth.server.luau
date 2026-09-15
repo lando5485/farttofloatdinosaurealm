@@ -15,6 +15,17 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
+local DataStoreService = game:GetService("DataStoreService")
+local RunService = game:GetService("RunService")
+
+-- ONE REBIRTH RECORD FOR THE WHOLE UNIVERSE. The count lived only in the Rebirths attribute, which does not
+-- persist: a Dino rebirth vanished on leave (the multiplier with it) while its coin bonus stayed -- free coins
+-- for anyone who rebirthed and rejoined. It now loads from and saves to the SAME store the Food and Space
+-- realms use (Rebirth_v1, key "Player_<userId>", { rebirths = n }), so a rebirth counts everywhere and the
+-- multiplier follows the player between realms. `mult`/`updatedAt` are extra fields the other realms ignore.
+local REBIRTH_STORE = "Rebirth_v1"
+local rebirthStore = DataStoreService:GetDataStore(REBIRTH_STORE)
+local function rebirthKey(player) return "Player_" .. player.UserId end
 
 local IslandOrder = require(ReplicatedStorage:WaitForChild("DinosaurRealm"):WaitForChild("IslandOrder"))
 local StomachTiers = require(ReplicatedStorage:WaitForChild("DinosaurRealm"):WaitForChild("StomachTiers"))
@@ -41,10 +52,61 @@ local function refreshMult(player)
 	player:SetAttribute("RebirthMult", 1 + BONUS_PER_REBIRTH * n)
 end
 
+local loaded = {} -- [player] = true once the store has answered (a save before that could wipe a real count)
+
+local function applyCount(player, n)
+	player:SetAttribute("Rebirths", n)
+	refreshMult(player)
+	-- the Food / Space realms show it on the leaderboard; mirror that here so all three read the same
+	local ls = player:FindFirstChild("leaderstats")
+	if ls then
+		local v = ls:FindFirstChild("Rebirths")
+		if not v then v = Instance.new("IntValue"); v.Name = "Rebirths"; v.Parent = ls end
+		v.Value = n
+	end
+end
+
+local function loadRebirths(player)
+	local n = 0
+	local ok, rec = pcall(function() return rebirthStore:GetAsync(rebirthKey(player)) end)
+	if ok then
+		n = math.floor(tonumber(type(rec) == "table" and rec.rebirths) or 0)
+		loaded[player] = true
+	else
+		warn("[Rebirth] load failed for " .. player.Name .. " (rebirths shown as 0, NOT saved this session): " .. tostring(rec))
+		if RunService:IsStudio() then loaded[player] = true end -- Studio without API access: let the flow be tested
+	end
+	applyCount(player, n)
+end
+
+local function saveRebirths(player, n)
+	if not loaded[player] then
+		warn("[Rebirth] refusing to save for " .. player.Name .. " -- the store never loaded, a write could erase a real count")
+		return false
+	end
+	local ok, err = pcall(function()
+		rebirthStore:UpdateAsync(rebirthKey(player), function(old)
+			local rec = (type(old) == "table") and old or {}
+			rec.rebirths = math.max(n, math.floor(tonumber(rec.rebirths) or 0)) -- never move a count DOWN
+			rec.mult = 1 + BONUS_PER_REBIRTH * rec.rebirths
+			rec.updatedAt = os.time()
+			return rec
+		end)
+	end)
+	if not ok then warn("[Rebirth] save failed for " .. player.Name .. ": " .. tostring(err)) end
+	return ok
+end
+
 local function onJoin(player)
 	if player:GetAttribute("Rebirths") == nil then player:SetAttribute("Rebirths", 0) end
 	refreshMult(player)
+	task.spawn(function()
+		-- leaderstats may still be building; the count is applied to it as soon as both exist
+		player:WaitForChild("leaderstats", 10)
+		loadRebirths(player)
+	end)
 end
+Players.PlayerRemoving:Connect(function(p) loaded[p] = nil end)
 Players.PlayerAdded:Connect(onJoin)
 for _, p in ipairs(Players:GetPlayers()) do onJoin(p) end
 
@@ -67,9 +129,15 @@ DoRebirth.OnServerInvoke = function(player)
 		return { ok = false, reason = "not_summit", need = TOP_SLOT, have = highestSlot }
 	end
 
+	if not loaded[player] then
+		return { ok = false, reason = "not_loaded" } -- the store has not answered; a rebirth now could not be kept
+	end
 	local n = math.floor(tonumber(player:GetAttribute("Rebirths")) or 0) + 1
-	player:SetAttribute("Rebirths", n)
-	refreshMult(player)
+	-- PERSIST FIRST. If the write fails the rebirth does not happen: no reset, no bonus, nothing to exploit.
+	if not saveRebirths(player, n) then
+		return { ok = false, reason = "save_failed" }
+	end
+	applyCount(player, n)
 
 	-- reset island progress
 	player:SetAttribute("HighestIsland", 1)
@@ -112,4 +180,4 @@ DoRebirth.OnServerInvoke = function(player)
 	return { ok = true, rebirths = n, mult = 1 + BONUS_PER_REBIRTH * n }
 end
 
-print("[Rebirth] service online — reach the summit to rebirth (+RebirthMult, resets island progress, coin bonus).")
+print("[Rebirth] service online — reach the summit to rebirth (+RebirthMult, resets island progress, coin bonus). Persisted to the universe store " .. REBIRTH_STORE .. " (shared with Food / Space).")

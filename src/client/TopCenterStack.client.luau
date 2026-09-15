@@ -53,17 +53,10 @@ local GAP        = 8   -- px between stacked banners
 -- Priority = stacking order, top to bottom. `child` is the banner INSIDE that ScreenGui;
 -- nil means "first GuiObject that isn't our own container".
 local ORDER = {
-	-- NotifyHero (NotifyCenter.luau) is the first realm's top lane: rewards, gifts, crate pulls, purchases --
-	-- the one transient card. Its root is named "Hero" and toggles Visible, so it stacks like the rest.
+	-- ONE BANNER SYSTEM. Every announcement (weather, server events, purchases, the volcano finale, quest
+	-- nudges, shop refusals) now goes through NotifyCenter's hero card, so this stack has exactly two
+	-- lanes left: that card, and the persistent objective card underneath it.
 	{ gui = "NotifyHero",     child = "Hero"   },
-	-- The island coming apart under your feet outranks the weather. Built only when the
-	-- volcano finale fires, so it arrives via the ChildAdded hook below, not the boot sweep.
-	{ gui = "GeyserEruptionWarning", child = "Banner" },
-	{ gui = "MonsoonUI",      child = "Banner" },  -- the storm outranks everything
-	{ gui = "WindstormUI",    child = "Banner" },
-	{ gui = "IceAgeEventUI",  child = "Banner" },
-	{ gui = "PurchaseBanner", child = nil      },  -- real money -- never swallowed
-	{ gui = "ServerEventUI",  child = "Banner" },
 	{ gui = "IslandBanner",   child = "Holder" },  -- the persistent objective card, last
 }
 
@@ -143,5 +136,4 @@ RunService.Heartbeat:Connect(function()
 	end
 end)
 
-print("[TopCenterStack] ready -- top-centre banners stack instead of overlapping ("
-	.. #ORDER .. " lanes, priority: MonsoonUI > WindstormUI > IceAgeEventUI > PurchaseBanner > ServerEventUI > IslandBanner)")
+print("[TopCenterStack] ready -- " .. #ORDER .. " lanes: NotifyHero (every announcement) above IslandBanner (the objective card)")

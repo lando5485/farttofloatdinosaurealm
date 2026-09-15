@@ -190,6 +190,19 @@ local function snapshot(player)
 			task.wait(0.25)
 		end
 		if not player.Parent then return end
+		if not (_G.playerCrateTokens and _G.playerCrateTokens[player]) then
+			warn("[Wormhole] wallet never loaded for " .. player.Name .. " -- no earned baseline, this visit pays out 0")
+			return -- no snapshot = earnedFor() returns 0; never treat a late-loading balance as profit
+		end
+		-- THE ARRIVAL MERGE MUST LAND FIRST. ArrivalReceiver may still be crediting tokens that arrived WITH
+		-- the player (a legacy sender's absolute balance or earned delta). Baselining before that lands
+		-- would count those tokens as "earned here" and send them home again as a delta = paid twice.
+		-- ArrivalReceiver raises _G.dinoArrivalSettled[player] when it is done (immediately for a direct join).
+		local t1 = os.clock()
+		while not (_G.dinoArrivalSettled and _G.dinoArrivalSettled[player]) and os.clock() - t1 < 20 do
+			task.wait(0.25)
+		end
+		if not player.Parent then return end
 		joinSnapshot[player] = { coins = coinsNow(player), crateTokens = tokensNow(player) }
 	end)
 end
@@ -252,13 +265,34 @@ local function fit(payload, playerName)
 	warn(("[Wormhole] %s payload still oversized -- dropped collection"):format(playerName))
 	if encodedSize(payload) <= BUDGET_BYTES then return payload end
 
+	payload.petMilestones = nil -- forwarded flags; the home save still has them
 	payload.petSkins      = nil -- last resort: their home save still has every skin, nothing is lost for good
 	payload.equippedSkins = nil
 	warn(("[Wormhole] %s payload STILL oversized -- dropped the skin inventory"):format(playerName))
 	return payload
 end
 
-local function buildTravelPayload(player)
+-- Where "home" is for this player: the place the arriving payload named, else the Food realm. Read from
+-- the stash ArrivalReceiver keeps (_G.incomingFtFData), so a player who came Food -> Space -> Dino still
+-- goes home to Food and not to Space.
+local function homeFor(player)
+	local d = _G.incomingFtFData and _G.incomingFtFData[player]
+	local h = d and tonumber(d.homePlaceId)
+	if h and h > 0 and h ~= DINO_PLACE_ID then return h end
+	return FOOD_PLACE_ID
+end
+-- A field this realm carries but does not own: forwarded exactly as it arrived.
+local function passthrough(player, key)
+	local d = _G.incomingFtFData and _G.incomingFtFData[player]
+	return d and d[key] or nil
+end
+local function titleOf(player)
+	local t = player:GetAttribute("Title")
+	if type(t) == "string" and t ~= "" then return t end
+	return nil
+end
+
+local function buildTravelPayload(player, placeId)
 	local function g(name, default)
 		local t = _G[name]
 		local v = t and t[player]
@@ -277,11 +311,19 @@ local function buildTravelPayload(player)
 		-- A wormhole hop is not that, and claiming it would freeze them for 7s on arrival.
 		fromDinoRealm   = true,
 		fromFartToFloat = true,
-		payloadVersion  = 1,
-		fromPlaceId     = DINO_PLACE_ID,
+		payloadVersion  = 2,                          -- matches the Food realm's RealmTransfer VERSION
+		fromPlaceId     = (game.PlaceId ~= 0) and game.PlaceId or DINO_PLACE_ID, -- live id; the constant only in Studio
 		fromRealm       = "dino",
 		userId          = player.UserId, -- the far side can refuse a payload stamped for somebody else
 		sentAt          = os.time(),
+
+		-- THE WAY HOME. The Food realm's RealmReturnReceiver refuses ANY payload without `returningHome`
+		-- (its gate is returningHome AND fromFartToFloat), so every earned coin and token this realm has
+		-- ever sent to Food was silently dropped. `homePlaceId` is whatever the arriving payload said
+		-- home was (stashed by ArrivalReceiver), defaulting to the Food realm; the flag goes up when the
+		-- hop is TO that place.
+		homePlaceId     = homeFor(player),
+		returningHome   = (placeId == homeFor(player)),
 
 		-- The cosmetic bundle, so anything unlocked/levelled/equipped here survives the hop. Receivers
 		-- MERGE these (union + max), so re-sending state they already have is harmless.
@@ -291,8 +333,31 @@ local function buildTravelPayload(player)
 		equippedSkins = g("playerEquippedSkins", {}), -- SkinCrateService.server.luau:71
 		collection    = g("playerCollection", {}),    -- SkinCrateService.server.luau:241
 
-		-- CURRENCY: deltas ONLY -- see the note at the top of this section.
-		earned = earnedFor(player),
+		-- CURRENCY, BOTH CHANNELS. `earned` is the DELTA Food's return receiver pays out (it never reads
+		-- an absolute), and `crateTokens` is the ABSOLUTE balance the Space realm's FoodTransfer and this
+		-- realm's own ArrivalReceiver max-merge (they never read the delta). Sending only the delta, as this
+		-- did, meant a Dino -> Space hop arrived with zero tokens. Space's own sender ships both on purpose.
+		earned      = earnedFor(player),
+		crateTokens = math.floor(tonumber(g("playerCrateTokens", 0)) or 0),
+		-- This realm keeps tokens in the universe wallet (UniverseCrateTokens_v1). A receiver on the same
+		-- wallet must NOT merge crateTokens / earned.crateTokens (it already has them); a receiver still on
+		-- its own private wallet ignores this flag and merges as before.
+		sharedTokens = true,
+
+		-- THE TITLE rides with them: the Food and Space receivers both read it, and a title carried INTO
+		-- this realm was being lost on the next hop out. Nothing here publishes _G.playerTitle, so the
+		-- attribute (set by ArrivalReceiver.carryUniversals) is the source.
+		title = titleOf(player),
+
+		-- PASS-THROUGH. Systems this realm does not have (gut skins, per-pet milestones, gamepass flags)
+		-- still belong to the player: whatever they arrived with is forwarded UNCHANGED so a Food player's
+		-- gut skin and 2x pass do not go dark for having visited the dinosaurs. Nil when they arrived with
+		-- nothing (or joined directly), which every receiver treats as "no change".
+		petMilestones   = passthrough(player, "petMilestones"),
+		ownedGutSkins   = passthrough(player, "ownedGutSkins"),
+		equippedGutSkin = passthrough(player, "equippedGutSkin"),
+		gamepasses      = passthrough(player, "gamepasses"),
+		gamepassIds     = passthrough(player, "gamepassIds"),
 	}, player.Name)
 end
 
@@ -310,7 +375,7 @@ RequestRealmWarp.OnServerInvoke = function(player, realm)
 		return { ok = false, reason = "airborne" }
 	end
 
-	local payload = buildTravelPayload(player)
+	local payload = buildTravelPayload(player, placeId)
 	local options = Instance.new("TeleportOptions")
 	options:SetTeleportData(payload)
 
@@ -323,9 +388,9 @@ RequestRealmWarp.OnServerInvoke = function(player, realm)
 		return { ok = false, reason = "failed" } -- client shows "couldn't travel", stays put
 	end
 	local earned = payload.earned
-	print(("[Wormhole] %s teleporting -> %s Realm (place %d) carrying %d pet(s), %d skin stack(s); earned +%d coins, +%d token(s)")
-		:format(player.Name, realm, placeId, countKeys(payload.ownedPets), countKeys(payload.petSkins),
-		        earned.coins, earned.crateTokens))
+	print(("[Wormhole] %s teleporting -> %s Realm (place %d)%s carrying %d pet(s), %d skin stack(s), %d token(s) abs; earned +%d coins, +%d token(s); title=%s")
+		:format(player.Name, realm, placeId, payload.returningHome and " [HOME]" or "", countKeys(payload.ownedPets), countKeys(payload.petSkins),
+		        payload.crateTokens or 0, earned.coins, earned.crateTokens, tostring(payload.title)))
 	return { ok = true, realm = realm }
 end
 

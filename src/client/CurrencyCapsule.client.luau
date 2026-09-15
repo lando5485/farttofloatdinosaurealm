@@ -417,7 +417,7 @@ local function build(parent)
 	cap.Parent = parent
 	corner(cap, CAP_H / 2)
 	grad(cap, three(FRAME_TOP, FRAME_MID, FRAME_BOT), 90)
-	stroke(cap, FRAME_LINE, 2)
+	-- (bamboo outline removed by request)
 	rimLight(cap, 0.86, 0.70)   -- the frame's own bevel, nothing more
 
 	-- ---- TOKEN PILL (left) -------------------------------------------------------------

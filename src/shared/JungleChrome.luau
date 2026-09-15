@@ -43,8 +43,7 @@ function JungleChrome.buildShell(screenGui)
 	if screenGui:FindFirstChild("JungleShell") then return screenGui.JungleShell end
 	local shell = Instance.new("Frame"); shell.Name = "JungleShell"; shell.AnchorPoint = Vector2.new(0.5,0.5)
 	shell.Position = UDim2.new(0.5,0,0.5,-16); shell.Size = UDim2.fromOffset(740,560); shell.BackgroundColor3 = STONE_B  -- HUB PARITY: -16 lands panels at the hub's exact screen spot (its -45 in an inset-respecting gui) WITHOUT clipping phone tops
-	shell.ZIndex = 0; shell.Parent = screenGui; uicorner(shell, 26); uistroke(shell, STONE_D, 2)
-	do local sg = Instance.new("UIGradient"); sg.Rotation = 90; sg.Color = ColorSequence.new(STONE_A, Color3.fromRGB(184,158,100)); sg.Parent = shell end
+	shell.ZIndex = 0; shell.Parent = screenGui; shell.BackgroundTransparency = 1 -- BAMBOO FRAME REMOVED by request: invisible placeholder so callers can still track it
 	local function rock(cx, cy, w, h)
 		local horiz = w > h
 		local r = Instance.new("Frame"); r.AnchorPoint = Vector2.new(0.5,0.5); r.Position = UDim2.fromOffset(cx, cy); r.Size = UDim2.fromOffset(w, h)
@@ -60,8 +59,7 @@ function JungleChrome.buildShell(screenGui)
 			uicorner(bind, 2)
 		end
 	end
-	for x = 20, 720, 43 do rock(x, 16, 52, 38); rock(x, 544, 52, 38) end
-	for y = 54, 506, 41 do rock(16, y, 38, 52); rock(724, y, 38, 52) end
+	-- rock rows removed (no wood/bamboo border)
 	-- FOLIAGE REMOVED: the four corner leaf-fans and the eight edge sprigs. This function
 	-- is shared, so those leaves were being drawn on the Shop and on every panel
 	-- JungleTheme restyles -- removing them here clears all of them at once.
@@ -85,13 +83,11 @@ function JungleChrome.buildShellAround(parent, w, h)
 
 	local shell = Instance.new("Frame"); shell.Name = "JungleShell"
 	shell.AnchorPoint = Vector2.new(0.5, 0.5); shell.Position = UDim2.new(0.5, 0, 0.5, -16) -- hub-parity lift (callers that track a panel overwrite this)
-	shell.Size = UDim2.fromOffset(w, h); shell.BackgroundColor3 = STONE_B
+	shell.Size = UDim2.fromOffset(w, h); shell.BackgroundTransparency = 1 -- BAMBOO FRAME REMOVED by request
 	shell.ZIndex = 0; shell.Parent = parent
 	local band = math.clamp(math.floor(math.min(w, h) * 0.075), 10, 26)
 	uicorner(shell, math.min(26, math.floor(math.min(w, h) * 0.18)))
-	uistroke(shell, STONE_D, 2)
-	do local sg = Instance.new("UIGradient"); sg.Rotation = 90
-		sg.Color = ColorSequence.new(STONE_A, Color3.fromRGB(184,158,100)); sg.Parent = shell end
+	-- (stroke + tan gradient removed)
 
 	local function rock(cx, cy, rw, rh)
 		local horiz = rw > rh
@@ -122,7 +118,7 @@ function JungleChrome.buildShellAround(parent, w, h)
 		local n = math.max(1, math.floor(usable / (long + 3)))
 		for i = 0, n do rock(cx, band + (usable / n) * i, short, long) end
 	end
-	runX(band); runX(h - band); runY(band); runY(w - band)
+	-- runX/runY rock rows removed (no wood/bamboo border)
 
 	-- FOLIAGE REMOVED here too -- the four corner knots and their leaf fans. Same reason as
 	-- buildShell above; this is the any-size variant and shares its callers.

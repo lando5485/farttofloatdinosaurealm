@@ -50,56 +50,21 @@ windSound.Looped = true
 windSound.Volume = WIND_VOLUME
 windSound.Parent = SoundService
 
---======================================================================
--- Banner -- shares the cross-event slot table so it stacks under a Monsoon or
--- Ice Age banner instead of covering it (same contract MonsoonRain uses).
---======================================================================
-local gui = Instance.new("ScreenGui")
-gui.Name = "WindstormUI"
-gui.ResetOnSpawn = false
-gui.IgnoreGuiInset = true
-gui.Parent = player:WaitForChild("PlayerGui")
+-- ONE BANNER SYSTEM. Every announcement in this realm goes through NotifyCenter's hero card (the
+-- module beside this script) -- no private ScreenGui, no private slot table, no private Y.
+local Notify = require(script.Parent:WaitForChild("NotifyCenter"))
 
-local banner = Instance.new("TextLabel")
-banner.Name = "Banner"   -- TopCenterStack adopts this by name
-banner.Size = UDim2.fromOffset(500, 65) -- the house banner: 500x65 authored (first-realm spec), not a % of the screen
-banner.AnchorPoint = Vector2.new(0.5, 0)
-banner.BackgroundColor3 = Color3.fromRGB(0, 90, 100)
-banner.BackgroundTransparency = 0.15
-banner.TextColor3 = Color3.fromRGB(215, 250, 255)
-banner.Font = Enum.Font.GothamBold
-banner.TextScaled = true
-banner.Text = ""
-banner.Visible = false
-banner.Parent = gui
-Instance.new("UICorner", banner).CornerRadius = UDim.new(0, 12)
-
-_G.__eventBannerSlots = _G.__eventBannerSlots or {}
-local BANNER_BASE_Y, BANNER_SLOT_H = 0.05, 0.10
-local bannerSlot = nil
--- A storm banner outranks us. MonsoonRain writes a deadline to _G.__bannerOverrideUntil
--- while its banner is up; we stay hidden until it passes, then draw normally. Checked as
--- a timestamp rather than a lock, so a crashed or departed owner cannot wedge us shut.
-local function bannerSuppressed()
-	local untilT = _G.__bannerOverrideUntil
-	return untilT ~= nil and os.clock() < untilT
-end
-
+local WIND_COLOR = Color3.fromRGB(0, 120, 135)
+local PIN_ID = "windstorm"
+local lastBannerText = nil
 local function showBanner(text)
-	if not bannerSlot then
-		local slots = _G.__eventBannerSlots
-		local i = 1
-		while slots[i] do i = i + 1 end
-		slots[i] = true; bannerSlot = i
-	end
-	-- Y owned by TopCenterStack (see MonsoonRain's note) -- rest at our container's top.
-	banner.Position = UDim2.new(0.5, 0, 0, 0)
-	banner.Text = text
-	banner.Visible = true
+	if text == lastBannerText then return end -- repaint only when the wording changes
+	lastBannerText = text
+	Notify.pin(PIN_ID, { top = "\xF0\x9F\x8C\xAA WINDSTORM", text = text, color = WIND_COLOR, priority = Notify.PRIORITY.EVENT })
 end
 local function hideBanner()
-	banner.Visible = false; banner.Text = ""
-	if bannerSlot then _G.__eventBannerSlots[bannerSlot] = nil; bannerSlot = nil end
+	lastBannerText = nil
+	Notify.unpin(PIN_ID)
 end
 
 --======================================================================
@@ -160,7 +125,7 @@ local function startWindstorm(duration)
 	_G.windstormActive = true
 	_G.windstormDir = randomDir()
 	windSound:Play()
-	showBanner("\xF0\x9F\x8C\xAA  WINDSTORM -- the wind is insane!")
+	showBanner("The wind is insane!")
 
 	task.spawn(function()
 		local endT = os.clock() + duration
@@ -183,13 +148,7 @@ local function startWindstorm(duration)
 			end
 
 			local rem = math.max(0, math.ceil(endT - os.clock()))
-			-- re-checked every tick: a storm can start mid-windstorm and take the lane
-			if bannerSuppressed() then
-				banner.Visible = false
-			else
-				banner.Visible = true
-				banner.Text = ("\xF0\x9F\x8C\xAA  WINDSTORM: %ds"):format(rem)
-			end
+			showBanner(("The wind is insane!  %ds"):format(rem))
 		end
 		stopWindstorm()
 	end)

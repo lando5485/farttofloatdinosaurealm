@@ -73,72 +73,16 @@ local function fogForPhase(phase) return PHASE_FOG[phase] or 5000 end
 -- SMALL by design -- never enough to slide a player off an island.
 local clientSlideAmount = 0.18
 
---======================================================================
--- ScreenGui: announcement banner.
---======================================================================
-local gui = Instance.new("ScreenGui")
-gui.Name = "IceAgeEventUI"
-gui.ResetOnSpawn = false
-gui.IgnoreGuiInset = true
-gui.DisplayOrder = 53
-gui.Parent = player:WaitForChild("PlayerGui")
+-- ONE BANNER SYSTEM. Every announcement in this realm goes through NotifyCenter's hero card (the
+-- module beside this script) -- no private ScreenGui, no private slot table, no private Y.
+local Notify = require(script.Parent:WaitForChild("NotifyCenter"))
 
-local BANNER_BG_VISIBLE = 0.2  -- the opaque background transparency when showing
-local banner = Instance.new("TextLabel")
-banner.Name = "Banner"
-banner.AnchorPoint = Vector2.new(0.5, 0)
-banner.Position = UDim2.new(0.5, 0, 0.14, 0)
-banner.Size = UDim2.fromOffset(500, 65) -- the house banner: 500x65 authored (first-realm spec), not a % of the screen
-banner.BackgroundColor3 = Color3.fromRGB(28, 44, 60)
-banner.BackgroundTransparency = 1  -- fully invisible when idle
-banner.TextColor3 = Color3.fromRGB(210, 235, 255)
-banner.TextScaled = true
-banner.Font = Enum.Font.GothamBold
-banner.Text = ""
-banner.ZIndex = 20
-banner.Visible = false
-banner.Parent = gui
-local bannerCorner = Instance.new("UICorner")
-bannerCorner.CornerRadius = UDim.new(0, 12)
-bannerCorner.Parent = banner
-
--- Shared across all event banners (one per client) so concurrent announcements
--- stack vertically instead of covering each other.
-_G.__eventBannerSlots = _G.__eventBannerSlots or {}
-local BANNER_BASE_Y = 0.05   -- topmost banner Y (scale)
-local BANNER_SLOT_H = 0.10   -- vertical gap per slot (> banner height 0.08, no overlap)
-local bannerSlot = nil       -- this banner's currently-claimed slot, or nil
-local function claimBannerSlot()
-	if bannerSlot then return bannerSlot end
-	local slots = _G.__eventBannerSlots
-	local i = 1
-	while slots[i] do i = i + 1 end
-	slots[i] = true
-	bannerSlot = i
-	return i
-end
-local function freeBannerSlot()
-	if bannerSlot then _G.__eventBannerSlots[bannerSlot] = nil; bannerSlot = nil end
-end
-local function bannerSlotY(i) return BANNER_BASE_Y + (i - 1) * BANNER_SLOT_H end
-
-local function hideBanner()
-	banner.Visible = false
-	banner.BackgroundTransparency = 1
-	banner.Text = ""
-	freeBannerSlot()
-end
-
+local ICE_COLOR = Color3.fromRGB(96, 168, 230)
 local function showBanner(text, duration)
-	local slot = claimBannerSlot()
-	banner.Position = UDim2.new(0.5, 0, bannerSlotY(slot), 0)
-	banner.Text = text
-	banner.BackgroundTransparency = BANNER_BG_VISIBLE
-	banner.Visible = true
-	task.delay(duration or 4, function()
-		if banner.Text == text then hideBanner() end
-	end)
+	Notify.push({ top = "\xE2\x9D\x84\xEF\xB8\x8F ICE AGE", text = text, color = ICE_COLOR,
+		priority = Notify.PRIORITY.EVENT, duration = duration or 4 })
 end
+local function hideBanner() end -- pushes time out on their own
 
 --======================================================================
 -- SKY: pale blue/gray winter Lighting that is FULLY restored on reset.

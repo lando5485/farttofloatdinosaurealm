@@ -600,76 +600,41 @@ local CHAOS_TIME   = 2.0    -- everything at once, then the big one
 local FINALE_FUSE = BUILD_TIME + CHAOS_TIME  -- total from "it starts" to "the island goes"
 
 -- Big red warning banner + the panic line, up for the whole fuse.
+--
+-- ONE BANNER SYSTEM: this is a PIN on NotifyCenter's hero card, not a ScreenGui of its own. It sits
+-- above every event countdown (PLANET priority -- the island coming apart under your feet outranks the
+-- weather), repaints its countdown line in place, and unpins itself when the fuse runs out.
 local function showEruptionWarning()
-	local pgui = player:WaitForChild("PlayerGui")
-	local g = Instance.new("ScreenGui")
-	g.Name = "GeyserEruptionWarning"; g.ResetOnSpawn = false; g.IgnoreGuiInset = true; g.DisplayOrder = 400; g.Parent = pgui
-
-	-- ===== ONE FRAME, SO THE TOP-CENTRE STACK CAN OWN IT =====
-	-- The warning and its countdown used to be two loose labels pinned at y=120 and y=188,
-	-- outside TopCenterStack entirely -- so the island blowing up drew straight through a
-	-- windstorm banner or the objective card. Every announcement in this realm belongs in
-	-- the stack, so both labels now live in a single "Banner" frame, which is the child
-	-- TopCenterStack adopts and repositions. Nothing here tweens Position, so the stack can
-	-- move the frame freely; the alarm pulse below only touches colours and text.
-	local wrap = Instance.new("Frame")
-	wrap.Name = "Banner"
-	wrap.AnchorPoint = Vector2.new(0.5, 0)
-	wrap.Position = UDim2.new(0.5, 0, 0, 0)   -- the stack supplies the Y offset
-	wrap.Size = UDim2.fromOffset(700, 108)    -- 62 banner + 6 gap + 40 countdown
-	wrap.BackgroundTransparency = 1
-	wrap.Parent = g
-
-	local banner = Instance.new("TextLabel")
-	banner.AnchorPoint = Vector2.new(0.5, 0)
-	banner.Position = UDim2.new(0.5, 0, 0, 0)
-	banner.Size = UDim2.fromOffset(700, 62)
-	banner.BackgroundColor3 = Color3.fromRGB(90, 22, 12)
-	banner.BackgroundTransparency = 0.08
-	banner.Font = Enum.Font.FredokaOne
-	banner.TextScaled = true
-	banner.TextColor3 = Color3.fromRGB(255, 220, 170)
-	-- THE PLUGS FAILED -- that is the story beat, and the old line did not tell it. "THE
-	-- GEYSERS ARE ERUPTING" describes the vents, which the player can already see erupting;
-	-- what they cannot see is WHY, or that the thing now going off is the mountain itself.
-	banner.Text = "\xE2\x9A\xA0\xEF\xB8\x8F THE PLUGS FAILED! THE VOLCANO IS EXPLODING!"
-	banner.Parent = wrap
-	Instance.new("UICorner", banner).CornerRadius = UDim.new(0, 12)
-	local bs = Instance.new("UIStroke", banner); bs.Color = Color3.fromRGB(255, 120, 40); bs.Thickness = 3
-	do local c = Instance.new("UITextSizeConstraint"); c.MaxTextSize = 32; c.Parent = banner end
-
-	-- countdown under it, so the 10s fuse reads as a threat and not just noise
-	local sub = Instance.new("TextLabel")
-	sub.AnchorPoint = Vector2.new(0.5, 0)
-	sub.Position = UDim2.new(0.5, 0, 0, 68)
-	sub.Size = UDim2.fromOffset(520, 40)
-	sub.BackgroundTransparency = 1
-	sub.Font = Enum.Font.FredokaOne
-	sub.TextScaled = true
-	sub.TextColor3 = Color3.fromRGB(255, 150, 90)
-	sub.TextStrokeColor3 = Color3.new(0, 0, 0)
-	sub.TextStrokeTransparency = 0.4
-	-- The countdown is no longer counting DOWN TO the eruption -- that already happened, on
-	-- the same frame this banner appeared. It now counts down to the island going under.
-	sub.Text = "THE ISLAND IS COMING APART! GET OUT!"
-	sub.Parent = wrap
-	do local c = Instance.new("UITextSizeConstraint"); c.MaxTextSize = 26; c.Parent = sub end
-
-	-- pulse the banner so it reads as an alarm
+	local ok, Notify = pcall(function() return require(script.Parent:WaitForChild("NotifyCenter", 5)) end)
+	if not ok or not Notify then return nil end
+	local PIN_ID = "eruption"
+	local RED = Color3.fromRGB(200, 60, 30)
+	local function paint(left)
+		Notify.pin(PIN_ID, {
+			-- THE PLUGS FAILED -- that is the story beat. "THE GEYSERS ARE ERUPTING" describes the vents,
+			-- which the player can already see; what they cannot see is WHY, or that the thing now going
+			-- off is the mountain itself.
+			top      = "\xE2\x9A\xA0\xEF\xB8\x8F THE PLUGS FAILED! THE VOLCANO IS EXPLODING!",
+			text     = "GET OUT!",
+			-- counts down to the island going under (the eruption itself already happened, on this frame)
+			sub      = ("THE ISLAND GOES IN %.0f..."):format(left),
+			color    = RED,
+			priority = Notify.PRIORITY.PLANET,
+		})
+	end
+	paint(FINALE_FUSE)
 	task.spawn(function()
 		local t0 = os.clock()
-		while g.Parent and os.clock() - t0 < FINALE_FUSE + 1 do
-			local k = 0.5 + 0.5 * math.sin(os.clock() * 7)
-			bs.Thickness = 2 + k * 3
-			banner.BackgroundColor3 = Color3.fromRGB(90 + math.floor(60 * k), 22, 12)
+		local lastShown = nil
+		while os.clock() - t0 < FINALE_FUSE + 1 do
 			local left = math.max(0, FINALE_FUSE - (os.clock() - t0))
-			sub.Text = ("THE ISLAND GOES IN %.0f..."):format(left)
-			task.wait()
+			local shown = math.ceil(left)
+			if shown ~= lastShown then lastShown = shown; paint(left) end -- repaint once a second, not once a frame
+			task.wait(0.1)
 		end
+		Notify.unpin(PIN_ID)
 	end)
-
-	Debris:AddItem(g, FINALE_FUSE + 1.2)
-	return g
+	return nil
 end
 
 -- THE ERUPTION BLAST -- the one-shot bang when the volcano finally lets go.

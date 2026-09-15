@@ -48,57 +48,12 @@ local island = workspace:WaitForChild("island1", 90)
 local miner = waitForDescendant(island, "miner", 90)
 
 ----------------------------------------------------------------------
--- Top-middle banner
+-- Top-middle banner -- through the ONE banner system (NotifyCenter), TASK priority
 ----------------------------------------------------------------------
-
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "QuestBanner"
-screenGui.ResetOnSpawn = false
-screenGui.IgnoreGuiInset = true
-screenGui.DisplayOrder = 50
-screenGui.Parent = playerGui
-
-local banner = Instance.new("TextLabel")
-banner.AnchorPoint = Vector2.new(0.5, 0.5)
-banner.Position = UDim2.new(0.5, 0, 0.5, 0) -- dead center of the screen
-banner.Size = UDim2.fromOffset(580, 52)
-banner.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-banner.BackgroundTransparency = 0.3
-banner.TextColor3 = Color3.fromRGB(255, 255, 255)
-banner.Font = Enum.Font.FredokaOne
-banner.TextScaled = true
-banner.Text = "Talk To The Researcher First To Claim Your Quest"
-banner.Visible = false
-banner.Parent = screenGui
-
-local bCorner = Instance.new("UICorner")
-bCorner.CornerRadius = UDim.new(0, 10)
-bCorner.Parent = banner
-
-local bStroke = Instance.new("UIStroke")
-bStroke.Color = ARROW_COLOR
-bStroke.Thickness = 2
-bStroke.Parent = banner
-
-local bPad = Instance.new("UIPadding")
-bPad.PaddingLeft = UDim.new(0, 14)
-bPad.PaddingRight = UDim.new(0, 14)
-bPad.Parent = banner
-
-local bSizer = Instance.new("UITextSizeConstraint")
-bSizer.MaxTextSize = 28
-bSizer.Parent = banner
-
-local bannerToken = 0
+local Notify = require(script.Parent:WaitForChild("NotifyCenter"))
 local function showBanner()
-	banner.Visible = true
-	bannerToken += 1
-	local mine = bannerToken
-	task.delay(BANNER_TIME, function()
-		if mine == bannerToken then
-			banner.Visible = false
-		end
-	end)
+	Notify.push({ text = "Talk To The Researcher First To Claim Your Quest", wrap = true,
+		color = ARROW_COLOR, priority = Notify.PRIORITY.TASK, duration = BANNER_TIME })
 end
 
 ----------------------------------------------------------------------

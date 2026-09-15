@@ -27,7 +27,8 @@ local launchEvent   = ev("MeteorLaunchSnapshot")    -- client -> server: "I laun
 
 local DURATION    = 6      -- seconds of meteor storm
 local WAVE_GAP    = 0.16   -- seconds between waves
-local PER_PLAYER  = 2      -- meteors dropped near each (non-buyer) player per wave
+local PER_PLAYER  = 2      -- meteors dropped near EVERY player per wave (the buyer sees the show too)
+local PER_ISLAND  = 3      -- extra meteors scattered across each island that has a player on it
 local KILL_AT     = 1.9    -- seconds into the storm before the killing blow lands
 local busy        = false
 local lastBy      = {}      -- [player] = os.clock() of last trigger (anti-spam)
@@ -63,8 +64,35 @@ local function islandSpawnPos(n)
 	return Vector3.new(cf.Position.X, y, cf.Position.Z)
 end
 
--- ===== one flaming meteorite that falls from the sky to targetPos and explodes =====
+-- ===== find the island surface under an XZ point =====
+-- The rocks used to stop at the PLAYER's height: targetPos was hrp.Position + a flat XZ offset, so
+-- for anyone floating (this is a float game) the meteor exploded in mid-air and never touched the
+-- island, and on a slope the ones off to the side burst above or below the ground. Now every
+-- meteor drops a ray from high above its XZ spot and lands ON the surface it finds.
+local groundParams = RaycastParams.new()
+groundParams.FilterType = Enum.RaycastFilterType.Exclude
+groundParams.IgnoreWater = true
+local function groundUnder(pos)
+	local excl = {}
+	for _, p in ipairs(Players:GetPlayers()) do if p.Character then excl[#excl+1] = p.Character end end
+	groundParams.FilterDescendantsInstances = excl
+	local origin = Vector3.new(pos.X, pos.Y + 300, pos.Z)
+	local hit = Workspace:Raycast(origin, Vector3.new(0, -4000, 0), groundParams) -- long enough to reach the island from a high float
+	if hit then
+		-- which island model did we land on? (walk up to the Workspace child named islandN)
+		local isl = hit.Instance
+		while isl and isl.Parent ~= Workspace do isl = isl.Parent end
+		if isl and not tostring(isl.Name):match("^island%d+$") then isl = nil end
+		return hit.Position + Vector3.new(0, 1, 0), isl
+	end
+	-- nothing under this spot (over the void / off the island edge): try straight under the player
+	-- instead so the rock still lands on the island they are floating over
+	return nil
+end
+
+-- ===== one flaming meteorite that falls from the sky to targetPos and explodes ON THE GROUND =====
 local function spawnMeteor(targetPos)
+	targetPos = groundUnder(targetPos) or targetPos
 	local s = 5 + math.random() * 4
 	local rock = Instance.new("Part")
 	rock.Shape = Enum.PartType.Ball; rock.Size = Vector3.new(s, s, s)
@@ -73,6 +101,28 @@ local function spawnMeteor(targetPos)
 	local start = targetPos + Vector3.new(math.random(-45,45), 200 + math.random(0,140), math.random(-45,45))
 	rock.CFrame = CFrame.new(start) * CFrame.Angles(math.random()*6, math.random()*6, math.random()*6)
 	rock.Parent = Workspace
+	-- A CRAGGY ROCK, NOT A BOWLING BALL. The core sphere is wrapped in a ring of smaller lumps: rotated
+	-- blocks and wedges half-buried in it, so the silhouette is jagged and reads as a chunk of rock. The lumps
+	-- are unanchored and WELDED to the anchored core, so tweening the core's CFrame carries all of them.
+	for i = 1, 7 do
+		local lump = Instance.new(i % 3 == 0 and "WedgePart" or "Part")
+		lump.Name = "Lump"
+		lump.Size = Vector3.new(s * (0.35 + math.random() * 0.4), s * (0.3 + math.random() * 0.35), s * (0.35 + math.random() * 0.4))
+		lump.Color = (i % 2 == 0) and Color3.fromRGB(64, 46, 36) or Color3.fromRGB(44, 32, 26)
+		lump.Material = (i % 2 == 0) and Enum.Material.Rock or Enum.Material.Slate
+		lump.Anchored = false; lump.CanCollide = false; lump.CanQuery = false; lump.CanTouch = false
+		lump.Massless = true; lump.CastShadow = false
+		local dir = Vector3.new(math.random() - 0.5, math.random() - 0.5, math.random() - 0.5).Unit
+		lump.CFrame = rock.CFrame * CFrame.new(dir * s * 0.38) * CFrame.Angles(math.random() * 6, math.random() * 6, math.random() * 6)
+		lump.Parent = rock
+		local w = Instance.new("WeldConstraint"); w.Part0 = rock; w.Part1 = lump; w.Parent = lump
+	end
+	-- glowing cracks: a hot inner core showing through the gaps between the lumps
+	local ember = Instance.new("Part"); ember.Shape = Enum.PartType.Ball; ember.Size = Vector3.new(s * 0.92, s * 0.92, s * 0.92)
+	ember.Color = Color3.fromRGB(255, 120, 30); ember.Material = Enum.Material.Neon; ember.Transparency = 0.35
+	ember.Anchored = false; ember.CanCollide = false; ember.CanQuery = false; ember.CanTouch = false; ember.Massless = true; ember.CastShadow = false
+	ember.CFrame = rock.CFrame; ember.Parent = rock
+	do local w = Instance.new("WeldConstraint"); w.Part0 = rock; w.Part1 = ember; w.Parent = ember end
 	local fire = Instance.new("Fire"); fire.Size = 16; fire.Heat = 20; fire.Color = Color3.fromRGB(255,150,50); fire.SecondaryColor = Color3.fromRGB(180,40,20); fire.Parent = rock
 	local light = Instance.new("PointLight"); light.Color = Color3.fromRGB(255,140,40); light.Brightness = 5; light.Range = 30; light.Parent = rock
 	local trail = Instance.new("ParticleEmitter"); trail.Texture = "rbxasset://textures/particles/fire_main.dds"; trail.Rate = 90
@@ -81,7 +131,7 @@ local function spawnMeteor(targetPos)
 	local smoke = Instance.new("ParticleEmitter"); smoke.Texture = "rbxasset://textures/particles/smoke_main.dds"; smoke.Rate = 24
 	smoke.Lifetime = NumberRange.new(0.8,1.4); smoke.Speed = NumberRange.new(1); smoke.Size = NumberSequence.new(8,14); smoke.Transparency = NumberSequence.new(0.4,1); smoke.Color = ColorSequence.new(Color3.fromRGB(60,50,45)); smoke.Parent = rock
 	local fall = 0.55 + math.random() * 0.4
-	TS:Create(rock, TweenInfo.new(fall, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { CFrame = CFrame.new(targetPos) }):Play()
+	TS:Create(rock, TweenInfo.new(fall, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { CFrame = CFrame.new(targetPos) * CFrame.Angles(math.random() * 4, math.random() * 4, math.random() * 4) }):Play() -- tumbles as it falls
 	task.delay(fall, function()
 		local exx = Instance.new("Explosion")
 		exx.Position = targetPos; exx.BlastRadius = 22 + math.random() * 10; exx.BlastPressure = 420000
@@ -117,14 +167,33 @@ local function rainMeteorites(buyer)
 		local t0 = os.clock()
 		local killed = false
 		while os.clock() - t0 < DURATION do
+			-- ROCKS FALL ON EVERYONE'S ISLAND, THE BUYER'S INCLUDED. The loop used to skip the buyer, so
+			-- in a solo server (every Studio test) it spawned NOTHING: the buyer got the shake and the red
+			-- vignette and never saw a single rock land. The buyer is immune to the KILL, not the show.
+			local islandsHit = {}
 			for _, plr in ipairs(Players:GetPlayers()) do
-				if plr ~= buyer then
-					local ch = plr.Character
-					local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
-					if hrp then
-						for _ = 1, PER_PLAYER do
-							spawnMeteor(hrp.Position + Vector3.new(math.random(-32,32), 0, math.random(-32,32)))
-						end
+				local ch = plr.Character
+				local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
+				if hrp then
+					for _ = 1, PER_PLAYER do
+						-- pick a spot around them; if it hangs over nothing, aim straight down under them
+						local spot = hrp.Position + Vector3.new(math.random(-32,32), 0, math.random(-32,32))
+						local ground, isl = groundUnder(spot)
+						if not ground then ground, isl = groundUnder(hrp.Position) end
+						spawnMeteor(ground or spot)
+						if isl then islandsHit[isl] = true end
+					end
+				end
+			end
+			-- and a few more scattered over the whole island, so the bombardment reads as the island
+			-- being hit rather than just the patch of ground the player is standing on
+			for isl in pairs(islandsHit) do
+				local ok, cf, size = pcall(function() return isl:GetBoundingBox() end)
+				if ok and cf then
+					for _ = 1, PER_ISLAND do
+						local spot = cf.Position + Vector3.new((math.random() - 0.5) * size.X * 0.8, size.Y / 2, (math.random() - 0.5) * size.Z * 0.8)
+						local ground = groundUnder(spot)
+						if ground then spawnMeteor(ground) end
 					end
 				end
 			end

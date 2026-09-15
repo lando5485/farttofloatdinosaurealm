@@ -157,7 +157,11 @@ end
 local receiptStore = nil
 pcall(function() receiptStore = DSS:GetDataStore("PurchaseReceipts_v1") end)
 
+-- Returns TRUE only when something actually granted the product. An unrecognised product used to fall
+-- through here, get marked PurchaseGranted and written to the dedup store -- the Robux were taken, nothing
+-- was given, and the receipt could never be retried. Now it is left NotProcessedYet so Roblox retries it.
 local function handleProduct(plr, productId)
+	local handled = true
 	if productId == PRODUCT.TwoXOneHour then
 		local expiry = os.time() + 3600
 		plr:SetAttribute("TwoXHourExpiry", expiry)
@@ -168,8 +172,13 @@ local function handleProduct(plr, productId)
 		triggerSkipIsland(plr)
 	elseif productId == PRODUCT.MeteoriteExplosion then
 		if _G.triggerMeteorStorm then _G.triggerMeteorStorm(plr) end
+	elseif _G.skinCrateHandleReceipt and _G.skinCrateHandleReceipt(plr, productId) then
+		-- a crate-token pack: SkinCrateService credited the universe wallet and saved
+	else
+		handled = false
 	end
-	if _G.announceProductPurchase then _G.announceProductPurchase(plr, productId) end -- buy banner
+	if handled and _G.announceProductPurchase then pcall(_G.announceProductPurchase, plr, productId) end -- buy banner
+	return handled
 end
 
 MPS.ProcessReceipt = function(info)
@@ -180,8 +189,9 @@ MPS.ProcessReceipt = function(info)
 		local ok, already = pcall(function() return receiptStore:GetAsync(key) end)
 		if ok and already then return Enum.ProductPurchaseDecision.PurchaseGranted end -- already granted
 	end
-	local granted = pcall(function() handleProduct(plr, info.ProductId) end)
-	if granted then
+	local okCall, granted = pcall(function() return handleProduct(plr, info.ProductId) end)
+	if not okCall then warn("[PurchaseReceipts] handler errored for product " .. tostring(info.ProductId) .. ": " .. tostring(granted)) end
+	if okCall and granted then
 		if receiptStore then pcall(function() receiptStore:SetAsync(key, true) end) end
 		return Enum.ProductPurchaseDecision.PurchaseGranted
 	end
