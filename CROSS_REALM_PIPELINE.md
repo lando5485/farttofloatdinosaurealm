@@ -5,10 +5,27 @@ and the Dino realm (realm 3), and how the shared "one universe" stores work. The
 implemented as described here. The last section lists exactly what the Food and Space realms must change to
 match.
 
-All three places are in ONE Roblox experience (universe 10236070926). That matters because DataStores and
-MessagingService are scoped to the experience, not the place: any two places that use the same store name
-read the same data, and any place that subscribes to the same topic hears the same messages. Every "shared"
-system below relies on that.
+> ### ⚠ UNVERIFIED, AND EVERYTHING IN SECTION 3 DEPENDS ON IT
+>
+> This document says all three places sit in ONE experience (universe 10236070926).
+> `src/server/DailyCrateService.server.luau:27` says the opposite -- that Food is a
+> **different** experience -- and cites the **same** number. One of them is wrong and
+> nobody has checked which.
+>
+> It matters more than anything else on this page. DataStores and MessagingService are
+> scoped to the EXPERIENCE (`game.GameId`), never to the place. If Food is separate, every
+> system in section 3 -- the wallet, gifts, rebirths, streaks, the ladder, the ticket cap,
+> the daily crate, and the `dinoComplete` flag gating Food's Candy portal -- is silently
+> per-experience. No error is raised. It simply does nothing.
+>
+> **Settle it before trusting section 3:** run `tools/RealmPipelineProbe.server.luau` in
+> each realm and compare the `GameId` lines. It also writes and reads a stamp on the real
+> token store, so cross-realm sharing is proven rather than assumed.
+
+DataStores and MessagingService are scoped to the experience, not the place: any two places in the SAME
+experience that use the same store name read the same data, and any place subscribing to the same topic
+hears the same messages. Every "shared" system below relies on that -- for the places that share an
+experience. For any place that does not, the teleport payload is the only channel.
 
 Place IDs:
 
@@ -128,6 +145,7 @@ The home save still holds everything shed.
 | Login streak | `DailyStreak_v1` | `tostring(userId)` | `{ streak, lastDay }` | `DailyStreak.server.luau` |
 | Session ladder | `SessionRewardsDay_v1` | `tostring(userId)` | `{ day, played, pass, mask }` | `SessionRewards.server.luau` |
 | Daily ticket cap | `RewardsHubDaily_v1` | `tostring(userId)` | `{ day, paid }` (300 tickets / UTC day) | `RewardsHubCap.luau` |
+| Realm completion | `DinoRealm_PlayerState_v1` | `"Player_" .. userId` | `{ dinoComplete, dinoCompleteAt }` | `RealmCompletion.server.luau` |
 | Dino skins (realm-local) | `DinoSkinState_v1` | `"skin_" .. userId` | `{ tokens (mirror only), skins, equipped }` | `SkinCrateBridge.server.luau` |
 
 "Day" everywhere is the UTC day number `floor(os.time() / 86400)`.

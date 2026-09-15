@@ -12,6 +12,9 @@
       "$className": "ServerScriptService",
       "DinosaurRealmServer": {
         "$path": "src/server"
+      },
+      "RealmPipelineProbe": {
+        "$path": "tools/RealmPipelineProbe.server.luau"
       }
     },
     "StarterPlayer": {

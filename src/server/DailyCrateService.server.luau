@@ -24,10 +24,18 @@
 	    SAME universe/experience"). DataStores are scoped to the universe, so the claim below is genuinely
 	    shared: claim in Dino and Space sees it instantly, and the reverse. This is airtight.
 
-	  * FOOD REALM — a DIFFERENT experience (10236070926; see the cross-place/ handoff files). NOTHING server-side
+	  * FOOD REALM — ⚠ UNVERIFIED WHETHER THIS IS A DIFFERENT EXPERIENCE. This file says it is;
+	    CROSS_REALM_PIPELINE.md says all three places share universe 10236070926. Both cite the same
+	    number, so one is wrong. Run tools/RealmPipelineProbe.server.luau in each realm and compare the
+	    GameId lines to settle it. The payload stamp below is correct EITHER WAY (it is redundant when
+	    the store is shared, and the only channel when it is not), so this code needs no change — but
+	    the rest of the shared-store design in section 3 of that document does, if Food is separate.
+	    Assuming Food IS separate: NOTHING server-side
 	    is shared across experiences: not DataStores, not MemoryStores. So the claim is carried in the TELEPORT
-	    PAYLOAD instead — WormholeService stamps today's claim on the way out, and the receiving realm honours it
-	    (see cross-place/DailyCrate_ForOtherRealm.server.luau). That covers travel through the wormhole, which is
+	    PAYLOAD instead — WormholeService stamps today's claim on the way out (payload field `dailyCrateDay`;
+	    it genuinely does now — that line was documented here long before the sender existed), and the
+	    receiving realm honours it
+	    (onJoin below reads TeleportData.dailyCrateDay). That covers travel through the wormhole, which is
 	    how players actually move between realms.
 
 	    IT DOES NOT COVER a player who claims here, leaves, and opens the Food Realm from the Roblox website in a

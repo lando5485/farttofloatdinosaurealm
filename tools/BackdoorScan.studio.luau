@@ -25,7 +25,7 @@
 
  WHAT THE MANIFEST IS, AND WHY IT IS THE STRONGEST RULE HERE
  This place is built by Rojo from farttofloatdinosaurrealm's src/. The MANIFEST below is the exact
- list of script instances that produces -- 138 of them. So any script in the
+ list of script instances that produces -- 161 of them. So any script in the
  place that is NOT in that list did not come from the repo. It came attached to a
  free model, a toolbox asset, or a plugin.
 
@@ -57,7 +57,7 @@ local IGNORED_ROOTS = {
 }
 
 -- ============================ GENERATED MANIFEST ============================
--- 138 script instances, from farttofloatdinosaurrealm/default.project.json + src/ on disk.
+-- 161 script instances, from farttofloatdinosaurrealm/default.project.json + src/ on disk.
 local MANIFEST = {
 	["ReplicatedStorage.DinosaurRealm.ChevronTrail"] = true,
 	["ReplicatedStorage.DinosaurRealm.Config"] = true,
@@ -70,6 +70,7 @@ local MANIFEST = {
 	["ReplicatedStorage.DinosaurRealm.DoneCommand"] = true,
 	["ReplicatedStorage.DinosaurRealm.FlightTuning"] = true,
 	["ReplicatedStorage.DinosaurRealm.FoodMenu"] = true,
+	["ReplicatedStorage.DinosaurRealm.Gamepasses"] = true,
 	["ReplicatedStorage.DinosaurRealm.GutSkins"] = true,
 	["ReplicatedStorage.DinosaurRealm.HatchBurst"] = true,
 	["ReplicatedStorage.DinosaurRealm.IslandOrder"] = true,
@@ -90,12 +91,17 @@ local MANIFEST = {
 	["ServerScriptService.DinosaurRealmServer"] = true,
 	["ServerScriptService.DinosaurRealmServer.AnchorIslands"] = true,
 	["ServerScriptService.DinosaurRealmServer.ArrivalReceiver"] = true,
+	["ServerScriptService.DinosaurRealmServer.BigEventScheduler"] = true,
 	["ServerScriptService.DinosaurRealmServer.Blizzard"] = true,
 	["ServerScriptService.DinosaurRealmServer.Brachiosaurus"] = true,
+	["ServerScriptService.DinosaurRealmServer.DailyCrateService"] = true,
 	["ServerScriptService.DinosaurRealmServer.DailyRewards_Server"] = true,
+	["ServerScriptService.DinosaurRealmServer.DailyStreak"] = true,
+	["ServerScriptService.DinosaurRealmServer.FirstSpawnAnchor"] = true,
 	["ServerScriptService.DinosaurRealmServer.FoodPetTemplates"] = true,
 	["ServerScriptService.DinosaurRealmServer.FoodStands"] = true,
 	["ServerScriptService.DinosaurRealmServer.GasBubble"] = true,
+	["ServerScriptService.DinosaurRealmServer.Gifting"] = true,
 	["ServerScriptService.DinosaurRealmServer.GoIsland"] = true,
 	["ServerScriptService.DinosaurRealmServer.HideMarkers"] = true,
 	["ServerScriptService.DinosaurRealmServer.IceMeteor"] = true,
@@ -114,20 +120,26 @@ local MANIFEST = {
 	["ServerScriptService.DinosaurRealmServer.PetXPHooks"] = true,
 	["ServerScriptService.DinosaurRealmServer.PurchaseBanner"] = true,
 	["ServerScriptService.DinosaurRealmServer.PurchaseReceipts"] = true,
+	["ServerScriptService.DinosaurRealmServer.RealmCompletion"] = true,
 	["ServerScriptService.DinosaurRealmServer.Rebirth"] = true,
 	["ServerScriptService.DinosaurRealmServer.RedwoodRaptor"] = true,
 	["ServerScriptService.DinosaurRealmServer.RemoveInvisibleWalls"] = true,
 	["ServerScriptService.DinosaurRealmServer.ReturnIsland"] = true,
+	["ServerScriptService.DinosaurRealmServer.RewardsHubCap"] = true,
 	["ServerScriptService.DinosaurRealmServer.SeasonPass"] = true,
 	["ServerScriptService.DinosaurRealmServer.SecurityWatchdog"] = true,
 	["ServerScriptService.DinosaurRealmServer.ServerEvents"] = true,
+	["ServerScriptService.DinosaurRealmServer.SessionRewards"] = true,
 	["ServerScriptService.DinosaurRealmServer.Shark"] = true,
 	["ServerScriptService.DinosaurRealmServer.Shop"] = true,
 	["ServerScriptService.DinosaurRealmServer.SkinCrateBridge"] = true,
 	["ServerScriptService.DinosaurRealmServer.SkinCrateService"] = true,
 	["ServerScriptService.DinosaurRealmServer.SocialRewards"] = true,
+	["ServerScriptService.DinosaurRealmServer.SpacePetTemplates"] = true,
+	["ServerScriptService.DinosaurRealmServer.SpawnProbe"] = true,
 	["ServerScriptService.DinosaurRealmServer.Spinosaurus"] = true,
 	["ServerScriptService.DinosaurRealmServer.Stegosaurus"] = true,
+	["ServerScriptService.DinosaurRealmServer.TRexRoam"] = true,
 	["ServerScriptService.DinosaurRealmServer.Therizinosaurus"] = true,
 	["ServerScriptService.DinosaurRealmServer.Triceratops"] = true,
 	["ServerScriptService.DinosaurRealmServer.Tyrannosaurus"] = true,
@@ -136,6 +148,7 @@ local MANIFEST = {
 	["ServerScriptService.DinosaurRealmServer.WeatherManager"] = true,
 	["ServerScriptService.DinosaurRealmServer.Windstorm"] = true,
 	["ServerScriptService.DinosaurRealmServer.WormholeService"] = true,
+	["ServerScriptService.RealmPipelineProbe"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.AmbientWildlife"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.ArrivalCinematic"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.BalanceDebug"] = true,
@@ -143,12 +156,17 @@ local MANIFEST = {
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.BottomHUD"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.Bubbles"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.CurrencyCapsule"] = true,
+	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.DailyStreak"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.DinoIslandArrow"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.FartTrail"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.FernThief"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.FishingQuest"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.GeyserQuest"] = true,
+	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.GiftingClient"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.GoIsland"] = true,
+	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.GroupBannerClient"] = true,
+	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.GutGrowCinematic"] = true,
+	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.Haptics"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.IceAgeCommand"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.IceAgeUI"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.Intro"] = true,
@@ -158,6 +176,7 @@ local MANIFEST = {
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.LandingImpact"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.LandingStabilizer"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.LivingFossil"] = true,
+	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.MenuBackButton"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.MeteoriteExplosion"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.MonsoonCommand"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.MonsoonRain"] = true,
@@ -166,6 +185,8 @@ local MANIFEST = {
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.NPCGuide"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.NPCWaypointArrow"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.NestingNookEggs"] = true,
+	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.NotifyBridge"] = true,
+	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.NotifyCenter"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.NpcLife"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.PetCommand"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.PetDiff"] = true,
@@ -189,11 +210,13 @@ local MANIFEST = {
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.ShopKit"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.SkinCrateBridge"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.SkinCrateClient"] = true,
-	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.SocialRewards"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.SpawnCamera"] = true,
+	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.TRexRoam"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.TestPetPreview"] = true,
+	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.TitleTags"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.TopCenterStack"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.TriceratopsQuest"] = true,
+	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.UiHaptics"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.VolcanoFireballs"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.Windstorm"] = true,
 	["StarterPlayer.StarterPlayerScripts.DinosaurRealmClient.WormholeClient"] = true,
@@ -338,7 +361,7 @@ table.sort(findings, function(a, b)
 	return a.path < b.path
 end)
 
-print(("\n========== BACKDOOR SCAN -- farttofloatdinosaurrealm ==========\n%d scripts scanned against a 138-entry manifest, %d findings")
+print(("\n========== BACKDOOR SCAN -- farttofloatdinosaurrealm ==========\n%d scripts scanned against a 161-entry manifest, %d findings")
 	:format(scanned, #findings))
 
 if #findings == 0 then

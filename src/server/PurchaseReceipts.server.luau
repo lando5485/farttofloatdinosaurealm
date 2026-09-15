@@ -23,7 +23,18 @@ local DSS        = game:GetService("DataStoreService")
 local RunService = game:GetService("RunService")
 
 local PRODUCT  = { TwoXOneHour = 3600302990, MidAirRecharge = 3600303163, SkipIsland = 3600303265, MeteoriteExplosion = 3606893853 }
-local GAMEPASS = { TwoXForever = 1862015450, GlitterTrail = 1859714979, PrimalGut = 1860686821 }
+-- THE IDS COME FROM THE SHARED MODULE NOW. This was a local 3-entry table; the Space Realm sells
+-- SIX passes across the one experience and this realm had never heard of LuckyPass, VIP or
+-- CoinMagnet -- so a player who bought VIP in Space crossed the rift and it simply evaporated.
+-- Gamepasses.luau also carries the LEGACY ids (Space sold an earlier VIP and Lucky Crates that
+-- people really bought), which a hardcoded current-id-only table can never honour.
+local Gamepasses = require(game:GetService("ReplicatedStorage"):WaitForChild("DinosaurRealm"):WaitForChild("Gamepasses"))
+-- kept for the existing `passId == GAMEPASS.X` comparisons below
+local GAMEPASS = {
+	TwoXForever  = Gamepasses.IDS.TwoXForever,
+	GlitterTrail = Gamepasses.IDS.GlitterTrail,
+	PrimalGut    = Gamepasses.IDS.InfiniteGut,   -- same pass, this realm's name for it
+}
 local MAX_ISLAND = 13   -- the tower is 13 slots; a 14th was tried and removed
 
 -- ===== perk effects =====
@@ -84,6 +95,9 @@ local function grantGamepass(plr, passId)
 		-- While testing, turn it on deliberately with the /infinitegut chat command.
 		if not RunService:IsStudio() then
 			plr:SetAttribute("HasPrimalGut", true)
+			-- Space calls the SAME pass "InfiniteGut" and reads HasInfiniteGut. Publishing both means a
+			-- script moved between the realms works untouched, and neither name is the "wrong" one.
+			plr:SetAttribute("HasInfiniteGut", true)
 			local ls = plr:FindFirstChild("leaderstats"); local sm = ls and ls:FindFirstChild("StomachMax")
 			if sm and sm.Value < 9999 then sm.Value = 9999 end -- Primal Gut = max tank
 		end
@@ -146,10 +160,35 @@ end
 local hookInfiniteGutChat = hookDevChat
 Players.PlayerAdded:Connect(hookInfiniteGutChat)
 for _, p in ipairs(Players:GetPlayers()) do hookInfiniteGutChat(p) end
+-- EVERY pass, and every id that grants it. The old loop walked three ids; this walks all six keys
+-- and, for each, the current id PLUS any superseded one -- so a player still holding Space's
+-- original 89 R$ "Lucky Crates" is recognised rather than told they own nothing.
+--
+-- The three passes this realm has no machinery for yet (LuckyPass, VIP, CoinMagnet) still get their
+-- ATTRIBUTE set. That is the whole point: the attribute replicates to every client for free, so the
+-- moment a system here wants to honour one it just reads plr:GetAttribute("HasVIP") -- and until
+-- then a paying customer is at least VISIBLY recognised instead of silently ignored.
 local function applyOwnedGamepasses(plr)
-	for _, id in pairs(GAMEPASS) do
-		local ok, owns = pcall(function() return MPS:UserOwnsGamePassAsync(plr.UserId, id) end)
-		if ok and owns then grantGamepass(plr, id) end
+	for _, key in ipairs(Gamepasses.allKeys()) do
+		local attr = Gamepasses.ATTR[key]
+		local owned = false
+		for _, id in ipairs(Gamepasses.allIdsFor(key)) do
+			local ok, owns = pcall(function() return MPS:UserOwnsGamePassAsync(plr.UserId, id) end)
+			if ok and owns then owned = true; break end
+		end
+		if owned then
+			-- the three legacy perks keep their existing grant path (Studio gating, side effects)
+			local currentId = Gamepasses.IDS[key]
+			if currentId == GAMEPASS.TwoXForever or currentId == GAMEPASS.GlitterTrail
+				or currentId == GAMEPASS.PrimalGut then
+				grantGamepass(plr, currentId)
+			end
+			-- ...and every pass, old or new, sets its attribute
+			if attr and plr:GetAttribute(attr) ~= true then
+				plr:SetAttribute(attr, true)
+				print(("[PurchaseReceipts] %s owns %s -> %s"):format(plr.Name, Gamepasses.NAMES[key] or key, attr))
+			end
+		end
 	end
 end
 
@@ -200,7 +239,17 @@ end
 
 -- ===== gamepasses: grant on purchase + on join =====
 MPS.PromptGamePassPurchaseFinished:Connect(function(plr, passId, wasPurchased)
-	if wasPurchased then grantGamepass(plr, passId) end -- banner is handled by PurchaseBanner.server
+	if not wasPurchased then return end
+	grantGamepass(plr, passId) -- the three perks with machinery here; banner via PurchaseBanner.server
+	-- ...and set the attribute for ANY of the six, including one bought under a superseded id.
+	-- Without this, buying VIP or Coin Magnet from inside this realm registered nowhere until the
+	-- player rejoined and the join sweep happened to notice.
+	local key = Gamepasses.keyForId(passId)
+	local attr = key and Gamepasses.ATTR[key]
+	if attr and plr:GetAttribute(attr) ~= true then
+		plr:SetAttribute(attr, true)
+		print(("[PurchaseReceipts] %s bought %s -> %s"):format(plr.Name, Gamepasses.NAMES[key] or key, attr))
+	end
 end)
 Players.PlayerAdded:Connect(function(p) task.spawn(function() task.wait(1); applyOwnedGamepasses(p) end) end)
 for _, p in ipairs(Players:GetPlayers()) do task.spawn(applyOwnedGamepasses, p) end

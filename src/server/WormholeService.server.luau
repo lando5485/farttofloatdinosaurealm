@@ -349,6 +349,18 @@ local function buildTravelPayload(player, placeId)
 		-- attribute (set by ArrivalReceiver.carryUniversals) is the source.
 		title = titleOf(player),
 
+		-- TODAY'S DAILY-CRATE CLAIM (UTC day number, 0 = not claimed today).
+		-- DailyCrateService already READS this on arrival (its onJoin honours
+		-- TeleportData.dailyCrateDay and writes it into the local store), and its header says
+		-- "WormholeService stamps today's claim on the way out" -- but nothing here ever stamped it,
+		-- so the receiving half had nothing to read. A player could claim here, hop, and claim again.
+		--
+		-- It matters most for any realm in a DIFFERENT experience: DataStores are experience-scoped,
+		-- so RealmDailyCrate_v1 cannot be consulted across that boundary and the payload is the only
+		-- channel. Within one experience the store already covers it and this is simply redundant --
+		-- which is the right kind of redundant, because it costs one integer and is correct either way.
+		dailyCrateDay = (_G.dailyCrateClaimedDay and _G.dailyCrateClaimedDay(player)) or 0,
+
 		-- PASS-THROUGH. Systems this realm does not have (gut skins, per-pet milestones, gamepass flags)
 		-- still belong to the player: whatever they arrived with is forwarded UNCHANGED so a Food player's
 		-- gut skin and 2x pass do not go dark for having visited the dinosaurs. Nil when they arrived with
