@@ -62,7 +62,7 @@ local ALLOWLIST = {
 }
 
 -- ============================ GENERATED MANIFEST ============================
--- 161 script instances, from farttofloatdinosaurrealm/default.project.json + src/ on disk.
+-- 162 script instances, from farttofloatdinosaurrealm/default.project.json + src/ on disk.
 local MANIFEST = {
 	["ReplicatedStorage.DinosaurRealm.ChevronTrail"] = true,
 	["ReplicatedStorage.DinosaurRealm.Config"] = true,
@@ -148,6 +148,7 @@ local MANIFEST = {
 	["ServerScriptService.DinosaurRealmServer.Therizinosaurus"] = true,
 	["ServerScriptService.DinosaurRealmServer.Triceratops"] = true,
 	["ServerScriptService.DinosaurRealmServer.Tyrannosaurus"] = true,
+	["ServerScriptService.DinosaurRealmServer.UniverseBoosts"] = true,
 	["ServerScriptService.DinosaurRealmServer.Velociraptor"] = true,
 	["ServerScriptService.DinosaurRealmServer.VolcanoFireballs"] = true,
 	["ServerScriptService.DinosaurRealmServer.WeatherManager"] = true,
@@ -291,7 +292,7 @@ do
 			auditScript(inst, "at boot")
 		end
 	end
-	print(("[SECURITY] farttofloatdinosaurrealm boot audit: %d scripts against a 161-entry manifest, %d alert(s)")
+	print(("[SECURITY] farttofloatdinosaurrealm boot audit: %d scripts against a 162-entry manifest, %d alert(s)")
 		:format(n, alerts))
 	if alerts > 0 then
 		warn("[SECURITY] Clean these in Studio with tools/BackdoorScan.studio.luau, then REPUBLISH.")

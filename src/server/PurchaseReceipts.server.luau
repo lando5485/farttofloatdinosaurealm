@@ -202,9 +202,15 @@ pcall(function() receiptStore = DSS:GetDataStore("PurchaseReceipts_v1") end)
 local function handleProduct(plr, productId)
 	local handled = true
 	if productId == PRODUCT.TwoXOneHour then
-		local expiry = os.time() + 3600
-		plr:SetAttribute("TwoXHourExpiry", expiry)
-		local ge = RS:FindFirstChild("GamepassEvent"); if ge then pcall(function() ge:FireClient(plr, { twoXHourExpiry = expiry }) end) end
+		-- Through UniverseBoosts: stacks on any time already running, persists to the universe store, and
+		-- rides the teleport payload, so the hour keeps its remaining minutes across rejoins and realms.
+		if _G.boostsExtend then
+			_G.boostsExtend(plr, "twoXHourExpiry", 3600)
+		else -- boost service not up (should not happen): fall back to the old attribute-only grant
+			local expiry = os.time() + 3600
+			plr:SetAttribute("TwoXHourExpiry", expiry)
+			local ge = RS:FindFirstChild("GamepassEvent"); if ge then pcall(function() ge:FireClient(plr, { twoXHourExpiry = expiry }) end) end
+		end
 	elseif productId == PRODUCT.MidAirRecharge then
 		triggerMidAirRecharge(plr)
 	elseif productId == PRODUCT.SkipIsland then

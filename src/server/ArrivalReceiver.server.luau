@@ -252,6 +252,24 @@ end
 --
 -- THE TITLE rides along for the same reason: it is a pure brag cosmetic, it is earned once, and a
 -- player who worked for "Beastmaster" should wear it in every realm. TitleTags reads the attribute.
+-- PERMANENT GAMEPASS FLAGS carried in from another realm: set the Has* attributes the client watches so the
+-- perks light up immediately, rather than waiting for PurchaseReceipts' own UserOwnsGamePassAsync re-check
+-- (which stays authoritative and runs regardless). Food/Space say "InfiniteGut" for what this realm calls
+-- PrimalGut. Studio keeps its gates: PurchaseReceipts suppresses 2x/Primal there, so a payload may not
+-- smuggle them past that. TIMED boosts are not handled here: UniverseBoosts reads the stashed payload.
+local function restorePassFlags(player, data)
+	local gp = data.gamepasses
+	if type(gp) ~= "table" then return end
+	local studio = game:GetService("RunService"):IsStudio()
+	if gp.GlitterTrail == true then player:SetAttribute("HasGlitterTrail", true) end
+	if not studio then
+		if gp.TwoXForever == true then player:SetAttribute("HasTwoXForever", true) end
+		if gp.InfiniteGut == true or gp.PrimalGut == true then player:SetAttribute("HasPrimalGut", true) end
+	end
+	local ge = game:GetService("ReplicatedStorage"):FindFirstChild("GamepassEvent")
+	if ge then pcall(function() ge:FireClient(player, {}) end) end -- repaint the shop's owned badges
+end
+
 local function carryUniversals(player, data)
 	task.spawn(function()
 		-- SkinCrateBridge loads the local balance asynchronously on join; merging before that lands
@@ -359,6 +377,7 @@ local function intake(player)
 	restorePets(player, data)
 	restoreCosmetics(player, data)   -- their skins + traits come with them, not just the pets
 	carryUniversals(player, data)
+	restorePassFlags(player, data)   -- permanent-pass flags carried in (UniverseBoosts handles the timed ones)
 
 	-- They came through the TIME RIFT -> their client is holding a black screen and fading up out of
 	-- it. Keep them still until that lands, so the reveal is a reveal and not a stumble.

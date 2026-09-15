@@ -84,7 +84,9 @@ fields (treat `nil` as "no change").
 | `title` | string | fills an EMPTY title only; never overwrites one earned locally. Also set as the `Title` attribute (TitleTags renders it). |
 | `petMilestones` | flag map | Dino has no milestone system: **stashed and forwarded unchanged** |
 | `ownedGutSkins`, `equippedGutSkin` | map / id | Dino has no gut skins: **stashed and forwarded unchanged** |
-| `gamepasses`, `gamepassIds` | maps | **stashed and forwarded unchanged** |
+| `gamepasses` | `{ TwoXForever, GlitterTrail, InfiniteGut, PrimalGut = true }` | Dino sends what arrived PLUS its own re-checked ownership (gut pass under both names). On arrival the `Has*` attributes are set so perks light up at once; PurchaseReceipts' own `UserOwnsGamePassAsync` re-check on join stays authoritative (pass ids are identical in every realm). Studio keeps its 2x / Primal gates. |
+| `gamepassIds` | map | forwarded unchanged |
+| `boosts` | `{ twoXHourExpiry = <absolute os.time()> }` | TIMED boosts. Absolute expiry, so 30 minutes used in one realm arrives as 30 minutes left. Receiver takes MAX(local, incoming). Also sent as `powerBoostExpiry`, the Space realm's own field name. |
 
 Pass-through fields only survive the session: if a player leaves Dino, rejoins directly (no payload) and
 hops out, the forwarded values are gone. Their home save still has them, so nothing is lost for good.
@@ -141,6 +143,7 @@ The home save still holds everything shed.
 | Gift mailbox | `GiftMailbox_v1` | `"u_" .. userId` | list of `{ from, fromId, amount, at }` | `Gifting.server.luau` |
 | Gift send cap | `GiftMailbox_v1` | `"sent_" .. userId` | `{ day, count }` (20 per UTC day) | `Gifting.server.luau` |
 | Daily crate | `RealmDailyCrate_v1` | `"daily_" .. userId` | `{ day, realm }` | `DailyCrateService.server.luau` |
+| Timed boosts | `UniverseBoosts_v1` | `tostring(userId)` | `{ twoXHourExpiry = <absolute os.time()>, v }` | `UniverseBoosts.server.luau` |
 | Rebirths | `Rebirth_v1` | `"Player_" .. userId` | `{ rebirths, mult, updatedAt }` | `Rebirth.server.luau` |
 | Login streak | `DailyStreak_v1` | `tostring(userId)` | `{ streak, lastDay }` | `DailyStreak.server.luau` |
 | Session ladder | `SessionRewardsDay_v1` | `tostring(userId)` | `{ day, played, pass, mask }` | `SessionRewards.server.luau` |
@@ -193,7 +196,23 @@ seconds; offline friends get it on next join.
   gut, grant `125 × n` coins, and land on island 1. If the save fails, nothing happens.
 - Rebirth is refused until the store has answered (`not_loaded`), so nothing can be done on an unsaved count.
 
-### 3.4 Login streak, session ladder, daily cap
+### 3.4 Purchases: gamepasses, products and timed boosts
+
+- **Permanent gamepasses** (2x Forever, Glitter Trail, Primal Gut) use the SAME asset ids in every realm, so
+  ownership is universe-wide by itself: `PurchaseReceipts` re-checks `UserOwnsGamePassAsync` on every join.
+  The payload's `gamepasses` flags only make the perks light up a second earlier on arrival.
+- **Timed boosts** (the 2x Power 1 Hour product) live in `UniverseBoosts_v1` as ABSOLUTE expiries. A purchase
+  STACKS on any running time (20 minutes left + 1 hour = 80 minutes), persists at once, sets the
+  `TwoXHourExpiry` attribute and fires `GamepassEvent` for the countdown. On join the store is loaded, then
+  max-merged with anything the arrival payload carried (`boosts.twoXHourExpiry`, or the Space realm's
+  `powerBoostExpiry`). Nothing ever shortens a boost; expired fields are pruned; an expiry can never sit more
+  than 24h ahead (clock-skew / corrupt-payload guard). A failed read means no writes that session.
+- **Instant consumables** (Mid-Air Recharge, Skip Island, Meteorite) have no remaining state: their effect
+  lands in progression or the world at once. Token packs credit the universe wallet.
+- Receipts are deduplicated in `PurchaseReceipts_v1` by purchase id; an unrecognised product is left
+  NotProcessedYet so Roblox retries it.
+
+### 3.5 Login streak, session ladder, daily cap
 
 Dino's copies are the reference implementations: atomic `UpdateAsync` claims, UTC rollover, and every payout
 routed through `RewardsHubCap` (300 tickets per UTC day across everything the hub pays).
@@ -213,6 +232,7 @@ Nothing below has been done yet; it is the to-do list for those places.
 | Return receiver: `mergeEquippedSkins` expects a string but every realm sends `{skin, trait}` | fix | n/a | Worn looks are silently dropped on the way home today. |
 | Rebirth: also set the `Rebirths` / `RebirthMult` attributes on load | already | add attributes | Dino reads attributes. |
 | Rebirth reset rule | decide one | decide one | Dino keeps coins + bonus; Food/Space wipe coins. Mixed rules are exploitable. |
+| Timed boosts → read/write `UniverseBoosts_v1` (absolute expiries, max-merge) and put `boosts` on the hop payload | required | Space persists `powerBoostExpiry` in its own per-place profile; move it to the shared store | Otherwise the 2x hour only survives INTO Dino, not out of it. |
 | Session ladder → copy Dino's `SessionRewards.server.luau` (change only the require path) | replace in-memory version | install | Food's is uncapped and resets on rejoin; Space has none. |
 | Login streak → copy Dino's `DailyStreak.server.luau`; agree one day-7 crate | replace `SetAsync` version | install | Food's non-atomic claim can double-pay and overwrite Dino's record. |
 | Require `RewardsHubCap.luau` on every ticket payout | install | install | 300/day only counts in Dino today. |
@@ -266,3 +286,5 @@ Store names and the `_G` hook names must match exactly; a different name is a di
 | `src/server/SessionRewards.server.luau` | Playtime ladder (reference implementation) |
 | `src/server/RewardsHubCap.luau` | 300 tickets / UTC day cap |
 | `src/server/RealmCompletion.server.luau` | Writes `dinoComplete` for Food's rebirth gate |
+| `src/server/PurchaseReceipts.server.luau` | Gamepass re-check on join, product receipts, dedup, hands token packs and the 2x hour on |
+| `src/server/UniverseBoosts.server.luau` | Timed boosts: universe store, stacking, payload carry, attributes + countdown event |

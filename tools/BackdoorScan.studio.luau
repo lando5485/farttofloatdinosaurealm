@@ -25,7 +25,7 @@
 
  WHAT THE MANIFEST IS, AND WHY IT IS THE STRONGEST RULE HERE
  This place is built by Rojo from farttofloatdinosaurrealm's src/. The MANIFEST below is the exact
- list of script instances that produces -- 161 of them. So any script in the
+ list of script instances that produces -- 162 of them. So any script in the
  place that is NOT in that list did not come from the repo. It came attached to a
  free model, a toolbox asset, or a plugin.
 
@@ -57,7 +57,7 @@ local IGNORED_ROOTS = {
 }
 
 -- ============================ GENERATED MANIFEST ============================
--- 161 script instances, from farttofloatdinosaurrealm/default.project.json + src/ on disk.
+-- 162 script instances, from farttofloatdinosaurrealm/default.project.json + src/ on disk.
 local MANIFEST = {
 	["ReplicatedStorage.DinosaurRealm.ChevronTrail"] = true,
 	["ReplicatedStorage.DinosaurRealm.Config"] = true,
@@ -143,6 +143,7 @@ local MANIFEST = {
 	["ServerScriptService.DinosaurRealmServer.Therizinosaurus"] = true,
 	["ServerScriptService.DinosaurRealmServer.Triceratops"] = true,
 	["ServerScriptService.DinosaurRealmServer.Tyrannosaurus"] = true,
+	["ServerScriptService.DinosaurRealmServer.UniverseBoosts"] = true,
 	["ServerScriptService.DinosaurRealmServer.Velociraptor"] = true,
 	["ServerScriptService.DinosaurRealmServer.VolcanoFireballs"] = true,
 	["ServerScriptService.DinosaurRealmServer.WeatherManager"] = true,
@@ -361,7 +362,7 @@ table.sort(findings, function(a, b)
 	return a.path < b.path
 end)
 
-print(("\n========== BACKDOOR SCAN -- farttofloatdinosaurrealm ==========\n%d scripts scanned against a 161-entry manifest, %d findings")
+print(("\n========== BACKDOOR SCAN -- farttofloatdinosaurrealm ==========\n%d scripts scanned against a 162-entry manifest, %d findings")
 	:format(scanned, #findings))
 
 if #findings == 0 then

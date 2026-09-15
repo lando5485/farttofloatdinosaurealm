@@ -286,6 +286,19 @@ local function passthrough(player, key)
 	local d = _G.incomingFtFData and _G.incomingFtFData[player]
 	return d and d[key] or nil
 end
+-- The gamepass flags: whatever arrived with the player, plus THIS realm's own re-checked ownership
+-- (PurchaseReceipts sets the Has* attributes from UserOwnsGamePassAsync). Food/Space call the gut pass
+-- "InfiniteGut"; this realm calls it PrimalGut, so both names go out. The ids are identical in every realm,
+-- so the far side's own ownership check stays authoritative; this only saves it a lookup.
+local function gamepassesFor(player)
+	local out = {}
+	local src = passthrough(player, "gamepasses")
+	if type(src) == "table" then for k, v in pairs(src) do out[k] = v end end
+	if player:GetAttribute("HasTwoXForever") == true then out.TwoXForever = true end
+	if player:GetAttribute("HasGlitterTrail") == true then out.GlitterTrail = true end
+	if player:GetAttribute("HasPrimalGut") == true then out.InfiniteGut = true; out.PrimalGut = true end
+	return next(out) and out or nil
+end
 local function titleOf(player)
 	local t = player:GetAttribute("Title")
 	if type(t) == "string" and t ~= "" then return t end
@@ -368,8 +381,14 @@ local function buildTravelPayload(player, placeId)
 		petMilestones   = passthrough(player, "petMilestones"),
 		ownedGutSkins   = passthrough(player, "ownedGutSkins"),
 		equippedGutSkin = passthrough(player, "equippedGutSkin"),
-		gamepasses      = passthrough(player, "gamepasses"),
+		gamepasses      = gamepassesFor(player),
 		gamepassIds     = passthrough(player, "gamepassIds"),
+
+		-- TIMED BOOSTS as ABSOLUTE expiries (UniverseBoosts): "30 minutes used here" lands as "30 minutes
+		-- left" there. nil when nothing is running. The Space realm's own name for the same thing is sent
+		-- too, so its receiver needs no edit to honour it.
+		boosts           = _G.boostsForPayload and _G.boostsForPayload(player) or nil,
+		powerBoostExpiry = (_G.boostsForPayload and _G.boostsForPayload(player) or {}).twoXHourExpiry,
 	}, player.Name)
 end
 
