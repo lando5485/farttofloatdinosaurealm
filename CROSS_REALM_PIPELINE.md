@@ -122,6 +122,8 @@ The home save still holds everything shed.
 |---|---|---|---|---|
 | Token wallet | `UniverseCrateTokens_v1` | `"u_" .. userId` | `{ tokens, updatedAt, lastRealm }` | `SkinCrateBridge.server.luau` |
 | Gift mailbox | `GiftMailbox_v1` | `"u_" .. userId` | list of `{ from, fromId, amount, at }` | `Gifting.server.luau` |
+| Gift send cap | `GiftMailbox_v1` | `"sent_" .. userId` | `{ day, count }` (20 per UTC day) | `Gifting.server.luau` |
+| Daily crate | `RealmDailyCrate_v1` | `"daily_" .. userId` | `{ day, realm }` | `DailyCrateService.server.luau` |
 | Rebirths | `Rebirth_v1` | `"Player_" .. userId` | `{ rebirths, mult, updatedAt }` | `Rebirth.server.luau` |
 | Login streak | `DailyStreak_v1` | `tostring(userId)` | `{ streak, lastDay }` | `DailyStreak.server.luau` |
 | Session ladder | `SessionRewardsDay_v1` | `tostring(userId)` | `{ day, played, pass, mask }` | `SessionRewards.server.luau` |
@@ -150,8 +152,8 @@ The home save still holds everything shed.
 
 ### 3.2 Gifting (live, cross-realm)
 
-Send path (`GiftTokensEvent`): validate amount (10..500, NaN/inf rejected), cooldown 8s, 20 per session,
-mailbox cap 25.
+Send path (`GiftTokensEvent`): validate amount (10..500, NaN/inf rejected), cooldown 8s, 20 per UTC day
+(reserved atomically in the store before the gift, returned if it fails), mailbox cap 25.
 
 - Recipient on THIS server → direct transfer.
 - Otherwise → **debit the sender first**, append to the recipient's mailbox with `UpdateAsync`, refund on
@@ -203,11 +205,12 @@ Store names and the `_G` hook names must match exactly; a different name is a di
 
 ## 5. Known gaps in the Dino realm
 
-- **Daily crate spin**: the Rewards hub draws the row (`DailyStreak.client.luau`), but no server creates
-  `DailyCrateRemotes`. It needs a free-spin hook (`_G.skinCrateFreeSpin`) in `SkinCrateService` and a port of
-  Space's `DailyCrateService.server.luau` (store `RealmDailyCrate_v1`, key `"daily_"..userId`). The client
-  falls back to the 8-hour pet crate until then.
-- **Gift send cap** (20 per session) is in-memory: it resets on rejoin and is per realm.
+- **Daily crate spin**: now served by `src/server/DailyCrateService.server.luau` (a copy of Space's, same
+  store `RealmDailyCrate_v1`, key `"daily_"..userId`, one free Starter spin per UTC day; a failed read fails
+  CLOSED). The spin is `_G.skinCrateFreeSpin`: the paid roll with the price skipped. The Rewards hub's SPIN
+  button claims it and plays the normal reveal. The separate 8-hour pet crate (`CrateState_v1`) still exists.
+- **Gift send cap** is 20 per UTC day, stored under `"sent_"..userId` in the mailbox store, so it survives
+  rejoins and spans realms; a refused or refunded gift gives the slot back.
 - **Migration window**: while Food or Space still keep a private wallet, a round trip can carry the same
   tokens both ways. Dino guards its side (it never re-merges its own tokens coming home, and skips shared
   senders); the other direction closes when those realms move to the universe wallet.

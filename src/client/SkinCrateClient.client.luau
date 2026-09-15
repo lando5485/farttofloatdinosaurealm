@@ -2492,6 +2492,42 @@ end)
 -- `wantTab` lets the Pet Hub nav open this panel straight onto CRATES or TOKENS. A wantTab call is a ROUTE,
 -- not a toggle: it always OPENS on that tab (the plain toggle closed the panel whenever a nav tab was tapped
 -- while it was already open). Calls WITHOUT wantTab keep the toggle behaviour other callers rely on.
+-- THE DAILY SPIN, for the Rewards hub's Daily Crate row. Claims on the server (DailyCrateRemotes.ClaimDaily,
+-- which does the same roll as a paid Starter open, free), then plays the ordinary reveal in the crate panel.
+-- The hub already closed itself before calling this, so the reveal has the screen.
+_G.skinCrateDailySpin = function()
+	if openRequestInFlight or spinning then return end
+	local remotes = ReplicatedStorage:FindFirstChild("DailyCrateRemotes")
+	local claim = remotes and remotes:FindFirstChild("ClaimDaily")
+	if not claim then
+		if _G.showHudBanner then _G.showHudBanner("The daily crate isn't ready yet -- try again in a moment!", Color3.fromRGB(255, 170, 60), 3) end
+		return
+	end
+	openRequestInFlight = true
+	task.spawn(function()
+		local ok, result = pcall(function() return claim:InvokeServer() end)
+		openRequestInFlight = false
+		if not ok or type(result) ~= "table" then
+			warn("[SkinCrateClient] daily claim failed: " .. tostring(result))
+			return
+		end
+		if not result.ok then
+			local msg = ({
+				already_claimed = "You already spun today's crate -- come back tomorrow!",
+				loading         = "The daily crate is still loading -- try again in a moment!",
+				save_failed     = "Couldn't record the spin -- try again in a moment.",
+				all_pets_maxed  = "All your pets are max level! Nothing to level up.",
+			})[result.reason] or "Couldn't open the daily crate."
+			if _G.showHudBanner then _G.showHudBanner(msg, Color3.fromRGB(255, 150, 90), 3) end
+			return
+		end
+		local crate = SkinCrates.getCrate(result.crateId)
+		if not crate then return end
+		setOpen(true, true, "crates") -- the reveal lives in the crate panel
+		openReveal(crate, result)
+	end)
+end
+
 _G.toggleSkinCrates = function(fromHub, wantTab)
 	if wantTab then
 		setOpen(true, fromHub, wantTab)

@@ -520,7 +520,10 @@ local function grantPetLevels(player, amount)
 	return grants, (amount - left)
 end
 
-local function openCrate(player, crateId, noSave)
+-- `free` = the daily crate: the exact same roll, grant, collection and announce path as a paid open, with
+-- the price check and the spend skipped. Nothing else differs, so the daily can never be a better (or
+-- worse) crate than the one you pay for.
+local function openCrate(player, crateId, noSave, free)
 	local crate = SkinCrates.getCrate(crateId)
 	if not crate then return { ok = false, reason = "unknown_crate" } end
 
@@ -529,7 +532,7 @@ local function openCrate(player, crateId, noSave)
 		return { ok = false, reason = "cooldown" }
 	end
 
-	if getTokens(player) < crate.price then
+	if not free and getTokens(player) < crate.price then
 		return { ok = false, reason = "not_enough_tokens", need = crate.price, have = getTokens(player) }
 	end
 
@@ -544,8 +547,8 @@ local function openCrate(player, crateId, noSave)
 	if not rarity or not entry then return { ok = false, reason = "empty_crate" } end
 	local traitId = PetTraits.roll(rng)
 
-	-- SPEND then GRANT, synchronously.
-	if not spendTokens(player, crate.price) then
+	-- SPEND then GRANT, synchronously (the free daily skips the spend).
+	if not free and not spendTokens(player, crate.price) then
 		return { ok = false, reason = "not_enough_tokens", need = crate.price, have = getTokens(player) }
 	end
 	lastOpen[player] = now
@@ -557,7 +560,7 @@ local function openCrate(player, crateId, noSave)
 		if not grants then
 			-- Every pet maxed between the check above and here (a level-up landed mid-open). Refund and bail:
 			-- the tokens are already spent at this point, so returning without this would just eat them.
-			addTokens(player, crate.price, "refund: level crate had nothing to level")
+			if not free then addTokens(player, crate.price, "refund: level crate had nothing to level") end
 			return { ok = false, reason = "all_pets_maxed" }
 		end
 		print(string.format("[SkinCrate] %s opened %s -> [%s] +%d pet level(s), %d applied across %d pet(s)",
@@ -773,6 +776,14 @@ end)
 -- PlayerStats owns MarketplaceService.ProcessReceipt (only one script may assign it), and calls into each
 -- system's handler in turn -- the same pattern as _G.petsHandleReceipt. Returns true
 -- only when THIS system recognised and granted the product, so PlayerStats knows to report PurchaseGranted.
+-- THE DAILY FREE SPIN (DailyCrateService.server owns WHEN; this owns WHAT): the paid roll with no price.
+_G.skinCrateFreeSpin = function(player, crateId)
+	if not (typeof(player) == "Instance" and player:IsA("Player")) then return { ok = false, reason = "bad_player" } end
+	local result = openCrate(player, crateId, false, true)
+	if type(result) == "table" and result.ok then result.free = true end
+	return result
+end
+
 _G.skinCrateHandleReceipt = function(player, productId)
 	local pack = SkinCrates.packByProductId(productId)
 	if not pack then return false end

@@ -39,7 +39,9 @@ _G.__GiftingServer = true
 local MIN_GIFT        = 10     -- below this it is spam, not a gift
 local MAX_GIFT        = 500    -- two Starter crates; a big present, not a whole account
 local COOLDOWN        = 8      -- seconds between gifts from one player
-local MAX_PER_SESSION = 20     -- generous for a real kid, useless to a bot
+local MAX_PER_DAY     = 20     -- generous for a real kid, useless to a bot. PER UTC DAY, in the store: the old
+                               -- per-session count reset on every rejoin and was separate in every realm, which
+                               -- made it no cap at all.
 local MAX_MAILBOX     = 25     -- pending gifts one player may be holding; beyond this, senders are refused
 
 -- ONE MAILBOX FOR THE WHOLE UNIVERSE. DataStores are scoped to the experience, not the place, so every realm
@@ -74,10 +76,38 @@ local GiftReceived = remote("GiftReceivedEvent")   -- s->c: (fromName, amount, w
 -- STATE
 --======================================================================
 local lastGift  = {}   -- [player] = os.clock()
-local sentCount = {}   -- [player] = gifts sent this session
-Players.PlayerRemoving:Connect(function(p) lastGift[p] = nil; sentCount[p] = nil end)
+Players.PlayerRemoving:Connect(function(p) lastGift[p] = nil end)
 
 local function key(userId) return "u_" .. tostring(userId) end
+local function today() return math.floor(os.time() / 86400) end
+
+-- The daily send counter lives in the same universe store under "sent_<userId>" = { day, count }, so it
+-- follows the player across realms and rejoins. `takeSend` reserves a slot atomically (refused when the day
+-- is full); `giveBackSend` returns it when the gift did not go through.
+local function takeSend(userId)
+	local allowed = false
+	local ok = pcall(function()
+		mailbox:UpdateAsync("sent_" .. tostring(userId), function(old)
+			local rec = (type(old) == "table") and old or {}
+			if rec.day ~= today() then rec.day = today(); rec.count = 0 end
+			if (tonumber(rec.count) or 0) >= MAX_PER_DAY then allowed = false; return nil end
+			rec.count = (tonumber(rec.count) or 0) + 1
+			allowed = true
+			return rec
+		end)
+	end)
+	if not ok then return false, "store" end
+	return allowed, allowed and nil or "cap"
+end
+local function giveBackSend(userId)
+	pcall(function()
+		mailbox:UpdateAsync("sent_" .. tostring(userId), function(old)
+			if type(old) ~= "table" or old.day ~= today() then return nil end
+			old.count = math.max(0, (tonumber(old.count) or 0) - 1)
+			return old
+		end)
+	end)
+end
 
 --======================================================================
 -- MAILBOX
@@ -175,8 +205,9 @@ GiftSend.OnServerEvent:Connect(function(sender, targetUserId, amount)
 	if last and (now - last) < COOLDOWN then
 		return fail(("Wait %d more seconds."):format(math.ceil(COOLDOWN - (now - last))))
 	end
-	if (sentCount[sender] or 0) >= MAX_PER_SESSION then
-		return fail("That's all the gifts for this session!")
+	local slot, why = takeSend(sender.UserId)
+	if not slot then
+		return fail(why == "cap" and "That's all the gifts for today -- more tomorrow!" or "Couldn't send that right now -- your tokens are safe.")
 	end
 
 	----------------------------------------------------------------
@@ -190,11 +221,11 @@ GiftSend.OnServerEvent:Connect(function(sender, targetUserId, amount)
 		end
 		local ok, why = _G.giftCrateTokens(sender, target, amount)
 		if not ok then
+			giveBackSend(sender.UserId)
 			return fail(why == "not enough tokens" and "You don't have that many tokens."
 				or ("Couldn't send: " .. tostring(why)))
 		end
 		lastGift[sender] = now
-		sentCount[sender] = (sentCount[sender] or 0) + 1
 		if _G.badgeGiftSent then pcall(_G.badgeGiftSent, sender) end
 		pcall(function()
 			GiftResult:FireClient(sender, true, ("Sent %d tokens to %s!"):format(amount, target.DisplayName or target.Name))
@@ -208,6 +239,7 @@ GiftSend.OnServerEvent:Connect(function(sender, targetUserId, amount)
 	-- OFFLINE: debit, then post
 	----------------------------------------------------------------
 	if not (_G.debitCrateTokensForGift and _G.addCrateTokensRaw) then
+		giveBackSend(sender.UserId)
 		warn("[Gifting] SkinCrateService has not published the debit/credit hooks -- offline gifting is inert")
 		return fail("Gifting isn't ready yet, try again in a moment.")
 	end
@@ -218,12 +250,14 @@ GiftSend.OnServerEvent:Connect(function(sender, targetUserId, amount)
 	local targetName
 	local okName = pcall(function() targetName = Players:GetNameFromUserIdAsync(targetUserId) end)
 	if not (okName and targetName) then
+		giveBackSend(sender.UserId)
 		return fail("Couldn't find that player.")
 	end
 
 	-- DEBIT FIRST. See the header: the reverse order is a minting bug, not a stylistic choice.
 	local debited, whyNot = _G.debitCrateTokensForGift(sender, amount)
 	if not debited then
+		giveBackSend(sender.UserId)
 		return fail(whyNot == "not enough tokens" and "You don't have that many tokens."
 			or ("Couldn't send: " .. tostring(whyNot)))
 	end
@@ -238,12 +272,12 @@ GiftSend.OnServerEvent:Connect(function(sender, targetUserId, amount)
 		-- REFUND, immediately and in full. This is the only failure this design allows and it must never
 		-- silently cost the sender anything.
 		pcall(_G.addCrateTokensRaw, sender, amount, "refund: offline gift could not be posted")
+		giveBackSend(sender.UserId)
 		print(("[Gifting] refunded %d tokens to %s -- mailbox write failed"):format(amount, sender.Name))
 		return fail(reason or "Couldn't send that right now -- your tokens are safe.")
 	end
 
 	lastGift[sender] = now
-	sentCount[sender] = (sentCount[sender] or 0) + 1
 	if _G.badgeGiftSent then pcall(_G.badgeGiftSent, sender) end
 	-- wake whichever server (any realm) has them online, so it lands now rather than next join
 	local woke = pcall(function()
@@ -296,4 +330,4 @@ if RunService:IsStudio() then
 end
 print(("[Gifting] ready -- UNIVERSE mailbox '" .. MAILBOX_STORE .. "' + live delivery on '" .. GIFT_TOPIC .. "';  %d..%d per gift, %ds cooldown, %d/session, mailbox holds %d. Online gifts are "
 	.. "instant; offline gifts debit first, then queue. Universe-wide mailbox + live wake-up."):format(
-	MIN_GIFT, MAX_GIFT, COOLDOWN, MAX_PER_SESSION, MAX_MAILBOX))
+	MIN_GIFT, MAX_GIFT, COOLDOWN, MAX_PER_DAY, MAX_MAILBOX))
